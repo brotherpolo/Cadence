@@ -1,6 +1,6 @@
 rules_version = '2';
 
-// Cadence — Cloud Firestore security rules
+// Cadence — Cloud Firestore security rules (app version 13)
 //
 // Data layout written by firebase-sync.js:
 //   tasks/{taskId}               every task. members = [ownerId] or [ownerId, assigneeId]
@@ -8,15 +8,21 @@ rules_version = '2';
 //   users/{uid}/items/map        the mind map: nodes + edges (private)
 //   people/{email}               { uid, name }, so tasks can be assigned by email
 //
-// Policy:
+// Privacy policy these rules enforce:
+//   - Settings and the map are private: only their owner can read or write them.
+//     Nobody else can see your map, not even people you share tasks with.
 //   - A task is visible only to its owner and its assignee.
 //   - The owner can change anything except who owns it, and can delete it.
+//     The owner's email on a task must be the owner's real sign-in email.
+//   - A task can only be assigned to the account that claimed that email in the
+//     people directory, so nobody can drop tasks into a stranger's list by
+//     guessing their account ID or spoofing their email.
 //   - The assignee can complete it, change its date and time, edit the
-//     checklist and notes, or hand it back to the owner. Nothing else.
+//     checklist and notes, or hand it back to the owner. Nothing else. They
+//     can't change the title, type, importance, repeat or the linked map node.
 //   - The people directory can be looked up one exact email at a time but
-//     never listed, and only verified emails can claim an entry. Email/password
-//     accounts verify through the link the app emails at sign-up.
-//   - Everything else is denied. Writes are shape-checked.
+//     never listed, and only a verified email can claim its own entry.
+//   - Everything else is denied. Writes are shape- and size-checked.
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -44,6 +50,26 @@ service cloud.firestore {
     function okSnap(d, key) {
       return !(key in d) || d[key] == null
           || (d[key] is map && d[key].keys().hasOnly(['name', 'color', 'glyph']));
+    }
+
+    // the signed-in person's email, lowercased, or null if the account has none
+    function myEmail() {
+      return request.auth.token.get('email', null) is string
+        ? request.auth.token.email.lower()
+        : null;
+    }
+
+    // ownerEmail is either blank or the writer's own sign-in email
+    function ownerEmailIsMine(d) {
+      return d.get('ownerEmail', null) == null || d.ownerEmail == myEmail();
+    }
+
+    // the assignee is whoever claimed assigneeEmail in the people directory
+    function assigneeIsReal(d) {
+      return d.get('assigneeId', null) == null
+          || (d.get('assigneeEmail', null) is string
+              && exists(/databases/$(database)/documents/people/$(d.assigneeEmail))
+              && get(/databases/$(database)/documents/people/$(d.assigneeEmail)).data.uid == d.assigneeId);
     }
 
     function validTask(d, taskId) {
@@ -97,6 +123,7 @@ service cloud.firestore {
           && optString(d, 'defaultType', 100);
     }
 
+    // The whole map is one document (Firestore caps a document at 1 MiB).
     function validMap(d) {
       return d.keys().hasOnly(['kind', 'nodes', 'edges', 'updatedAt'])
           && d.kind == 'map'
@@ -124,19 +151,29 @@ service cloud.firestore {
     }
 
     match /tasks/{taskId} {
+      // reads (single gets and the app's "members array-contains me" query)
       allow read: if signedIn() && request.auth.uid in resource.data.members;
 
       allow create: if signedIn()
         && validTask(request.resource.data, taskId)
-        && (request.resource.data.ownerId == request.auth.uid
-            || spawnedByAssignee(request.resource.data));
+        && (
+          // owner: their own email, and a real assignee if any
+          (request.resource.data.ownerId == request.auth.uid
+             && ownerEmailIsMine(request.resource.data)
+             && assigneeIsReal(request.resource.data))
+          // assignee: next occurrence of a repeating task they were given
+          || spawnedByAssignee(request.resource.data)
+        );
 
       allow update: if signedIn()
         && validTask(request.resource.data, taskId)
         && (
-          // owner: anything except ownership
+          // owner: anything except ownership. A changed email must be their own,
+          // and a new assignee must be the person who owns that email.
           (resource.data.ownerId == request.auth.uid
-             && request.resource.data.ownerId == resource.data.ownerId)
+             && request.resource.data.ownerId == resource.data.ownerId
+             && (!changed().hasAny(['ownerEmail']) || ownerEmailIsMine(request.resource.data))
+             && (!changed().hasAny(['assigneeId']) || assigneeIsReal(request.resource.data)))
           // assignee: do the work and move the date
           || (isAssignee()
              && changed().hasOnly(['done', 'doneAt', 'due', 'time', 'subtasks',
@@ -159,21 +196,23 @@ service cloud.firestore {
     }
 
     match /people/{email} {
+      // one exact address at a time; the directory can't be listed or scraped
       allow get: if signedIn();
       allow list: if false;
       allow create, update: if signedIn()
         && request.auth.token.email_verified == true
-        && request.auth.token.email is string
-        && email == request.auth.token.email.lower()
+        && myEmail() != null
+        && email == myEmail()
         && request.resource.data.keys().hasOnly(['uid', 'name'])
         && request.resource.data.uid == request.auth.uid
         && optString(request.resource.data, 'name', 200);
       allow delete: if signedIn() && resource.data.uid == request.auth.uid;
     }
 
-    // Private settings and the map. Tasks stored here by app version 7 and earlier can be
-    // read and deleted (the app moves them to /tasks), but no longer written,
-    // so an outdated tab can't re-upload stale copies.
+    // Private settings and the map: only the owner, never anyone else.
+    // Tasks stored here by app version 7 and earlier can be read and deleted
+    // (the app moves them to /tasks) but no longer written, so an outdated tab
+    // can't re-upload stale copies.
     match /users/{uid}/items/{itemId} {
       allow read, delete: if isOwner(uid);
       allow create, update: if isOwner(uid)
