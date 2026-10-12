@@ -139,7 +139,7 @@
   }
   function friendly(e) {
     const m = (e && (e.code || e.message)) || String(e);
-    if (/permission-denied|insufficient permissions/i.test(m)) return 'Firestore refused to save this device. Deploy the latest firestore.rules (v21), then try again.';
+    if (/permission-denied|insufficient permissions/i.test(m)) return 'Firestore refused to save this device. Deploy the latest firestore.rules, then try again.';
     if (/messaging\/token-subscribe-failed|authentication credential/i.test(m)) return 'Firebase didn’t accept the push key. Check that CADENCE_VAPID_KEY in firebase-config.js matches Project settings → Cloud Messaging → Web Push certificates.';
     if (/unsupported-browser|not supported/i.test(m)) return 'This browser doesn’t support web push.';
     return e && e.message ? e.message : m;

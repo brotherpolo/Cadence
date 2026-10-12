@@ -28,7 +28,8 @@
     typeId: p.typeId || S.state.prefs.defaultType || null,
     levelId: p.levelId || S.state.prefs.defaultLevel,
     repeat: p.repeat,
-    nodeId: p.nodeId || null
+    nodeId: p.nodeId || null,
+    ...(p.recordId && C.records ? C.records.linkFor(p.recordId) : {})
   });
 
   C.withTransition = function (fn, dir) {

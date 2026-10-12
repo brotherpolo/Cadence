@@ -76,6 +76,27 @@
 .node-filter .ic { width: 13px; height: 13px; margin-right: -3px; color: inherit; }
 .tok-node .ic { color: inherit; }
 
+/* ---------- Formwright record links (v22) ---------- */
+/* a record is marked with a small rounded square in its form's color (a map node uses a round dot) */
+.rdot { width: 8px; height: 8px; border-radius: 2.5px; background: var(--c, var(--ink-3)); flex: none; display: inline-block; }
+.record-tag {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 240px; height: 22px; padding: 0 8px; border-radius: 6px;
+  font-size: var(--fs-xs); font-weight: 600; white-space: nowrap;
+  background: color-mix(in oklab, var(--c) 10%, var(--surface)); color: color-mix(in oklab, var(--c) 62%, var(--ink));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--c) 24%, transparent); transition: box-shadow .15s;
+}
+.record-tag span { overflow: hidden; text-overflow: ellipsis; }
+.record-tag:hover { box-shadow: inset 0 0 0 1.5px var(--c); }
+.record-tag.compact { height: 20px; font-size: 11px; vertical-align: middle; margin-left: 6px; }
+.record-tag.removed { --c: var(--ink-3); font-weight: 500; font-style: italic; }
+.record-tag.removed .rdot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink-3); }
+.tok-record .ic { color: inherit; }
+.ed-rec-form { font-size: var(--fs-xs); font-weight: 500; color: var(--ink-3); white-space: nowrap; }
+.chip.on .ed-rec-form { color: inherit; opacity: .75; }
+.pk-head { display: flex; align-items: center; gap: 7px; padding: 9px 10px 3px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); position: sticky; top: 0; background: var(--surface); z-index: 1; }
+.pk-head:first-child { padding-top: 4px; }
+.rec-filter .rdot { margin-right: 1px; }
+
 /* editor: "On the map" */
 .ed-node { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .ed-node-pick { max-width: 100%; }

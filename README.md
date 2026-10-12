@@ -79,6 +79,62 @@ people/{email}               { uid, name }, so others can assign you tasks by em
 
 `firestore.rules` makes each task visible only to its owner and its assignee, validates the shape and size of every write, and denies all other paths.
 
+## Formwright shares this project
+
+Formwright (the form builder) runs on the same Firebase project, with the same accounts, from its own repo and Hosting site. **This folder holds the rules for both apps**: `firestore.rules`, `storage.rules` and `firestore.indexes.json` cover Cadence's tasks and Formwright's forms, records, groups and uploads. Always deploy rules from here; Formwright's repo deploys only its web pages.
+
+Formwright's data:
+
+```
+forms/{formId}               form designs (admins write; everyone signed in reads)
+records/{id}                 form entries, checked against users/{uid}.access
+groups/{id}                  security groups (admins only)
+users/{uid}                  Formwright account: role, groups, effective access
+profiles/{uid}               display names for "Created by"
+uploads/... (Storage)        files attached to records
+```
+
+`users/{uid}` (Formwright's account document) and `users/{uid}/items/...` (Cadence's private settings, map and board) are separate documents with separate rules. Formwright admins can read the account document, never Cadence's private items.
+
+### Linking tasks to records
+
+A task can link to one Formwright record through `recordId`, `formId` and `recordSnap` (a copy of the record's title and the form's name and colour, so an assignee without access to that form still sees what the task is about).
+
+- Only the task's owner can set, change or clear the link, and only to a record they can see in Formwright.
+- The assignee can't change the link.
+- A repeating task's next occurrence keeps its link, even if the record has since been deleted.
+- Deleting a record leaves its tasks in place.
+
+Using it (version 22):
+
+- **Task editor → On a record**: pick from the records you can see in Formwright, grouped by form. Unlink with ×, or **Open in Formwright**. An assignee sees the record read-only.
+- **Quick add**: `&acme` links the record whose title starts with "acme", like `@node` for the map.
+- **Tasks page**: each linked task shows a chip in its form's color. Tap it to open the record in Formwright or to show only that record's tasks. Form chips in the filter row narrow the list to one form's records, and **Group: Form** groups by form. Search also matches record titles.
+- If a record is deleted in Formwright, its tasks show **Record removed**.
+- Opening one of your linked tasks refreshes the saved copy of the record's title.
+- Formwright can link into Cadence: `?addTaskFor=<recordId>` opens a new task already linked to that record, and `?record=<recordId>` shows that record's tasks.
+
+To open records in Formwright, add its address to `firebase-config.js`:
+
+```js
+window.CADENCE_FORMS_URL = 'https://cadence-forms.web.app/';
+```
+
+Cadence reads Formwright's forms and your Formwright account (`users/{uid}`) to know which records you can see. If you've never opened Formwright, there's nothing to pick from yet.
+
+### Deploying rules
+
+From this folder, in Cloud Shell:
+
+```sh
+(cd tests && npm install && npm test)     # rules tests against the emulators (needs Java, which Cloud Shell has)
+firebase deploy --only firestore:rules,firestore:indexes,storage --project tasks-2ae9d
+```
+
+The first deploy with `storage.rules` asks to let Storage read Firestore. Accept: the upload rules check Formwright access.
+
+`tests/` is for development only. The app itself still has no build step, and `tests/` doesn't need uploading to your web host.
+
 ## The map
 
 Canvas, Outline and Table show the same map. It's saved in one private document per account and syncs like your settings. A Firestore document holds up to 1 MB, which is roughly 3,000 nodes; the app warns you as you get close. View state (pan and zoom, folded branches, hidden clusters, table columns) stays on each device.
@@ -107,8 +163,9 @@ How it fits together: the app asks for permission and saves this device's push t
    window.CADENCE_VAPID_KEY = 'BEl62…the key you copied…';
    ```
 3. **Match the functions to your database's region.** Firebase console → *Firestore Database* shows the location next to the database. Put the matching region in `functions/.env` (`nam5` → `us-central1`, `northamerica-northeast1` → `northamerica-northeast1`, and so on).
-4. **Deploy** from this folder:
+4. **Deploy** from this folder (the first line installs what the functions need; run it again whenever `functions/package.json` changes):
    ```sh
+   (cd functions && npm install)
    firebase deploy --only firestore:rules,firestore:indexes,functions
    ```
    The first functions deploy turns on several Google Cloud APIs and can take a few minutes. If it stops with a permissions or "service agent" error, wait two or three minutes and run it again. The new index (`tasks`: members + due) also takes a few minutes to build; reminders start once it's ready.
@@ -139,6 +196,7 @@ In the task editor, **Assigned to** shows "Me", the people you've worked with re
 - The assignee sees the owner's type and importance names and colors, even if their own settings differ.
 - Completing a repeating task as the assignee creates the next occurrence for the same owner and assignee.
 - The app shows a notice when someone assigns you a task, and when an assignee completes or hands back one of yours. Use the **Assigned to me** / **Assigned to others** filters on the Tasks page to see just those.
+- **Version 22** links tasks to Formwright records (see "Linking tasks to records"). **Deploy the new `firestore.rules` before uploading the new files**: the old rules reject tasks with a record link.
 - **Version 16** adds burn-up and flow charts, period comparison, trend lines, chart summaries, chart filters and a Board-wide date range. No rules change.
 - **Version 15** adds the sunburst, KPI tiles, goals and the canvas heat overlay. No rules change.
 - **Version 14 syncs the Board.** Saved charts used to live in one browser. Now they're saved to your account, private to you, and follow you to every device. The first time each browser opens version 14, its saved charts are added to your account's board (duplicates are skipped). Deploy the new `firestore.rules` first, or the board can't be saved.
@@ -151,7 +209,7 @@ If a user had tasks in the browser before signing in for the first time, they ar
 
 ## Files
 
-The app's files sit in one folder, so it uploads to GitHub as-is. The only subfolder, `functions/`, is the push notification server code; it's deployed with the Firebase CLI and doesn't need uploading to your web host.
+The app's files sit in one folder, so it uploads to GitHub as-is. Two subfolders aren't part of the app: `functions/` is the push notification server code, deployed with the Firebase CLI, and `tests/` holds the rules tests. Neither needs uploading to your web host.
 
 ```
 index.html
@@ -163,6 +221,7 @@ store.js              state, local cache, sync engine
 firebase-config.js    your Firebase config (empty = local only)
 firebase-sync.js      sign-in screen + Firestore connection
 push.js               push notifications: permission, device token, Settings → Notifications
+records.js            Formwright records: loads the ones you can see, the record picker and chips
 firebase-messaging-sw.js  service worker: shows pushes, opens the task when tapped
 manifest.webmanifest  install as an app (needed for notifications on iPhone)
 *.png                 app icons
@@ -181,10 +240,12 @@ insights.js           Insights page (charts)
 charts.js             Chart builder and Board pages
 settings.js           Settings page
 app.js                app shell, routing, shortcuts
-firestore.rules       Firestore security rules
-firestore.indexes.json  the one index reminders need
+firestore.rules       Firestore security rules (Cadence and Formwright)
+storage.rules         Storage security rules (Formwright uploads)
+firestore.indexes.json  indexes: reminders, and tasks linked to a record
 firebase.json         Firebase CLI config (rules, indexes, functions, hosting)
 functions/            Cloud Functions that send the notifications (index.js, package.json, .env)
+tests/                rules tests (development only; run with npm test inside tests/)
 ```
 
 Scripts load in the order listed in `index.html`; keep that order if you add files.

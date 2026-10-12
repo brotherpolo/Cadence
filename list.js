@@ -3,7 +3,7 @@
   const C = window.Cadence;
   const { D, esc, icon } = C;
   const S = () => C.store;
-  const ui = { scope: 'all', types: new Set(), levels: new Set(), node: null, q: '', tableSort: { key: 'due', dir: 1 }, flash: null, collapsed: new Set() };
+  const ui = { scope: 'all', types: new Set(), levels: new Set(), node: null, record: null, recordLabel: '', forms: new Set(), q: '', tableSort: { key: 'due', dir: 1 }, flash: null, collapsed: new Set() };
   let el = null;
 
   const view = (C.views = C.views || {}).list = {
@@ -31,7 +31,7 @@
         '<label class="input-wrap search">' + icon('search') + '<span class="sr">Search tasks</span><input id="ls-search" type="search" placeholder="Search tasks" value="' + esc(ui.q) + '"></label>' +
         '<div class="tool-group">' +
         '<label class="select-wrap"><span class="sr">Group by</span><select id="ls-group">' +
-        [['due', 'Group: Due date'], ['type', 'Group: Type'], ['level', 'Group: Importance'], ['cluster', 'Group: Map cluster'], ['none', 'No grouping']].map(([v, l]) => '<option value="' + v + '">' + l + '</option>').join('') + '</select></label>' +
+        [['due', 'Group: Due date'], ['type', 'Group: Type'], ['level', 'Group: Importance'], ['cluster', 'Group: Map cluster']].concat(canLink() ? [['form', 'Group: Form']] : []).concat([['none', 'No grouping']]).map(([v, l]) => '<option value="' + v + '">' + l + '</option>').join('') + '</select></label>' +
         '<label class="select-wrap"><span class="sr">Sort</span><select id="ls-sort">' +
         [['smart', 'Sort: Smart'], ['level', 'Sort: Importance'], ['created', 'Sort: Newest'], ['title', 'Sort: A–Z']].map(([v, l]) => '<option value="' + v + '">' + l + '</option>').join('') + '</select></label>' +
         '<button type="button" class="toggle" id="ls-done" aria-pressed="false">' + icon('check') + '<span>Completed</span></button>' +
@@ -49,8 +49,9 @@
         e.preventDefault();
         const v = qa.value.trim(); if (!v) return qa.focus();
         const st = S().state;
-        const p = C.parseQuick(v, st.types, st.levels, st.prefs.weekStart, nodeList());
-        const t = S().addTask(Object.assign(C.fromParse(p), ui.node && !p.nodeId && C.map && C.map.getNode(ui.node) ? { nodeId: ui.node } : {}));
+        const p = C.parseQuick(v, st.types, st.levels, st.prefs.weekStart, nodeList(), recordList());
+        const t = S().addTask(Object.assign(C.fromParse(p), ui.node && !p.nodeId && C.map && C.map.getNode(ui.node) ? { nodeId: ui.node } : {},
+          ui.record && !p.recordId && C.records && C.records.get(ui.record) ? C.records.linkFor(ui.record) : {}));
         ui.flash = t.id;
         qa.value = ''; renderTokens();
         C.toast('Added “' + t.title + '”' + (t.due ? ' · ' + C.relDate(t.due) : ''), { action: 'Edit', onAction: () => C.openEditor(t.id) });
@@ -100,8 +101,13 @@
     },
     clearLevels() { ui.levels.clear(); filtersChanged(); },
     /* map hooks: show only the tasks on one node */
-    filterNode(id) { ui.node = id || null; filtersChanged(); }
+    filterNode(id) { ui.node = id || null; filtersChanged(); },
+    /* Formwright records: show only the tasks linked to one record */
+    filterRecord(id, label) { ui.record = id || null; ui.recordLabel = label || ''; filtersChanged(); }
   };
+  const canLink = () => !!(C.firebaseSync && C.firebaseSync.enabled && C.records);
+  const recordList = () => (C.records ? C.records.index() : null);
+  const recordTitle = (t) => { const l = t.recordId && C.records ? C.records.label(t) : null; return l ? l.title : ''; };
   const nodeList = () => (C.map ? C.map.nodeIndex() : null);
   const nodeTitle = (id) => (C.map && id ? C.map.title(C.map.getNode(id)) : '');
   /* toast hook: "N tasks were assigned to you" → Show */
@@ -124,11 +130,11 @@
     if (!el) return;
     const v = el.querySelector('#qa-input').value;
     const box = el.querySelector('#qa-tokens');
-    if (!v.trim()) { box.innerHTML = '<span class="qa-hint">Type naturally. Dates, times, <b>#type</b>, <b>!importance</b>, <b>@node</b> and “every week” are picked up as you type.</span>'; return; }
+    if (!v.trim()) { box.innerHTML = '<span class="qa-hint">Type naturally. Dates, times, <b>#type</b>, <b>!importance</b>, <b>@node</b>' + (canLink() ? ', <b>&amp;record</b>' : '') + ' and “every week” are picked up as you type.</span>'; return; }
     const st = S().state;
-    const p = C.parseQuick(v, st.types, st.levels, st.prefs.weekStart, nodeList());
+    const p = C.parseQuick(v, st.types, st.levels, st.prefs.weekStart, nodeList(), recordList());
     box.innerHTML = p.tokens.length
-      ? p.tokens.map((t) => '<span class="tok tok-' + t.kind + '"' + (t.color ? ' style="--c:' + t.color + '"' : '') + '>' + icon({ date: 'calendar', time: 'clock', repeat: 'repeat', type: 'flag', level: 'bolt', node: 'canvas' }[t.kind]) + esc(t.label) + '</span>').join('') + '<span class="tok-title">→ ' + esc(p.title) + '</span>'
+      ? p.tokens.map((t) => '<span class="tok tok-' + t.kind + '"' + (t.color ? ' style="--c:' + t.color + '"' : '') + '>' + icon({ date: 'calendar', time: 'clock', repeat: 'repeat', type: 'flag', level: 'bolt', node: 'canvas', record: 'file' }[t.kind]) + esc(t.label) + '</span>').join('') + '<span class="tok-title">→ ' + esc(p.title) + '</span>'
       : '<span class="qa-hint">Press Enter to add “' + esc(p.title) + '”</span>';
   }
 
@@ -200,13 +206,22 @@
 
   function renderFilters() {
     const st = S().state;
-    const any = ui.types.size || ui.levels.size || ui.scope !== 'all' || ui.node;
+    const any = ui.types.size || ui.levels.size || ui.scope !== 'all' || ui.node || ui.record || ui.forms.size;
+    // forms that open tasks are linked to, for the form chips
+    const linked = new Map();
+    st.tasks.forEach((t) => {
+      if (!t.formId || linked.has(t.formId)) return;
+      const R = C.records, snap = t.recordSnap || {};
+      linked.set(t.formId, { name: (R && R.formName(t.formId)) || snap.form || 'Form', color: (R && R.formColor(t.formId)) || snap.color || 'var(--ink-3)' });
+    });
+    ui.forms.forEach((id) => { if (!linked.has(id)) ui.forms.delete(id); });
     const nd = ui.node && C.map ? C.map.getNode(ui.node) : null;
     if (ui.node && !nd) ui.node = null;
     const open = st.tasks.filter((t) => !t.done);
     el.querySelector('#ls-filters').innerHTML =
       '<div class="chips scroll-x">' +
       (nd ? '<button type="button" class="chip on node-filter" data-fnode style="--c:' + C.map.colorHex(nd.color) + '" title="Show all tasks"><i class="dot"></i>On “' + esc(C.map.title(nd)) + '”' + icon('x') + '</button><span class="chip-sep" aria-hidden="true"></span>' : '') +
+      (ui.record ? '<button type="button" class="chip on node-filter rec-filter" data-frecord style="--c:' + esc(recFilterColor()) + '" title="Show all tasks"><i class="rdot"></i>On “' + esc(recFilterLabel()) + '”' + icon('x') + '</button><span class="chip-sep" aria-hidden="true"></span>' : '') +
       (S().sharing() && st.tasks.some((t) => t.assigneeId) ?
         SCOPES.map(([id, label, fn]) => {
           const n = id === 'all' ? 0 : open.filter(fn).length;
@@ -215,6 +230,7 @@
       st.types.map((t) => '<button type="button" class="chip' + (ui.types.has(t.id) ? ' on' : '') + '" data-ft="' + t.id + '" aria-pressed="' + ui.types.has(t.id) + '" style="--c:' + t.color + '">' + icon(t.glyph) + esc(t.name) + '</button>').join('') +
       '<span class="chip-sep" aria-hidden="true"></span>' +
       st.levels.map((l) => '<button type="button" class="chip' + (ui.levels.has(l.id) ? ' on' : '') + '" data-fl="' + l.id + '" aria-pressed="' + ui.levels.has(l.id) + '" style="--c:' + l.color + '"><i class="dot"></i>' + esc(l.name) + '</button>').join('') +
+      (linked.size ? '<span class="chip-sep" aria-hidden="true"></span>' + [...linked].map(([id, f]) => '<button type="button" class="chip' + (ui.forms.has(id) ? ' on' : '') + '" data-fform="' + esc(id) + '" aria-pressed="' + ui.forms.has(id) + '" style="--c:' + esc(f.color) + '" title="Tasks linked to ' + esc(f.name) + ' records"><i class="rdot"></i>' + esc(f.name) + '</button>').join('') : '') +
       (any ? '<button type="button" class="chip clear" data-fclear>' + icon('x') + 'Clear filters</button>' : '') +
       '</div>';
   }
@@ -224,10 +240,24 @@
     else if (b.dataset.ft) toggleSet(ui.types, b.dataset.ft);
     else if (b.dataset.fl) toggleSet(ui.levels, b.dataset.fl);
     else if (b.hasAttribute('data-fnode')) ui.node = null;
-    else if (b.hasAttribute('data-fclear')) { ui.types.clear(); ui.levels.clear(); ui.scope = 'all'; ui.node = null; }
+    else if (b.hasAttribute('data-frecord')) ui.record = null;
+    else if (b.dataset.fform) toggleSet(ui.forms, b.dataset.fform);
+    else if (b.hasAttribute('data-fclear')) { ui.types.clear(); ui.levels.clear(); ui.scope = 'all'; ui.node = null; ui.record = null; ui.forms.clear(); }
     filtersChanged();
   }
   const toggleSet = (set, v) => (set.has(v) ? set.delete(v) : set.add(v));
+  function recFilterLabel() {
+    const R = C.records, rec = R && R.get(ui.record);
+    if (rec) return R.title(rec);
+    const t = S().state.tasks.find((x) => x.recordId === ui.record);
+    return (t && recordTitle(t)) || ui.recordLabel || 'Record';
+  }
+  function recFilterColor() {
+    const R = C.records, rec = R && R.get(ui.record);
+    if (rec) return R.formColor(rec.formId) || 'var(--accent)';
+    const t = S().state.tasks.find((x) => x.recordId === ui.record);
+    return (t && t.recordSnap && t.recordSnap.color) || 'var(--accent)';
+  }
 
   /* ---------- filtering, sorting, grouping ---------- */
   function visibleTasks(includeDone) {
@@ -238,7 +268,9 @@
       (!ui.types.size || ui.types.has(t.typeId)) &&
       (!ui.levels.size || ui.levels.has(t.levelId)) &&
       (!ui.node || t.nodeId === ui.node) &&
-      (!q || t.title.toLowerCase().includes(q) || (t.notes || '').toLowerCase().includes(q) || (t.subtasks || []).some((x) => x.title.toLowerCase().includes(q)) || nodeTitle(t.nodeId).toLowerCase().includes(q)));
+      (!ui.record || t.recordId === ui.record) &&
+      (!ui.forms.size || ui.forms.has(t.formId)) &&
+      (!q || t.title.toLowerCase().includes(q) || (t.notes || '').toLowerCase().includes(q) || (t.subtasks || []).some((x) => x.title.toLowerCase().includes(q)) || nodeTitle(t.nodeId).toLowerCase().includes(q) || recordTitle(t).toLowerCase().includes(q)));
   }
   function sorter(mode) {
     const r = (t) => S().levelRank(t.levelId);
@@ -288,6 +320,20 @@
       out = [...by.keys()].filter((k) => k !== '~').sort((a, b) => by.get(b).length - by.get(a).length)
         .map((k) => ({ id: 'cl-' + k, label: names.get(k) || m.colorName(k), color: m.colorHex(k), items: by.get(k) }));
       if (by.has('~')) out.push({ id: 'cl-none', label: 'Not on the map', items: by.get('~') });
+    } else if (p.group === 'form') {
+      const by = new Map(), info = new Map();
+      open.forEach((t) => {
+        const key = t.formId || '~';
+        if (!by.has(key)) by.set(key, []);
+        by.get(key).push(t);
+        if (t.formId && !info.has(key)) {
+          const R = C.records, snap = t.recordSnap || {};
+          info.set(key, { name: (R && R.formName(key)) || snap.form || 'Form', color: (R && R.formColor(key)) || snap.color || null });
+        }
+      });
+      out = [...by.keys()].filter((k) => k !== '~').sort((a, b) => info.get(a).name.localeCompare(info.get(b).name))
+        .map((k) => ({ id: 'fm-' + k, label: info.get(k).name, color: info.get(k).color, items: by.get(k) }));
+      if (by.has('~')) out.push({ id: 'fm-none', label: 'Not linked to a record', items: by.get('~') });
     } else {
       out = [{ id: 'all', label: 'All open tasks', items: open }];
     }
@@ -304,7 +350,7 @@
     if (!S().state.ready) { body.innerHTML = '<div class="skeleton">' + '<i></i>'.repeat(4) + '</div>'; return; }
     if (p.listMode === 'table') { body.innerHTML = renderTable(tasks.filter((t) => p.showDone || !t.done)); return flash(body); }
     const gs = groups(tasks);
-    const filtered = ui.q || ui.types.size || ui.levels.size || ui.scope !== 'all' || ui.node;
+    const filtered = ui.q || ui.types.size || ui.levels.size || ui.scope !== 'all' || ui.node || ui.record || ui.forms.size;
     if (!gs.some((g) => g.items.length)) {
       body.innerHTML = '<div class="empty">' + icon(filtered ? 'search' : 'check', 'empty-ic') +
         '<h3>' + (filtered ? 'No tasks match' : 'All clear') + '</h3><p>' +
@@ -344,6 +390,7 @@
     if (t.due) meta.push('<span class="meta-due' + (overdue ? ' overdue' : t.due === tk ? ' today' : '') + '">' + icon('calendar') + C.relDate(t.due) + (overdue ? ' · ' + (-D.diff(t.due, tk)) + 'd late' : '') + (t.time ? ' · ' + C.fmtTime(t.time) : '') + '</span>');
     if (ty) meta.push('<span class="type-tag" style="--c:' + ty.color + '">' + icon(ty.glyph) + esc(ty.name) + '</span>');
     if (t.nodeId && C.map && S_.isOwner(t)) meta.push(C.map.chip(t.nodeId));
+    if (t.recordId && C.records) meta.push(C.records.chip(t));
     if (subs.length) meta.push('<span class="meta-sub" title="' + sd + ' of ' + subs.length + ' steps"><span class="mini-bar"><i style="width:' + (sd / subs.length * 100) + '%"></i></span><span class="mono">' + sd + '/' + subs.length + '</span></span>');
     if (t.repeat && t.repeat !== 'none') meta.push('<span class="meta-ic" title="' + esc((C.REPEATS.find((r) => r.id === t.repeat) || {}).label) + '">' + icon('repeat') + '</span>');
     if (t.notes) meta.push('<span class="meta-ic" title="Has notes">' + icon('note') + '</span>');
@@ -381,7 +428,7 @@
         const subs = t.subtasks || [];
         return '<tr data-row="' + t.id + '" class="' + (t.done ? 'done' : '') + '" tabindex="0" style="--lv:' + (lv ? lv.color : 'var(--ink-3)') + '">' +
           '<td class="c-check"><button type="button" class="check sm" data-check aria-pressed="' + !!t.done + '" aria-label="Toggle done">' + icon('check') + '</button></td>' +
-          '<td class="c-title"><span class="task-title">' + esc(t.title) + '</span>' + C.whoChip(t, true) + (t.nodeId && C.map && S().isOwner(t) ? ' ' + C.map.chip(t.nodeId, true) : '') + (subs.length ? ' <span class="muted mono">' + subs.filter((x) => x.done).length + '/' + subs.length + '</span>' : '') + '</td>' +
+          '<td class="c-title"><span class="task-title">' + esc(t.title) + '</span>' + C.whoChip(t, true) + (t.nodeId && C.map && S().isOwner(t) ? ' ' + C.map.chip(t.nodeId, true) : '') + (t.recordId && C.records ? ' ' + C.records.chip(t, true) : '') + (subs.length ? ' <span class="muted mono">' + subs.filter((x) => x.done).length + '/' + subs.length + '</span>' : '') + '</td>' +
           '<td>' + (ty ? '<span class="type-tag" style="--c:' + ty.color + '">' + icon(ty.glyph) + esc(ty.name) + '</span>' : '<span class="muted">—</span>') + '</td>' +
           '<td>' + (lv ? '<span class="lv-tag">' + esc(lv.name) + '</span>' : '<span class="muted">—</span>') + '</td>' +
           '<td class="mono' + (overdue ? ' overdue' : '') + '">' + (t.due ? esc(C.relDate(t.due)) + (t.time ? ' ' + C.fmtTime(t.time) : '') : '<span class="muted">—</span>') + '</td>' +

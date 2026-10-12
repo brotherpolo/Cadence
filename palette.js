@@ -47,7 +47,7 @@
       const lv = v.toLowerCase();
       items = [];
       if (v.startsWith('+') && v.length > 1) {
-        const p = C.parseQuick(v.slice(1), S.state.types, S.state.levels, S.state.prefs.weekStart, C.map ? C.map.nodeIndex() : null);
+        const p = C.parseQuick(v.slice(1), S.state.types, S.state.levels, S.state.prefs.weekStart, C.map ? C.map.nodeIndex() : null, C.records ? C.records.index() : null);
         items.push({ group: 'Actions', label: 'Add “' + p.title + '”', sub: p.tokens.map((t) => t.label).join(' · '), ic: 'plus', run: () => { const t = S.addTask(C.fromParse(p)); C.toast('Added “' + t.title + '”'); } });
       }
       const acts = actions.filter((a) => !lv || a.label.toLowerCase().includes(lv));

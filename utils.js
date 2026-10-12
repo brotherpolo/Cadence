@@ -1,7 +1,7 @@
 /* Cadence — helpers: dates, formatting, escaping, natural-language quick add */
 (function () {
   const C = (window.Cadence = window.Cadence || {});
-  C.VERSION = '21';
+  C.VERSION = '22';
   const pad = (n) => String(n).padStart(2, '0');
 
   const D = {
@@ -89,9 +89,10 @@
   const END = '(?=\\s|$|[,.;])';
 
   const norm = (v) => String(v || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
-  /** nodes: optional [{ id, title, color }] for "@node" links to the map */
-  C.parseQuick = function (text, types, levels, weekStart, nodes) {
-    const out = { title: '', due: null, time: null, typeId: null, levelId: null, repeat: 'none', nodeId: null, tokens: [] };
+  /** nodes: optional [{ id, title, color }] for "@node" links to the map;
+      records: optional [{ id, title, color }] for "&record" links to Formwright records */
+  C.parseQuick = function (text, types, levels, weekStart, nodes, records) {
+    const out = { title: '', due: null, time: null, typeId: null, levelId: null, repeat: 'none', nodeId: null, recordId: null, tokens: [] };
     let s = ' ' + text + ' ';
     const take = (re, fn) => {
       s = s.replace(re, function () {
@@ -128,6 +129,19 @@
         const n = hits.find((x) => norm(x.title) === q) || hits.sort((a, b) => a.title.length - b.title.length)[0];
         out.nodeId = n.id;
         return { kind: 'node', label: n.title, color: n.color };
+      });
+    }
+
+    if (records && records.length) {
+      take(new RegExp('\\s&([\\p{L}\\p{N}_-]+)' + END, 'gu'), (m, tag) => {
+        if (out.recordId) return null;
+        const q = norm(tag);
+        if (!q) return null;
+        const hits = records.filter((r) => norm(r.title).startsWith(q));
+        if (!hits.length) return null;
+        const r = hits.find((x) => norm(x.title) === q) || hits.sort((a, b) => a.title.length - b.title.length)[0];
+        out.recordId = r.id;
+        return { kind: 'record', label: r.title, color: r.color };
       });
     }
 
@@ -214,7 +228,7 @@
 
     out.title = s.replace(/\s+/g, ' ').trim() || text.trim();
     // keep tokens in a stable display order
-    const order = { date: 0, time: 1, repeat: 2, type: 3, level: 4, node: 5 };
+    const order = { date: 0, time: 1, repeat: 2, type: 3, level: 4, node: 5, record: 6 };
     out.tokens.sort((a, b) => order[a.kind] - order[b.kind]);
     return out;
   };

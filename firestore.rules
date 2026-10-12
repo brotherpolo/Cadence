@@ -1,8 +1,11 @@
 rules_version = '2';
 
-// Cadence — Cloud Firestore security rules (app version 21)
+// Cadence + Formwright — Cloud Firestore security rules (Cadence version 22)
 //
-// Data layout written by firebase-sync.js:
+// Both apps share this project (tasks-2ae9d). These rules, the Storage rules and the
+// indexes deploy from this folder only. Formwright's repo deploys its web pages only.
+//
+// Cadence data, written by firebase-sync.js:
 //   tasks/{taskId}               every task. members = [ownerId] or [ownerId, assigneeId]
 //   users/{uid}/items/settings   task types, importance levels, defaults (private)
 //   users/{uid}/items/map        the mind map: nodes + edges (private)
@@ -10,6 +13,19 @@ rules_version = '2';
 //   people/{email}               { uid, name }, so tasks can be assigned by email
 //   notify/{uid}                 push notification choices, time zone (private)
 //   notify/{uid}/devices/{id}    one push token per browser or phone (private)
+//
+// Formwright data (see the Formwright README for the permission model):
+//   forms/{formId}               form designs. Everyone signed in reads; admins write.
+//   records/{id}                 form entries, checked against users/{uid}.access
+//   groups/{id}                  security groups (admins only)
+//   users/{uid}                  Formwright account: role, groups, effective access.
+//                                (Cadence's private items sit under it, in
+//                                users/{uid}/items, with their own rules below.)
+//   profiles/{uid}               display names for "Created by"
+//
+// Record links (v22): a task can point at one Formwright record through
+//   recordId, formId and recordSnap (the record's title, the form's name and color,
+//   copied so the assignee sees them even without access to the form).
 //
 // Privacy policy these rules enforce:
 //   - Settings, the map and the board are private: only their owner can read or
@@ -29,6 +45,9 @@ rules_version = '2';
 //   - Notification settings and push tokens are private to their owner. Only
 //     the Cloud Functions (which use admin access) read them to send pushes.
 //   - "Finished by" on a task can only ever be set to the person writing it.
+//   - Only a task's owner can set or change its record link, and only to a record
+//     they can see in Formwright. The assignee can't change it. A repeating task's
+//     next occurrence keeps the link it had, even if the record is gone by then.
 //   - Everything else is denied. Writes are shape- and size-checked.
 
 service cloud.firestore {
@@ -79,6 +98,88 @@ service cloud.firestore {
               && get(/databases/$(database)/documents/people/$(d.assigneeEmail)).data.uid == d.assigneeId);
     }
 
+    // ─── Formwright access helpers (also used by record links) ───────────────
+    // users/{uid}.access holds the effective level per form, computed from groups.
+
+    function userPath() { return /databases/$(database)/documents/users/$(request.auth.uid); }
+    function hasAccount() { return signedIn() && exists(userPath()); }
+    function me() { return get(userPath()).data; }
+    function isAdmin() { return hasAccount() && me().get('role', 'member') == 'admin'; }
+
+    // Effective level for one form: the form's own entry, else the "*" default, else nothing.
+    function level(formId) {
+      let acc = me().get('access', {});
+      return acc.get(formId, acc.get('*', {'view': 'none', 'edit': 'none'}));
+    }
+    function viewLevel(formId) { return level(formId).get('view', 'none'); }
+    function editLevel(formId) { return level(formId).get('edit', 'none'); }
+
+    function canViewRecord(d) {
+      return isAdmin() || (hasAccount() && (
+        viewLevel(d.formId) == 'all' ||
+        (viewLevel(d.formId) == 'own' && d.ownerId == request.auth.uid)
+      ));
+    }
+    function canEditRecord(d) {
+      return isAdmin() || (hasAccount() && (
+        editLevel(d.formId) == 'all' ||
+        (editLevel(d.formId) == 'own' && d.ownerId == request.auth.uid)
+      ));
+    }
+    function canCreateIn(formId) {
+      return isAdmin() || (hasAccount() && editLevel(formId) in ['own', 'all']);
+    }
+    function validRecord(d) {
+      return d.keys().hasOnly(['formId', 'values', 'parentId', 'parentFormId', 'ownerId',
+                               'createdBy', 'createdAt', 'updatedAt', 'updatedBy'])
+        && d.keys().hasAll(['formId', 'values', 'ownerId', 'createdBy', 'updatedBy'])
+        && d.formId is string
+        && d.values is map
+        && d.ownerId is string
+        && d.updatedBy == request.auth.uid
+        // existsAfter so a batch can create a form and its first records together.
+        && existsAfter(/databases/$(database)/documents/forms/$(d.formId));
+    }
+
+    // A record link is all three fields or none of them.
+    function validRecordLink(d) {
+      return (d.get('recordId', null) == null
+                ? (d.get('formId', null) == null && d.get('recordSnap', null) == null)
+                : (d.recordId is string && d.recordId.size() > 0 && d.recordId.size() <= 100
+                   && d.get('formId', null) is string && d.formId.size() > 0 && d.formId.size() <= 100))
+          && (d.get('recordSnap', null) == null
+              || (d.recordSnap is map
+                  && d.recordSnap.keys().hasOnly(['title', 'form', 'color'])
+                  && optString(d.recordSnap, 'title', 500)
+                  && optString(d.recordSnap, 'form', 200)
+                  && optString(d.recordSnap, 'color', 40)));
+    }
+
+    function recordPath(id) {
+      return /databases/$(database)/documents/records/$(id);
+    }
+
+    // No link, or a link to a record of that form which the writer can see in Formwright.
+    function canLinkRecord(d) {
+      return d.get('recordId', null) == null
+          || (exists(recordPath(d.recordId))
+              && get(recordPath(d.recordId)).data.formId == d.formId
+              && canViewRecord(get(recordPath(d.recordId)).data));
+    }
+
+    function taskPath(id) {
+      return /databases/$(database)/documents/tasks/$(id);
+    }
+
+    // The next occurrence of a repeating task keeps its source's link unchanged.
+    function linkCopiedFromSource(d) {
+      return d.get('spawnedFrom', null) is string
+          && exists(taskPath(d.spawnedFrom))
+          && get(taskPath(d.spawnedFrom)).data.ownerId == d.ownerId
+          && get(taskPath(d.spawnedFrom)).data.get('recordId', null) == d.get('recordId', null)
+          && get(taskPath(d.spawnedFrom)).data.get('formId', null) == d.get('formId', null);
+    }
+
     function validTask(d, taskId) {
       return d.keys().hasOnly([
                'id', 'title', 'notes', 'typeId', 'levelId', 'due', 'time',
@@ -86,7 +187,8 @@ service cloud.firestore {
                'repeat', 'sample', 'spawnedNext', 'spawnedFrom',
                'ownerId', 'ownerName', 'ownerEmail',
                'assigneeId', 'assigneeName', 'assigneeEmail', 'members',
-               'typeSnap', 'levelSnap', 'nodeId', 'moved', 'pushed', 'doneBy'
+               'typeSnap', 'levelSnap', 'nodeId', 'moved', 'pushed', 'doneBy',
+               'recordId', 'formId', 'recordSnap'
              ])
           && d.keys().hasAll(['id', 'title', 'done', 'ownerId', 'members'])
           && d.id == taskId
@@ -98,6 +200,7 @@ service cloud.firestore {
           && optString(d, 'spawnedNext', 100)
           && optString(d, 'spawnedFrom', 100)
           && optString(d, 'nodeId', 100)
+          && validRecordLink(d)
           && optString(d, 'ownerName', 200)
           && optString(d, 'ownerEmail', 320)
           && optString(d, 'assigneeName', 200)
@@ -168,7 +271,8 @@ service cloud.firestore {
           && d.get('spawnedFrom', null) is string
           && exists(/databases/$(database)/documents/tasks/$(d.spawnedFrom))
           && get(/databases/$(database)/documents/tasks/$(d.spawnedFrom)).data.ownerId == d.ownerId
-          && get(/databases/$(database)/documents/tasks/$(d.spawnedFrom)).data.get('assigneeId', null) == request.auth.uid;
+          && get(/databases/$(database)/documents/tasks/$(d.spawnedFrom)).data.get('assigneeId', null) == request.auth.uid
+          && linkCopiedFromSource(d);
     }
 
     match /tasks/{taskId} {
@@ -181,7 +285,9 @@ service cloud.firestore {
           // owner: their own email, and a real assignee if any
           (request.resource.data.ownerId == request.auth.uid
              && ownerEmailIsMine(request.resource.data)
-             && assigneeIsReal(request.resource.data))
+             && assigneeIsReal(request.resource.data)
+             && (canLinkRecord(request.resource.data)
+                 || linkCopiedFromSource(request.resource.data)))
           // assignee: next occurrence of a repeating task they were given
           || spawnedByAssignee(request.resource.data)
         );
@@ -194,8 +300,9 @@ service cloud.firestore {
           (resource.data.ownerId == request.auth.uid
              && request.resource.data.ownerId == resource.data.ownerId
              && (!changed().hasAny(['ownerEmail']) || ownerEmailIsMine(request.resource.data))
-             && (!changed().hasAny(['assigneeId']) || assigneeIsReal(request.resource.data)))
-          // assignee: do the work and move the date
+             && (!changed().hasAny(['assigneeId']) || assigneeIsReal(request.resource.data))
+             && (!changed().hasAny(['recordId', 'formId']) || canLinkRecord(request.resource.data)))
+          // assignee: do the work and move the date (never the record link)
           || (isAssignee()
              && changed().hasOnly(['done', 'doneAt', 'due', 'time', 'subtasks',
                                    'notes', 'updatedAt', 'spawnedNext', 'moved', 'pushed', 'doneBy']))
@@ -268,6 +375,69 @@ service cloud.firestore {
         && ((itemId == 'settings' && validSettings(request.resource.data))
             || (itemId == 'map' && validMap(request.resource.data))
             || (itemId == 'board' && validBoard(request.resource.data)));
+    }
+
+    // ─── Formwright ──────────────────────────────────────────────────────────
+    // Forms, records, security groups and accounts. A member's access to each form
+    // is the map on users/{uid}.access, which an admin's browser computes from the
+    // member's groups. Levels: "none", "own" (records they created) or "all".
+
+    match /forms/{formId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    match /records/{recordId} {
+      // List queries must filter by formId, and by ownerId == your uid when you only
+      // have "own" access, or Firestore rejects the query.
+      allow read: if signedIn() && canViewRecord(resource.data);
+
+      allow create: if signedIn()
+        && validRecord(request.resource.data)
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.createdBy == request.auth.uid
+        && canCreateIn(request.resource.data.formId);
+
+      allow update: if signedIn()
+        && validRecord(request.resource.data)
+        && canEditRecord(resource.data)
+        && request.resource.data.formId == resource.data.formId
+        && request.resource.data.ownerId == resource.data.ownerId
+        && request.resource.data.createdBy == resource.data.createdBy;
+
+      allow delete: if signedIn() && canEditRecord(resource.data);
+    }
+
+    match /groups/{groupId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /profiles/{userId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && userId == request.auth.uid
+        && request.resource.data.keys().hasOnly(['displayName', 'photoURL'])
+        && request.resource.data.displayName is string
+        && request.resource.data.displayName.size() <= 120;
+      allow delete: if isAdmin() || (signedIn() && userId == request.auth.uid);
+    }
+
+    match /users/{userId} {
+      allow read: if signedIn() && (userId == request.auth.uid || isAdmin());
+
+      // A new account starts as a member with no groups and no access.
+      allow create: if signedIn() && userId == request.auth.uid
+        && request.resource.data.keys().hasOnly(['email', 'displayName', 'role', 'groups', 'access', 'createdAt'])
+        && request.resource.data.role == 'member'
+        && request.resource.data.groups == []
+        && request.resource.data.access == {}
+        && request.resource.data.email == request.auth.token.get('email', '');
+
+      // Users may change only their display name. Admins may change anything.
+      allow update: if isAdmin()
+        || (signedIn() && userId == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName']));
+
+      allow delete: if isAdmin();
     }
 
     // Default deny for every other path.

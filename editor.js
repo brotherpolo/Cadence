@@ -11,10 +11,14 @@
 
   C.openEditor = function (idOrPreset) {
     const S = C.store;
+    const R = C.records;
+    // the owner opening a linked task refreshes its copy of the record's title
+    if (typeof idOrPreset === 'string' && R) R.refreshSnap(S.get(idOrPreset));
     const existing = typeof idOrPreset === 'string' ? S.get(idOrPreset) : null;
     const draft = existing ? C.clone(existing) : Object.assign({
       title: '', notes: '', typeId: S.state.prefs.defaultType || null, levelId: S.state.prefs.defaultLevel || (S.state.levels[0] || {}).id,
-      due: null, time: null, subtasks: [], repeat: 'none', done: false, nodeId: null
+      due: null, time: null, subtasks: [], repeat: 'none', done: false, nodeId: null,
+      recordId: null, formId: null, recordSnap: null
     }, idOrPreset || {});
     // "Add a task to each" from the map: one draft, one task per node on save
     const bulk = !existing && Array.isArray(draft.nodeIds) && draft.nodeIds.length > 1 ? draft.nodeIds.slice() : null;
@@ -60,6 +64,7 @@
         (ro ? fromNote() : '') +
         (sharing && !ro ? assignField() : '') +
         (!ro && C.map ? nodeField() : '') +
+        recordField() +
 
         (ro ? roField('Importance', S.levelOf(existing), false) :
         '<div class="field"><span class="field-label">Importance</span><div class="seg" role="radiogroup">' +
@@ -109,6 +114,27 @@
         (n ? '<button type="button" class="icon-btn sm" data-act="node-clear" aria-label="Unlink from the map" title="Unlink">' + icon('x') + '</button>' +
           '<button type="button" class="btn sm ghost" data-act="node-go">' + icon('target') + '<span>Show on canvas</span></button>' : '') +
         '</div></div>';
+    }
+    /* "On a record": a Formwright record this task is about */
+    function recordField() {
+      if (!R) return '';
+      const l = draft.recordId ? R.label(draft) : null;
+      if (ro) {
+        if (!l) return '';
+        return '<div class="field"><span class="field-label">On a record</span><div class="ed-node">' +
+          '<span class="chip on static ed-rec" style="--c:' + esc(l.color) + '"><i class="rdot"></i><span>' + esc(l.title) + '</span>' + (l.form ? '<span class="ed-rec-form">' + esc(l.form) + '</span>' : '') + '</span>' +
+          (R.url(draft.recordId) ? '<button type="button" class="btn sm ghost" data-act="record-go">' + icon('external') + '<span>Open in Formwright</span></button>' : '') +
+          '</div></div>';
+      }
+      if (!R.enabled() && !l) return '';
+      if (!l && R.status() === 'ready' && !R.forms().length) return '';
+      return '<div class="field"><span class="field-label">On a record</span><div class="ed-node">' +
+        '<button type="button" class="chip ed-node-pick ed-rec' + (l ? ' on' : '') + '" data-act="record"' + (l ? ' style="--c:' + (l.removed ? 'var(--ink-3)' : esc(l.color)) + '"' : '') + ' aria-haspopup="listbox">' +
+        (l ? '<i class="rdot"></i><span>' + esc(l.removed ? 'Record removed' : l.title) + '</span>' + (l.form && !l.removed ? '<span class="ed-rec-form">' + esc(l.form) + '</span>' : '')
+           : icon('file') + '<span>Link to a record</span>') + icon('chevD') + '</button>' +
+        (l ? '<button type="button" class="icon-btn sm" data-act="record-clear" aria-label="Unlink from the record" title="Unlink">' + icon('x') + '</button>' +
+          (!l.removed && R.url(draft.recordId) ? '<button type="button" class="btn sm ghost" data-act="record-go">' + icon('external') + '<span>Open in Formwright</span></button>' : '') : '') +
+        '</div>' + (l && l.removed ? '<p class="field-msg muted">This record was deleted in Formwright. Unlink it, or pick another.</p>' : '') + '</div>';
     }
     function fromNote() {
       const o = { uid: existing.ownerId, name: existing.ownerName, email: existing.ownerEmail };
@@ -268,6 +294,9 @@
       if (b.dataset.act === 'node') { sync(); C.map.pickNode({ anchor: b, current: draft.nodeId, allowNone: !!draft.nodeId, noneLabel: 'Not on the map', onPick: (id) => { draft.nodeId = id; render(); } }); return; }
       if (b.dataset.act === 'node-clear') { sync(); draft.nodeId = null; render(); return; }
       if (b.dataset.act === 'node-go') { const id = draft.nodeId; close(); C.map.focusNode(id); return; }
+      if (b.dataset.act === 'record') { sync(); R.pick({ anchor: b, current: draft.recordId, allowNone: !!draft.recordId, onPick: (id) => { Object.assign(draft, R.linkFor(id)); render(); } }); return; }
+      if (b.dataset.act === 'record-clear') { sync(); Object.assign(draft, R.linkFor(null)); render(); return; }
+      if (b.dataset.act === 'record-go') { R.open(draft.recordId); return; }
       if (b.dataset.act === 'sub-add') { addFromNewInput(); return; }
       if (b.dataset.act === 'handback') {
         if (!confirmBack) { confirmBack = true; b.querySelector('span').textContent = 'Hand back to ' + C.firstName(existing.ownerName, existing.ownerEmail) + '?'; b.classList.add('danger'); return; }
@@ -300,21 +329,25 @@
         const wasDone = existing.done;
         const patch = ro
           ? { notes: draft.notes, due: draft.due, time: draft.due ? draft.time : null, subtasks: draft.subtasks }
-          : Object.assign({ title: draft.title, notes: draft.notes, typeId: draft.typeId, levelId: draft.levelId, due: draft.due, time: draft.due ? draft.time : null, repeat: draft.repeat, subtasks: draft.subtasks, nodeId: draft.nodeId || null }, who);
+          : Object.assign({ title: draft.title, notes: draft.notes, typeId: draft.typeId, levelId: draft.levelId, due: draft.due, time: draft.due ? draft.time : null, repeat: draft.repeat, subtasks: draft.subtasks, nodeId: draft.nodeId || null }, linkOf(), who);
         S.updateTask(existing.id, patch);
         if (draft.done !== wasDone) C.completeTask(existing.id);
         close(true);
         if (sharing && !ro && (assignee && assignee.uid) !== assigneeBefore) C.toast(assignee ? 'Assigned “' + draft.title + '” to ' + forName : 'You’re doing “' + draft.title + '” yourself now');
       } else if (bulk) {
-        const made = bulk.map((nodeId) => S.addTask(Object.assign({ title: draft.title, notes: draft.notes, typeId: draft.typeId, levelId: draft.levelId, due: draft.due, time: draft.due ? draft.time : null, repeat: draft.repeat, subtasks: C.clone(draft.subtasks).map((x) => Object.assign(x, { id: C.uid('s') })), nodeId }, who)));
+        const made = bulk.map((nodeId) => S.addTask(Object.assign({ title: draft.title, notes: draft.notes, typeId: draft.typeId, levelId: draft.levelId, due: draft.due, time: draft.due ? draft.time : null, repeat: draft.repeat, subtasks: C.clone(draft.subtasks).map((x) => Object.assign(x, { id: C.uid('s') })), nodeId }, draft.recordId ? linkOf() : {}, who)));
         close(true);
         C.toast('Added “' + draft.title + '” to ' + made.length + ' nodes', { action: 'Undo', onAction: () => made.forEach((t) => S.deleteTask(t.id)) });
       } else {
-        const t = S.addTask(Object.assign({ title: draft.title, notes: draft.notes, typeId: draft.typeId, levelId: draft.levelId, due: draft.due, time: draft.due ? draft.time : null, repeat: draft.repeat, subtasks: draft.subtasks }, draft.nodeId ? { nodeId: draft.nodeId } : {}, who));
+        const t = S.addTask(Object.assign({ title: draft.title, notes: draft.notes, typeId: draft.typeId, levelId: draft.levelId, due: draft.due, time: draft.due ? draft.time : null, repeat: draft.repeat, subtasks: draft.subtasks }, draft.nodeId ? { nodeId: draft.nodeId } : {}, draft.recordId ? linkOf() : {}, who));
         close(true);
         C.toast('Added “' + t.title + '”' + (assignee ? ' for ' + forName : '') + (t.due ? ' · ' + C.relDate(t.due) : ''));
       }
     });
+    // the three link fields together, or all null to unlink
+    function linkOf() {
+      return draft.recordId ? { recordId: draft.recordId, formId: draft.formId || null, recordSnap: draft.recordSnap || null } : { recordId: null, formId: null, recordSnap: null };
+    }
     function resetBack() {
       const hb = wrap.querySelector('[data-act="handback"]');
       if (hb) { hb.querySelector('span').textContent = 'Hand back'; hb.classList.remove('danger'); }
