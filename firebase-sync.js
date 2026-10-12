@@ -3,6 +3,7 @@
    Data layout (matches firestore.rules):
      users/{uid}/items/settings   → task types + importance levels
      users/{uid}/items/map        → the mind map (nodes + edges), private
+     users/{uid}/items/board      → charts saved to the Board page, private
      tasks/{taskId}               → one document per task                    */
 (function () {
   const C = window.Cadence;
@@ -82,6 +83,7 @@
     const tasksCol = db.collection('tasks');
     const settingsRef = db.collection('users').doc(uid).collection('items').doc('settings');
     const mapRef = db.collection('users').doc(uid).collection('items').doc('map');
+    const boardRef = db.collection('users').doc(uid).collection('items').doc('board');
 
     // List this person in the directory so others can assign them tasks by email.
     // Only verified emails can claim an entry.
@@ -105,7 +107,7 @@
     return {
       uid, me, label: 'firebase',
       // settings stay private; every task lives in the shared /tasks collection
-      col: { doc: (id) => (id === 'settings' ? settingsRef : id === 'map' ? mapRef : tasksCol.doc(id)) },
+      col: { doc: (id) => (id === 'settings' ? settingsRef : id === 'map' ? mapRef : id === 'board' ? boardRef : tasksCol.doc(id)) },
       // fill in ownership on tasks created before sign-in or by older versions
       prepare(body) {
         if (!body.ownerId) { body.ownerId = uid; body.ownerName = me.name || null; body.ownerEmail = me.email || null; }
@@ -115,18 +117,20 @@
       },
       // one combined stream: the private settings doc + every task this person is a member of
       listen(next, err) {
-        let s = null, m = null, t = null, dead = false, u1 = null, u2 = null, u3 = null;
-        const stop = () => { if (u1) u1(); if (u2) u2(); if (u3) u3(); };
+        let s = null, m = null, bd = null, t = null, dead = false, u1 = null, u2 = null, u3 = null, u4 = null;
+        const stop = () => { [u1, u2, u3, u4].forEach((u) => { if (u) u(); }); };
         const fire = () => {
-          if (dead || !s || !m || !t) return;
+          if (dead || !s || !m || !bd || !t) return;
           const docs = [];
           if (s.exists) docs.push({ id: 'settings', data: () => s.data() });
           if (m.exists) docs.push({ id: 'map', data: () => m.data() });
+          if (bd.exists) docs.push({ id: 'board', data: () => bd.data() });
           t.docs.forEach((d) => docs.push(d));
-          next({ docs, empty: !docs.length, metadata: { fromCache: s.metadata.fromCache || m.metadata.fromCache || t.metadata.fromCache } });
+          next({ docs, empty: !docs.length, metadata: { fromCache: s.metadata.fromCache || m.metadata.fromCache || bd.metadata.fromCache || t.metadata.fromCache } });
         };
         const fail = (e) => { if (dead) return; dead = true; stop(); err(e); };
         u1 = settingsRef.onSnapshot({ includeMetadataChanges: true }, (x) => { s = x; fire(); }, fail);
+        u4 = boardRef.onSnapshot({ includeMetadataChanges: true }, (x) => { bd = x; fire(); }, fail);
         u3 = mapRef.onSnapshot({ includeMetadataChanges: true }, (x) => { m = x; fire(); }, fail);
         u2 = tasksCol.where('members', 'array-contains', uid).onSnapshot({ includeMetadataChanges: true }, (x) => { t = x; fire(); }, fail);
         return () => { dead = true; stop(); };
@@ -140,7 +144,7 @@
     const legacy = db.collection('users').doc(uid).collection('items');
     let snap;
     try { snap = await legacy.get(); } catch (e) { console.warn('Could not check for tasks to move:', e); return; }
-    const docs = snap.docs.filter((d) => d.id !== 'settings' && d.id !== 'map'); // private docs stay put
+    const docs = snap.docs.filter((d) => !['settings', 'map', 'board'].includes(d.id)); // private docs stay put
     for (let i = 0; i < docs.length; i += 200) {
       const b = db.batch();
       docs.slice(i, i + 200).forEach((d) => {

@@ -1,11 +1,12 @@
 /* Cadence — Chart builder + Board: drag fields onto X axis / Values / Split by and pick a chart type.
    Works with mouse, pen and touch. On touch you can also tap a field, then tap where it goes.
-   Saved charts live on a board in this browser (localStorage), not in the cloud. */
+   Saved charts live on the board, which syncs with the account (state.board in the store).
+   The chart you're building (the draft) stays in this browser. */
 (function () {
   const C = window.Cadence;
   const { D, esc, icon } = C;
   const S = () => C.store;
-  const LS_DRAFT = 'cadence.chart.draft', LS_BOARD = 'cadence.chart.board';
+  const LS_DRAFT = 'cadence.chart.draft';
   const DAY = 864e5;
 
   /* ---------- fields ---------- */
@@ -77,7 +78,9 @@
   const load = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? d : v; } catch (e) { return d; } };
   const keep = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* storage blocked */ } };
   let cfg = Object.assign({}, BLANK, load(LS_DRAFT, { x: 'type', series: 'status' }));
-  let board = load(LS_BOARD, []);
+  let board = [];
+  const syncBoard = () => { board = S().state.board.charts; };
+  const saveBoard = () => S().setBoard(board.slice());
   const ui = { picked: null, flash: null, flashZone: null };
   let el = null;
 
@@ -226,6 +229,7 @@
 
   /* ---------- page ---------- */
   function render() {
+    syncBoard();
     const root = el && el.querySelector('#cb-root');
     if (!root) return;
     const editing = cfg.id && board.find((b) => b.id === cfg.id);
@@ -586,8 +590,9 @@
       const asNew = !!t.closest('[data-save-new]') || !cfg.id || !board.some((b) => b.id === cfg.id);
       const titleIn = el.querySelector('#cb-title');
       const item = Object.assign({}, cfg, { title: titleIn ? titleIn.value.trim() : cfg.title });
-      if (asNew) { item.id = C.uid('ch'); board.push(item); } else board = board.map((b) => (b.id === item.id ? item : b));
-      keep(LS_BOARD, board);
+      syncBoard();
+      if (asNew) { item.id = C.uid('ch'); board = board.concat([item]); } else board = board.map((b) => (b.id === item.id ? item : b));
+      saveBoard();
       setCfg({ id: item.id, title: item.title });
       C.toast(asNew ? 'Saved to your board' : 'Chart updated', { action: 'View board', onAction: () => C.go('board') });
       return;
@@ -603,7 +608,7 @@
     title: 'Board',
     mount(root) {
       elB = root;
-      board = load(LS_BOARD, []);
+      syncBoard();
       root.innerHTML = '<section class="page bd-page"><header class="page-head"><p class="eyebrow"><a href="#insights" class="cb-back">' + icon('chevL') + 'Insights</a></p>' +
         '<div class="bd-title"><h1 class="display">Board</h1><a href="#charts" class="btn primary sm">' + icon('plus') + '<span>New chart</span></a></div>' +
         '<p class="muted cb-lede">Tap any bar, slice, point or dot to see the tasks behind it.</p></header><div id="bd-root"></div></section>';
@@ -620,6 +625,7 @@
   function renderBoard() {
     const root = elB && elB.querySelector('#bd-root');
     if (!root) return;
+    syncBoard();
     if (!board.length) {
       root.innerHTML = '<div class="st-sec bd-empty">' + icon('board') + '<h2>Your board is empty</h2><p class="muted">Build a chart in the Chart builder and choose <b>Save to board</b>. It will show up here.</p><a href="#charts" class="btn primary">' + icon('pie') + '<span>Open Chart builder</span></a></div>';
       return;
@@ -652,6 +658,7 @@
 
   function onBoardClick(e) {
     const t = e.target;
+    syncBoard();
     const seg = t.closest('[data-seg]');
     if (seg) { const card = seg.closest('[data-card]'); return openRecords(card.dataset.card, seg.dataset.seg, seg.dataset.tip); }
     const ed = t.closest('[data-edit]');
@@ -663,10 +670,11 @@
     const del = t.closest('[data-del]');
     if (del) {
       const idx = board.findIndex((b) => b.id === del.dataset.del); if (idx < 0) return;
-      const [gone] = board.splice(idx, 1); keep(LS_BOARD, board);
+      const gone = board[idx];
+      board = board.filter((b) => b.id !== gone.id); saveBoard();
       if (cfg.id === gone.id) { cfg.id = null; keep(LS_DRAFT, cfg); }
       renderBoard();
-      C.toast('Removed “' + (gone.title || 'chart') + '”', { action: 'Undo', onAction: () => { board.splice(idx, 0, gone); keep(LS_BOARD, board); renderBoard(); } });
+      C.toast('Removed “' + (gone.title || 'chart') + '”', { action: 'Undo', onAction: () => { syncBoard(); if (!board.some((b) => b.id === gone.id)) { board = board.slice(); board.splice(Math.min(idx, board.length), 0, gone); saveBoard(); } } });
     }
   }
 
@@ -692,6 +700,7 @@
   }
 
   function openRecords(itemId, seg, tipText) {
+    syncBoard();
     const item = board.find((b) => b.id === itemId);
     if (!item) return;
     const r = recordsFor(item, seg);

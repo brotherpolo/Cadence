@@ -34,6 +34,7 @@
     seen: [],      // ids of tasks assigned to me that I've been told about
     map: { nodes: [], edges: [], updatedAt: 0 }, // the mind map (Canvas / Outline / Table)
     mapRev: 0,     // bumps whenever the map changes, locally or from sync
+    board: { charts: [], updatedAt: 0 }, // charts saved to the Board page
     sync: { status: 'local', provider: null, lastAt: null, pending: 0, error: null, cloudCount: null },
     ready: false
   };
@@ -46,7 +47,7 @@
   }
   const writeLocal = C.debounce(() => {
     try {
-      localStorage.setItem(LS_KEY, JSON.stringify({ owner: state.owner || null, me: state.me || null, seen: state.seen, tasks: state.tasks, types: state.types, levels: state.levels, prefs: state.prefs, map: state.map }));
+      localStorage.setItem(LS_KEY, JSON.stringify({ owner: state.owner || null, me: state.me || null, seen: state.seen, tasks: state.tasks, types: state.types, levels: state.levels, prefs: state.prefs, map: state.map, board: state.board }));
     } catch (e) { /* storage blocked: in-memory only */ }
   }, 120);
 
@@ -60,7 +61,15 @@
   const failed = new Set();
   const settingsBody = () => ({ kind: 'settings', types: state.types, levels: state.levels, defaultLevel: state.prefs.defaultLevel, defaultType: state.prefs.defaultType });
   const mapBody = () => ({ kind: 'map', nodes: state.map.nodes, edges: state.map.edges, updatedAt: state.map.updatedAt || Date.now() });
-  const PRIVATE = { settings: settingsBody, map: mapBody }; // private docs (users/{uid}/items/…), everything else is a task
+  const boardBody = () => ({ kind: 'board', charts: state.board.charts, updatedAt: state.board.updatedAt || Date.now() });
+  const PRIVATE = { settings: settingsBody, map: mapBody, board: boardBody }; // private docs (users/{uid}/items/…), everything else is a task
+  const LEGACY_BOARD = 'cadence.chart.board'; // before v14, saved charts lived in this browser only
+  let boardSeen = false;
+  function takeBoard(body) {
+    if (!body || body.updatedAt === state.board.updatedAt) return false;
+    state.board = { charts: Array.isArray(body.charts) ? C.clone(body.charts) : [], updatedAt: body.updatedAt || 0 };
+    return true;
+  }
   const emptyMap = () => ({ nodes: [], edges: [], updatedAt: 0 });
   let mapSeen = false;       // the cloud has a map doc
   let mapBusy = false;       // a drag or resize is in progress: hold incoming map changes
@@ -207,6 +216,11 @@
         }
         return;
       }
+      if (d.id === 'board') {
+        boardSeen = true;
+        if (!pending('board') && !failed.has('board')) takeBoard(body);
+        return;
+      }
       if (d.id === 'map') {
         mapSeen = true;
         if (pending('map') || failed.has('map')) return;
@@ -234,6 +248,7 @@
   function pushAll() {
     queueWrite('settings');
     if (state.map.nodes.length || mapSeen) queueWrite('map');
+    if (state.board.charts.length || boardSeen) queueWrite('board');
     state.tasks.forEach((t) => queueWrite(t.id));
   }
 
@@ -343,15 +358,30 @@
         state.me = local.me || null;
         state.seen = local.seen || [];
         state.map = local.map && Array.isArray(local.map.nodes) ? local.map : emptyMap();
+        state.board = local.board && Array.isArray(local.board.charts) ? local.board : { charts: [], updatedAt: 0 };
         state.mapRev++;
         state.ready = true;
         emit();
       }
+      // charts saved in this browser by an older version join the board
+      let legacyBoard = null;
+      try { legacyBoard = JSON.parse(localStorage.getItem(LEGACY_BOARD)); } catch (e) { /* none */ }
+      if (Array.isArray(legacyBoard) && legacyBoard.length && !state.board.charts.length) state.board = { charts: legacyBoard, updatedAt: Date.now() };
       const res = await connect();
       const status = res && res.status;
       // never push one person's cached tasks into a different signed-in account
       const foreign = local && local.owner && res && local.owner !== res.uid;
-      if (foreign) { state.seen = []; if (!mapSeen) { state.map = emptyMap(); state.mapRev++; } }
+      if (foreign) { state.seen = []; if (!mapSeen) { state.map = emptyMap(); state.mapRev++; } if (!boardSeen) state.board = { charts: [], updatedAt: 0 }; }
+      if (Array.isArray(legacyBoard)) {
+        // merge old browser-only charts into an existing cloud board (skip ones already there)
+        if (!foreign && boardSeen && legacyBoard.length) {
+          const have = new Set(state.board.charts.map((c) => c.id));
+          const add = legacyBoard.filter((c) => c && !have.has(c.id));
+          if (add.length) { state.board = { charts: state.board.charts.concat(add), updatedAt: Date.now() }; queueWrite('board'); }
+        }
+        try { localStorage.removeItem(LEGACY_BOARD); } catch (e) { /* blocked */ }
+      }
+      if (status === 'remote-data' && !boardSeen && !foreign && state.board.charts.length) queueWrite('board');
       // first sign-in on a version with the map: send the map this device already has
       if (status === 'remote-data' && !mapSeen && !foreign && state.map.nodes.length) queueWrite('map');
       if ((!local || foreign) && status !== 'remote-data') {
@@ -480,6 +510,11 @@
       mapBusy = !!v;
       if (!mapBusy && mapDeferred) { const b = mapDeferred; mapDeferred = null; if (!pending('map') && takeMap(b)) { writeLocal(); emit(); } }
     },
+    /* ---------- board (saved charts) ---------- */
+    setBoard(charts) {
+      state.board = { charts, updatedAt: Math.max(Date.now(), (state.board.updatedAt || 0) + 1) };
+      commit('board');
+    },
     mapTooBig() { try { return JSON.stringify(mapBody()).length > 900000; } catch (e) { return false; } },
 
     setTypes(types) { state.types = types; commit('settings'); },
@@ -504,7 +539,7 @@
     loadSamples() { sampleTasks().forEach((t) => { state.tasks.push(t); commit(t.id, true); }); emit(); },
 
     exportJSON() {
-      return JSON.stringify({ app: 'cadence', version: 2, exportedAt: new Date().toISOString(), tasks: state.tasks, types: state.types, levels: state.levels, map: { nodes: state.map.nodes, edges: state.map.edges } }, null, 2);
+      return JSON.stringify({ app: 'cadence', version: 2, exportedAt: new Date().toISOString(), tasks: state.tasks, types: state.types, levels: state.levels, map: { nodes: state.map.nodes, edges: state.map.edges }, board: state.board.charts }, null, 2);
     },
     importJSON(text) {
       const data = JSON.parse(text);
@@ -522,6 +557,7 @@
         state.map.updatedAt = Date.now(); state.mapRev++;
         commit('map', true);
       }
+      if (Array.isArray(data.board)) { state.board = { charts: C.clone(data.board), updatedAt: Date.now() }; commit('board', true); }
       let added = 0;
       data.tasks.forEach((t) => {
         if (!t || !t.id || !t.title) return;
@@ -570,6 +606,8 @@
       state.prefs = { ...DEFAULT_PREFS, theme: state.prefs.theme };
       state.map = { nodes: [], edges: [], updatedAt: Date.now() }; state.mapRev++;
       commit('map', true);
+      state.board = { charts: [], updatedAt: Date.now() };
+      commit('board', true);
       commit('settings');
     }
   };

@@ -7,7 +7,7 @@ A build-free task app: plain HTML, CSS and JavaScript files. No bundler, no npm 
 - **Sharing**: assign a task to anyone who has signed in with Google; they see it in their own list
 - **Insights**: completed vs. added per week, on-time rate, streak, a daily activity heatmap, and breakdowns by type, importance, overdue age and shared tasks
 - **Chart builder**: drag fields (type, importance, status, dates, assignee…) onto X axis, Values and Split by to make column, bar, line, area, pie, donut and scatter charts; save favorites to a board
-- **Board**: your saved charts on their own page; tap any bar, slice or point to open a list of the tasks behind it, complete them, or open one to edit
+- **Board**: your saved charts on their own page, synced to your account (private to you); tap any bar, slice or point to open a list of the tasks behind it, complete them, or open one to edit
 - **Map: Canvas, Outline, Table**: one mind map shown three ways. The canvas has nodes in eight shapes, colors and fills, connections and dotted flows, fold/focus/tidy for branches, box select, a minimap, a node inspector, undo/redo, and PNG export. The outline is a keyboard-driven indented list with PDF export. The table lets you sort, filter, edit cells inline and change many nodes at once
 - **Tasks on the map**: link any task to a node (in the editor, or with `@node` in quick add). Nodes show their open-task count, the inspector lists their tasks, and the Tasks page can filter by node or group by map cluster
 - **Settings**: task types (name, color, icon, order), importance levels (name, color, rank, default), theme, week start, backup and restore
@@ -62,6 +62,7 @@ Once configured, the app shows a sign-in screen. Data is stored like this:
 tasks/{taskId}               every task; members = [owner] or [owner, assignee]; optional nodeId
 users/{uid}/items/settings   your types, importance levels, defaults (private)
 users/{uid}/items/map        your map: nodes + edges (private)
+users/{uid}/items/board      charts saved to your Board (private)
 people/{email}               { uid, name }, so others can assign you tasks by email
 ```
 
@@ -86,6 +87,7 @@ In the task editor, **Assigned to** shows "Me", the people you've worked with re
 - The assignee sees the owner's type and importance names and colors, even if their own settings differ.
 - Completing a repeating task as the assignee creates the next occurrence for the same owner and assignee.
 - The app shows a notice when someone assigns you a task, and when an assignee completes or hands back one of yours. Use the **Assigned to me** / **Assigned to others** filters on the Tasks page to see just those.
+- **Version 14 syncs the Board.** Saved charts used to live in one browser. Now they're saved to your account, private to you, and follow you to every device. The first time each browser opens version 14, its saved charts are added to your account's board (duplicates are skipped). Deploy the new `firestore.rules` first, or the board can't be saved.
 - **Version 13 adds the map. Deploy the new `firestore.rules` before uploading the new files**: the old rules reject the map document and any task with a `nodeId`.
 - Version 8 moves tasks from the old `users/{uid}/items/{taskId}` location to `tasks/` automatically the first time each person signs in. **Deploy the new rules before uploading the new files**, or the move fails (nothing is lost; the app says so and offers Retry). After the move, the old location no longer accepts task writes, so an outdated open tab gets a sync error until it reloads.
 
@@ -131,4 +133,4 @@ Scripts load in the order listed in `index.html`; keep that order if you add fil
 
 **Don't overwrite your `firebase-config.js`.** Update zips from here leave it out, so your filled-in copy on GitHub stays as it is.
 
-`index.html` loads every file with a version tag (`app.js?v=13`). When you change any file, bump the number in `index.html` (and `C.VERSION` in `utils.js`) so browsers fetch the new copies instead of cached ones. Settings → Your data shows the version each device is running.
+`index.html` loads every file with a version tag (`app.js?v=14`). When you change any file, bump the number in `index.html` (and `C.VERSION` in `utils.js`) so browsers fetch the new copies instead of cached ones. Settings → Your data shows the version each device is running.
