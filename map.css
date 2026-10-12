@@ -428,3 +428,33 @@ button.status { cursor: pointer; }
   .cv-zoom #cv-zout, .cv-zoom #cv-zin { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .cv-insp { animation: none; } }
+
+/* ---------- canvas heat overlay ---------- */
+.cv-heat-btn.on { color: var(--accent); background: var(--accent-soft); }
+.node.heat::before { border-color: var(--border); }
+.node.heat.is-root::before { background: var(--fill); border-color: var(--line-strong); }
+.node.heat.is-root { color: inherit; }
+.node.heat-none { opacity: .42; }
+.node-badge.heat-val { background: var(--ink); color: var(--bg); min-width: 24px; padding: 0 6px; }
+.cv-heat {
+  position: absolute; z-index: 50; top: 72px; right: 16px; width: 272px; padding: 12px 14px; border-radius: var(--r-lg);
+  display: flex; flex-direction: column; gap: 8px; transition: right .22s var(--ease);
+  background: color-mix(in oklab, var(--surface) 94%, transparent); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  border: 1px solid var(--line); box-shadow: var(--shadow-2);
+}
+.cv.insp-open .cv-heat { right: calc(12px + 344px + 16px); }
+.cv-heat-head { display: flex; align-items: center; gap: 6px; }
+.cv-heat-head .eyebrow { flex: none; }
+.cv-heat-pick { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-sm); font-weight: 650; text-align: left; border-radius: 8px; padding: 3px 6px; }
+.cv-heat-pick:hover { background: var(--surface-2); }
+.cv-heat-pick .ic { width: 14px; height: 14px; color: var(--ink-3); flex: none; }
+.cv-heat-bar { height: 10px; border-radius: 5px; box-shadow: inset 0 0 0 1px var(--line); }
+.cv-heat-scale { display: flex; justify-content: space-between; font-size: 11px; color: var(--ink-3); margin-top: -4px; }
+.cv-heat-roll { display: flex; align-items: center; gap: 7px; font-size: var(--fs-xs); color: var(--ink-2); cursor: pointer; }
+.cv-heat-roll input { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; }
+.cv-heat .fine { margin: 0; }
+@media (max-width: 899px) {
+  .cv-heat { top: 118px; left: 10px; right: 10px; width: auto; padding: 10px 12px; gap: 6px; }
+  .cv-heat .fine { display: none; }
+  .cv.insp-open .cv-heat { display: none; }
+}

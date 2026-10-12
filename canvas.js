@@ -29,6 +29,7 @@
         '<div class="cv-head-acts">' +
         '<button type="button" class="icon-btn" id="cv-undo" title="Undo (' + (M().IS_MAC ? '⌘' : 'Ctrl+') + 'Z)" aria-label="Undo">' + icon('undo') + '</button>' +
         '<button type="button" class="icon-btn" id="cv-redo" title="Redo (' + (M().IS_MAC ? '⌘⇧' : 'Ctrl+') + (M().IS_MAC ? 'Z' : 'Y') + ')" aria-label="Redo">' + icon('redo') + '</button>' +
+        '<button type="button" class="icon-btn cv-heat-btn" id="cv-heatbtn" title="Color nodes by…" aria-label="Color nodes by a measure" aria-haspopup="menu">' + icon('heat') + '</button>' +
         '<button type="button" class="icon-btn cv-clusters-btn" id="cv-clusters" title="Clusters" aria-label="Clusters">' + icon('cluster') + '</button>' +
         '<button type="button" class="icon-btn" id="cv-more" title="More" aria-label="More canvas actions" aria-haspopup="menu">' + icon('more') + '</button>' +
         '</div></header>' +
@@ -59,10 +60,11 @@
         '<button type="button" class="cv-ztext mono" id="cv-zt" title="Reset to 100%">100%</button>' +
         '<button type="button" class="icon-btn sm" id="cv-zin" aria-label="Zoom in">' + icon('plus') + '</button>' +
         '<button type="button" class="icon-btn sm" id="cv-fit" title="Fit the map" aria-label="Fit the map">' + icon('fit') + '</button></div>' +
+        '<div class="cv-heat" id="cv-heat" hidden></div>' +
         '<aside class="cv-insp" id="cv-insp" aria-label="Node details" hidden><div class="cv-insp-body" id="cv-insp-body"></div></aside>' +
         '<div class="cv-empty" id="cv-empty" hidden></div>' +
         '</section>';
-      ['cv', 'cv-vp', 'cv-world', 'cv-svg', 'cv-hull', 'cv-edges', 'cv-nodes', 'cv-marquee', 'cv-count', 'cv-undo', 'cv-redo', 'cv-hint', 'cv-qb', 'cv-edge', 'cv-tools', 'cv-mm', 'cv-mm-c', 'cv-mm-v', 'cv-zt', 'cv-insp', 'cv-insp-body', 'cv-empty']
+      ['cv', 'cv-vp', 'cv-world', 'cv-svg', 'cv-hull', 'cv-edges', 'cv-nodes', 'cv-marquee', 'cv-count', 'cv-undo', 'cv-redo', 'cv-hint', 'cv-qb', 'cv-edge', 'cv-tools', 'cv-mm', 'cv-mm-c', 'cv-mm-v', 'cv-zt', 'cv-insp', 'cv-insp-body', 'cv-empty', 'cv-heat', 'cv-heatbtn']
         .forEach((id) => { R[id.replace('cv-', '').replace(/-(\w)/g, (m, c) => c.toUpperCase())] = el.querySelector('#' + id); });
       V = ui.view || { x: 0, y: 0, zoom: 1 };
       ui.view = V;
@@ -97,6 +99,7 @@
       renderBoard();
       renderHead();
       renderEmpty();
+      renderHeat();
       renderInspector();
     },
     centerWorld() { const r = vpRect(); return toWorld(r.left + r.width / 2, r.top + r.height / 2); },
@@ -121,7 +124,7 @@
     exportPNG
   };
 
-  const sig = () => M().rev() + '#' + M().tasksSig() + '#' + document.documentElement.getAttribute('data-theme') + (matchMedia('(prefers-color-scheme: dark)').matches ? 'd' : 'l');
+  const sig = () => M().rev() + '#' + M().tasksSig() + '#' + JSON.stringify(M().ui.heat) + '#' + document.documentElement.getAttribute('data-theme') + (matchMedia('(prefers-color-scheme: dark)').matches ? 'd' : 'l');
 
   /* -------------------------------------------------------------- geometry */
   function vpRect() {
@@ -175,6 +178,67 @@
     return { d: 'M ' + x1 + ' ' + y1 + ' Q ' + cx + ' ' + cy + ' ' + x2 + ' ' + y2, mx: 0.25 * x1 + 0.5 * cx + 0.25 * x2, my: 0.25 * y1 + 0.5 * cy + 0.25 * y2 };
   }
 
+  /* ------------------------------------------------------------ heat overlay */
+  const DAY = 864e5;
+  const avgOf = (ts, f) => { const v = ts.map(f).filter((x) => x != null); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+  const HEAT = [
+    { id: 'open', label: 'Open tasks', unit: '', calc: (ts) => ts.filter((t) => !t.done).length },
+    { id: 'overdue', label: 'Overdue tasks', unit: '', calc: (ts, c) => ts.filter((t) => !t.done && t.due && t.due < c.tk).length },
+    { id: 'late', label: 'Average days late', unit: 'd', calc: (ts, c) => avgOf(ts, (t) => C.charts.NUMS.late.get(t, c)) },
+    { id: 'age', label: 'Average age of open tasks', unit: 'd', calc: (ts, c) => avgOf(ts.filter((t) => !t.done), (t) => C.charts.NUMS.age.get(t, c)) },
+    { id: 'onTime', label: '% done on time', unit: '%', good: true, fixed: 100, calc: (ts) => avgOf(ts, (t) => C.charts.NUMS.onTime.get(t)) },
+    { id: 'recent', label: 'Done in the last 4 weeks', unit: '', good: true, calc: (ts, c) => ts.filter((t) => t.done && t.doneAt && t.doneAt > c.now - 28 * DAY).length }
+  ];
+  const heatDef = () => HEAT.find((h) => h.id === M().ui.heat.metric) || null;
+  const hex2rgb = (h) => { h = String(h).trim().replace('#', ''); if (h.length === 3) h = h.split('').map((x) => x + x).join(''); return [0, 2, 4].map((i) => parseInt(h.substr(i, 2), 16) || 0); };
+  const tok = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '#888888';
+  /** Map nodeId → { v, txt } for the chosen measure, plus the scale */
+  function heatValues() {
+    const h = heatDef();
+    if (!h || !C.charts) return null;
+    const ctx = { tk: C.D.todayKey(), now: Date.now() }, idx = M().taskIndex(), rollup = !!M().ui.heat.rollup;
+    const out = new Map(); let max = 0;
+    M().nodes().forEach((n) => {
+      let ts = idx.get(n.id) || [];
+      if (rollup) M().descendantIds(n.id).forEach((d) => { const x = idx.get(d); if (x) ts = ts.concat(x); });
+      if (!ts.length) return;
+      const v = h.calc(ts, ctx);
+      if (v == null) return;
+      out.set(n.id, { v, txt: C.charts.fmt(v, h.unit) });
+      max = Math.max(max, v);
+    });
+    const hi = h.fixed || Math.max(max, 1);
+    const surf = hex2rgb(tok('--surface')), hot = hex2rgb(tok(h.good ? '--ok' : '--danger'));
+    const mix = (t) => surf.map((c, i) => Math.round(c + (hot[i] - c) * t));
+    return { h, out, hi, max, color: (v) => { const t = 0.1 + 0.9 * Math.max(0, Math.min(1, v / hi)); const rgb = mix(t); return { fill: 'rgb(' + rgb.join(', ') + ')', dark: (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255 < 0.55 }; }, lo: 'rgb(' + mix(0.1).join(', ') + ')', top: 'rgb(' + mix(1).join(', ') + ')' };
+  }
+  function renderHeat() {
+    const box = R.heat, h = heatDef();
+    R.heatbtn.classList.toggle('on', !!h);
+    R.cv.classList.toggle('heat-on', !!h);
+    if (!h || !M().nodes().length) { box.hidden = true; return; }
+    const hv = heatValues();
+    box.hidden = false;
+    box.innerHTML = '<div class="cv-heat-head"><span class="eyebrow">Color by</span>' +
+      '<button type="button" class="cv-heat-pick" data-heat-menu aria-haspopup="menu">' + esc(h.label) + icon('chevD') + '</button>' +
+      '<button type="button" class="icon-btn sm" data-heat-off aria-label="Turn off coloring" title="Turn off">' + icon('x') + '</button></div>' +
+      '<div class="cv-heat-bar" style="background:linear-gradient(90deg,' + hv.lo + ',' + hv.top + ')"></div>' +
+      '<div class="cv-heat-scale mono"><span>' + C.charts.fmt(0, h.unit) + '</span><span>' + C.charts.fmt(hv.hi, h.unit) + (h.fixed ? '' : hv.max ? '' : '') + '</span></div>' +
+      '<label class="cv-heat-roll"><input type="checkbox" data-heat-rollup' + (M().ui.heat.rollup ? ' checked' : '') + '>Include each branch below a node</label>' +
+      '<p class="fine">' + (hv.out.size ? hv.out.size + ' node' + (hv.out.size === 1 ? '' : 's') + ' measured. Faded nodes have no tasks to measure.' : 'No nodes have tasks to measure yet. Link tasks to nodes to see colors.') + '</p>';
+  }
+  function heatMenu(anchor) {
+    const cur = M().ui.heat.metric;
+    M().menu([{ head: 'Color nodes by' }].concat(HEAT.map((h) => ({ label: h.label, ic: cur === h.id ? 'check' : null, dot: cur === h.id ? null : (h.good ? tok('--ok') : tok('--danger')), run: () => setHeat(h.id) })))
+      .concat(cur ? ['sep', { label: 'Turn off', ic: 'x', run: () => setHeat(null) }] : []), { anchor });
+  }
+  function setHeat(metric, rollup) {
+    const ui = M().ui;
+    ui.heat = { metric, rollup: rollup == null ? ui.heat.rollup : rollup };
+    M().saveUi();
+    view.render();
+  }
+
   /* -------------------------------------------------------------- rendering */
   function selectedBranch() {
     const ui = M().ui;
@@ -214,14 +278,14 @@
     sizeSvg();
     R.nodes.textContent = '';
     const nf = document.createDocumentFragment();
-    const idx = M().taskIndex();
-    M().nodes().forEach((n) => { if (!boardHidden.has(n.id)) nf.appendChild(buildNode(n, branch, idx)); });
+    const idx = M().taskIndex(), hv = heatValues();
+    M().nodes().forEach((n) => { if (!boardHidden.has(n.id)) nf.appendChild(buildNode(n, branch, idx, hv)); });
     R.nodes.appendChild(nf);
     R.hull.textContent = '';
     if (branch) drawHull(branch);
     positionQuickbar(); positionEdgeChip(); drawMinimap();
   }
-  function buildNode(node, branch, idx) {
+  function buildNode(node, branch, idx, hv) {
     const ui = M().ui, m = M();
     const el = document.createElement('div');
     el.id = 'node-' + node.id;
@@ -267,7 +331,22 @@
     if (node.height) el.style.height = node.height + 'px';
     if (node.width || node.height) el.style.maxWidth = 'none';
     const tc2 = m.taskCounts(node.id, idx);
-    if (tc2.open) {
+    if (hv) {
+      const hx = hv.out.get(node.id);
+      if (hx) {
+        const c = hv.color(hx.v);
+        el.classList.add('heat'); el.classList.remove('has-fill');
+        el.style.setProperty('--fill', c.fill);
+        el.style.color = c.dark ? '#ffffff' : '#17181c';
+        el.title = hv.h.label + ': ' + hx.txt;
+        if (hx.v) {
+          const b = document.createElement('span');
+          b.className = 'node-badge heat-val';
+          b.textContent = hx.txt;
+          el.appendChild(b);
+        }
+      } else el.classList.add('heat-none');
+    } else if (tc2.open) {
       const b = document.createElement('span');
       b.className = 'node-badge' + (tc2.overdue ? ' late' : '');
       b.textContent = tc2.open;
@@ -650,6 +729,7 @@
       { label: 'Export canvas as PNG', ic: 'image', run: exportPNG },
       { label: 'Export outline as PDF', ic: 'file', run: () => { C.go('outline'); setTimeout(() => C.views.outline.exportPDF(), 120); } },
       'sep',
+      { label: 'Color nodes by…', ic: 'heat', run: () => heatMenu(anchor) },
       { label: 'New cluster', ic: 'cluster', run: () => M().newCluster() },
       { label: 'Fold every branch', ic: 'fold', run: () => M().setAllCollapsed(true) },
       { label: 'Unfold every branch', ic: 'fold', run: () => M().setAllCollapsed(false) },
@@ -1033,6 +1113,12 @@
     R.redo.addEventListener('click', () => M().redo());
     root.querySelector('#cv-more').addEventListener('click', (e) => moreMenu(e.currentTarget));
     root.querySelector('#cv-clusters').addEventListener('click', (e) => clustersMenu(e.currentTarget));
+    R.heatbtn.addEventListener('click', (e) => heatMenu(e.currentTarget));
+    R.heat.addEventListener('click', (e) => {
+      if (e.target.closest('[data-heat-off]')) setHeat(null);
+      else if (e.target.closest('[data-heat-menu]')) heatMenu(e.target.closest('[data-heat-menu]'));
+    });
+    R.heat.addEventListener('change', (e) => { if (e.target.hasAttribute('data-heat-rollup')) setHeat(M().ui.heat.metric, e.target.checked); });
     R.edge.addEventListener('click', () => { if (ui.selectedEdge) M().deleteEdge(ui.selectedEdge); });
     R.qb.addEventListener('mousedown', (e) => e.stopPropagation());
     R.qb.addEventListener('click', (e) => {

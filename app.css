@@ -1027,3 +1027,51 @@ button.mix-key:hover { color: var(--ink); }
 }
 .sh-arrow { color: var(--ink-3); font-weight: 400; }
 .rec-who { color: var(--ink-2); }
+
+/* ---------- Chart builder: goals, sunburst, KPI tiles (v15) ---------- */
+.cb-types { flex-wrap: nowrap; }
+.cb-type { min-width: 60px; }
+.cb-goal-ctl { display: inline-flex; align-items: center; gap: 6px; }
+.cb-goal-in { width: 84px; height: 32px; padding: 0 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); font: 500 var(--fs-sm) var(--font-body); outline: 0; }
+.cb-goal-in:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); background: var(--surface); }
+.cb-goal-unit { font-size: var(--fs-xs); }
+.chart .cb-goal { stroke: var(--ink-2); stroke-width: 1.6; stroke-dasharray: 6 4; pointer-events: none; }
+.chart .cb-goal-lab { fill: var(--ink-2); font: 650 11px var(--font-body); pointer-events: none; paint-order: stroke; stroke: var(--surface); stroke-width: 4px; stroke-linejoin: round; }
+.cb-bar.miss { fill-opacity: .38; }
+.cb-dot.miss { stroke: var(--danger); }
+.cb-goal-key { display: inline-flex; align-items: center; gap: 6px; }
+.lg-goal { width: 18px; height: 0; border-top: 2px dashed var(--ink-2); }
+.cb-sun { stroke: var(--surface); stroke-width: 1.5; }
+.cb-sun-lab { fill: #fff; font: 650 11px var(--font-body); pointer-events: none; paint-order: stroke; stroke: rgb(0 0 0 / .32); stroke-width: 2.5px; stroke-linejoin: round; }
+.cb-sun-core { fill: var(--surface-2); cursor: pointer; outline: none; }
+.cb-sun-core:hover, .cb-sun-core:focus-visible { fill: var(--surface-3); }
+.cb-sun-num { font-size: 24px; }
+.cb-canvas .chart:has(.cb-sun.tipped) .cb-sun:not(.tipped), .bd-plot .chart:has(.cb-sun.tipped) .cb-sun:not(.tipped) { opacity: .5; }
+.cb-heatlink { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-size: var(--fs-sm); }
+.kpi { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; width: 100%; max-width: 440px; margin: 0 auto; padding: 6px 2px 2px; text-align: left; border-radius: var(--r-md); cursor: pointer; }
+.cb-canvas .kpi { cursor: default; }
+.kpi-num { font-family: var(--font-display); font-weight: 750; font-size: clamp(2.8rem, 2rem + 3vw, 4.2rem); line-height: .95; letter-spacing: -.035em; font-variation-settings: "opsz" 96; }
+.kpi.compact .kpi-num { font-size: 2.6rem; }
+.kpi.met .kpi-num { color: var(--ok); }
+.kpi.missed .kpi-num { color: var(--danger); }
+.kpi-sub { font-size: var(--fs-xs); color: var(--ink-3); }
+.kpi-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-height: 22px; }
+.kpi-delta { font-size: var(--fs-xs); font-weight: 650; color: var(--ink-2); }
+.kpi-delta.up { color: var(--ok); }
+.kpi-delta.down { color: var(--danger); }
+.kpi-goalpill { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 650; background: var(--surface-2); color: var(--ink-2); }
+.kpi-goalpill .ic { width: 12px; height: 12px; stroke-width: 2.4; }
+.kpi.met .kpi-goalpill { background: color-mix(in oklab, var(--ok) 14%, var(--surface)); color: var(--ok); }
+.kpi.missed .kpi-goalpill { background: color-mix(in oklab, var(--danger) 12%, var(--surface)); color: var(--danger); }
+.kpi-spark { width: 100%; height: 56px; overflow: visible; margin-top: 4px; }
+.kpi-line { fill: none; stroke: var(--accent); stroke-width: 2.2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.kpi-area { fill: var(--accent); fill-opacity: .12; }
+.kpi-goal { stroke: var(--ink-3); stroke-width: 1.4; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
+.kpi-dot { fill: var(--accent); }
+.kpi.met .kpi-line, .kpi.met .kpi-dot { stroke: var(--ok); } .kpi.met .kpi-dot { fill: var(--ok); } .kpi.met .kpi-area { fill: var(--ok); }
+.kpi-cap { font-size: 11px; }
+.bd-kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); gap: 16px; margin-bottom: 16px; }
+.bd-kpi { gap: 4px; padding: 16px 16px 12px; }
+.bd-kpi .cb-card-head h2 { font-size: 1rem; }
+.bd-kpi .kpi:hover .kpi-num { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 6px; text-decoration-color: var(--line-strong); }
+.chart .cb-sun-num, .chart .cb-sun-lab, .chart .cb-sun-num + .ax { pointer-events: none; }

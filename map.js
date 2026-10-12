@@ -59,6 +59,7 @@
     view: saved.view && isFinite(saved.view.zoom) ? saved.view : null,
     lastRoute: MAP_ROUTES.includes(saved.lastRoute) ? saved.lastRoute : 'canvas',
     selected: new Set(), selectedEdge: null, mode: 'pan', connectSource: null,
+    heat: saved.heat && saved.heat.metric ? saved.heat : { metric: null, rollup: false },
     focusReq: null, _viewSet: !!(saved.view && isFinite(saved.view.zoom)),
     outlineCollapsed: new Set(), outlineFilter: '', outlineFocus: null, outlineEditing: null,
     table: {
@@ -71,7 +72,7 @@
     try {
       localStorage.setItem(UI_KEY, JSON.stringify({
         collapsed: [...ui.collapsed], hiddenClusters: [...ui.hiddenClusters], view: ui.view, lastRoute: ui.lastRoute,
-        tableGroup: ui.table.group, tableColumns: ui.table.columns
+        tableGroup: ui.table.group, tableColumns: ui.table.columns, heat: ui.heat
       }));
     } catch (e) { /* storage blocked */ }
   }, 300);
