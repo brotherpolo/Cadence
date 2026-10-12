@@ -1164,3 +1164,30 @@ button.mix-key:hover { color: var(--ink); }
   .pref-def .seg { align-self: stretch; display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); }
   .pref-def .seg-btn { justify-content: center; }
 }
+
+/* ---------- Chart builder: ask for a chart in words; reschedule counts (v19) ---------- */
+.cb-ask { display: flex; gap: 8px; align-items: center; }
+.cb-ask-box { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; height: 46px; padding: 0 14px; border-radius: var(--r-md); border: 1px solid var(--line); background: var(--surface); box-shadow: var(--shadow-1); transition: border-color .15s, box-shadow .15s; }
+.cb-ask-box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.cb-ask-box > .ic { width: 18px; height: 18px; color: var(--accent); flex: none; }
+.cb-ask-box input { flex: 1; min-width: 0; height: 100%; border: 0; outline: 0; background: transparent; color: var(--ink); font: 500 var(--fs-md, 1rem) var(--font-body); }
+.cb-ask-box input::placeholder { color: var(--ink-3); }
+.cb-ask .btn { height: 46px; padding: 0 18px; }
+.cb-asknote { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: -4px 2px 0; font-size: var(--fs-sm); color: var(--ink-2); line-height: 1.4; }
+.cb-asknote > .ic { width: 15px; height: 15px; color: var(--ok); flex: none; }
+.cb-asknote.bad > .ic { color: var(--danger); }
+.cb-asknote b { color: var(--ink); font-weight: 650; }
+.cb-asknote > span { flex: 1; min-width: 0; }
+.cb-asknote.tips > span { flex: none; }
+.cb-askex { height: 28px; padding: 0 10px; border-radius: 999px; border: 1px dashed var(--line-strong); background: none; color: var(--ink-2); font: 500 var(--fs-xs) var(--font-body); cursor: pointer; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.cb-askex:hover { border-style: solid; border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+@media (max-width: 640px) {
+  .cb-ask-box { height: 44px; padding: 0 12px; }
+  .cb-ask-box input { font-size: 16px; } /* no zoom-on-focus on iPhone */
+  .cb-ask .btn { height: 44px; padding: 0 14px; }
+}
+.rec-moved { color: var(--ink-2); }
+.rec-moved.lots { color: var(--danger); font-weight: 600; }
+.ed-moved { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+.ed-moved .ic { width: 13px; height: 13px; }
+.cb-askwrap { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }

@@ -318,7 +318,7 @@
     return xlsxLib;
   }
 
-  const COLS = ['Title', 'Due date', 'Time', 'Type', 'Importance', 'Repeat', 'Done', 'Checklist', 'Notes', 'Assigned to', 'ID'];
+  const COLS = ['Title', 'Due date', 'Time', 'Type', 'Importance', 'Repeat', 'Done', 'Checklist', 'Notes', 'Assigned to', 'Times rescheduled', 'ID'];
   // header names people might use instead, all lowercase
   const ALIASES = {
     title: ['title', 'task', 'name', 'task name'],
@@ -360,12 +360,13 @@
           (t.subtasks || []).map((x) => (x.done ? '[x] ' : '[ ] ') + x.title).join('\n'),
           t.notes || '',
           who,
+          t.moved || 0,
           t.id
         ]);
       });
       const ws = X.utils.aoa_to_sheet(rows);
       for (let r = 1; r < rows.length; r++) { const c = ws[X.utils.encode_cell({ r, c: 1 })]; if (c && c.t === 'n') c.z = 'yyyy-mm-dd'; }
-      ws['!cols'] = [{ wch: 40 }, { wch: 12 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 16 }, { wch: 7 }, { wch: 40 }, { wch: 40 }, { wch: 26 }, { wch: 22 }];
+      ws['!cols'] = [{ wch: 40 }, { wch: 12 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 16 }, { wch: 7 }, { wch: 40 }, { wch: 40 }, { wch: 26 }, { wch: 10 }, { wch: 22 }];
       ws['!autofilter'] = { ref: X.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: Math.max(rows.length - 1, 1), c: COLS.length - 1 } }) };
 
       const help = X.utils.aoa_to_sheet([

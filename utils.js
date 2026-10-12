@@ -1,7 +1,7 @@
 /* Cadence — helpers: dates, formatting, escaping, natural-language quick add */
 (function () {
   const C = (window.Cadence = window.Cadence || {});
-  C.VERSION = '18';
+  C.VERSION = '19';
   const pad = (n) => String(n).padStart(2, '0');
 
   const D = {

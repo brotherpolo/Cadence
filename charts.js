@@ -41,6 +41,8 @@
     who: { label: 'Assigned to', words: 'assignee', ic: 'heart', get: (t) => doer(t), order: meFirst, color: personColor },
     by: { label: 'Assigned by', words: 'who assigned it', ic: 'upload', get: (t) => owner(t), order: meFirst, color: personColor },
     handoff: { label: 'Handoff', words: 'handoff', ic: 'repeat', get: (t) => (shared(t) ? owner(t) + ' → ' + doer(t) : 'Not shared'), order: () => ['Not shared'], color: (v) => (v === 'Not shared' ? 'var(--ink-3)' : null) },
+    moves: { label: 'Rescheduled', words: 'how often it was rescheduled', ic: 'repeat', get: (t) => { const m = t.moved || 0; return !t.due && !m ? null : m === 0 ? 'Never' : m === 1 ? 'Once' : m <= 3 ? '2–3 times' : '4+ times'; },
+      order: () => ['Never', 'Once', '2–3 times', '4+ times'], color: (v) => ({ Never: 'var(--ok)', Once: 'var(--accent)', '2–3 times': '#E8743B', '4+ times': 'var(--danger)' }[v]) },
     repeat: { label: 'Repeat', ic: 'repeat', get: (t) => (C.REPEATS.find((r) => r.id === (t.repeat || 'none')) || C.REPEATS[0]).label, order: () => C.REPEATS.map((r) => r.label) }
   };
   /* map fields: only my own tasks link to my map */
@@ -98,6 +100,9 @@
     toDone: { label: 'Days to complete', ic: 'clock', get: (t) => (t.done && t.doneAt && t.createdAt ? Math.max(0, (t.doneAt - t.createdAt) / DAY) : null), aggs: ['avg', 'sum'], unit: 'd' },
     late: { label: 'Days late', ic: 'flag', get: (t, c) => { if (!t.due) return null; const k = t.done ? doneKey(t) : (t.due < c.tk ? c.tk : null); return k ? D.diff(k, t.due) : null; }, aggs: ['avg', 'sum'], unit: 'd' },
     age: { label: 'Age (days)', ic: 'sparkle', get: (t, c) => (t.createdAt ? Math.max(0, (c.now - t.createdAt) / DAY) : null), aggs: ['avg', 'sum'], unit: 'd' },
+    // counted from v19 on: each move of a set due date, and the days it moved later
+    moved: { label: 'Times rescheduled', ic: 'repeat', get: (t) => (t.due || t.moved ? t.moved || 0 : null), aggs: ['sum', 'avg'], unit: '' },
+    pushed: { label: 'Days pushed back', ic: 'calendar', get: (t) => (t.due || t.pushed ? t.pushed || 0 : null), aggs: ['sum', 'avg'], unit: 'd' },
     onTime: { label: '% on time', ic: 'star', get: (t) => { const k = doneKey(t); return k && t.due ? (k <= t.due ? 100 : 0) : null; }, aggs: ['avg'], unit: '%' }
   };
   const field = (id) => DIMS[id] || NUMS[id];
@@ -134,6 +139,9 @@
     { name: 'Open vs. overdue over time', cfg: { type: 'cfd', x: null, y: 'count', series: null, range: '12w' } },
     { name: 'This month vs. last', cfg: { type: 'column', x: 'type', y: 'count', series: null, status: 'done', range: '4w', compare: true } },
     { name: 'Weekly completions vs. goal', cfg: { type: 'column', x: 'completed', y: 'count', series: null, status: 'done', range: '12w', goal: 5, goalDir: 'atLeast' } },
+    { name: 'How often open tasks get moved', cfg: { type: 'column', x: 'moves', y: 'count', series: null, status: 'open' } },
+    { name: 'What I keep pushing back', cfg: { type: 'bar', x: 'type', y: 'pushed', agg: 'avg', series: null, status: 'open' } },
+    { name: 'Does rescheduling make tasks late?', cfg: { type: 'scatter', x: 'moved', y: 'late', series: 'type', status: 'all' } },
     { name: 'Where my open work sits', cfg: { type: 'treemap', x: 'type', y: 'count', series: 'level', status: 'open' } },
     { name: 'Who hands work to whom', cfg: { type: 'handoff', x: null, y: 'count', series: null, status: 'all', selfToo: false } }
   ];
@@ -148,7 +156,7 @@
   const canCompare = () => ['column', 'bar', 'line', 'area'].includes(cfg.type) && !!RANGE_DAYS[curRange()] && !cfg.series;
   const canTrend = () => ['column', 'line', 'area'].includes(cfg.type) && cfg.x && DIMS[cfg.x] && DIMS[cfg.x].time && !cfg.series;
   const GOAL_TYPES = ['column', 'bar', 'line', 'area', 'kpi'];
-  const LOWER_IS_BETTER = ['late', 'age', 'toDone'];
+  const LOWER_IS_BETTER = ['late', 'age', 'toDone', 'moved', 'pushed'];
   const hasGoal = () => GOAL_TYPES.includes(cfg.type) && cfg.goal != null && cfg.goal !== '' && isFinite(cfg.goal);
   const meets = (v) => (cfg.goalDir === 'atMost' ? v <= +cfg.goal : v >= +cfg.goal);
 
@@ -175,6 +183,8 @@
         '<p class="muted cb-lede">Drag fields onto the chart, or tap a field and then tap where it goes. Pick any chart type and save the ones you like to your board.</p></header><div id="cb-root"></div></section>';
       root.addEventListener('click', onClick);
       root.addEventListener('change', onChange);
+      root.addEventListener('submit', (e) => { if (e.target.closest('[data-ask]')) { e.preventDefault(); const i = el.querySelector('#cb-ask'); runAsk(i && i.value); } });
+      root.addEventListener('input', (e) => { if (e.target.id === 'cb-ask') { ui.askText = e.target.value; if (ui.askNote && !e.target.value) { ui.askNote = null; } } });
       root.addEventListener('pointerdown', onDown);
       root.addEventListener('pointerdown', (e) => zoomDown(e, (i0, i1) => { solo = ui.solo; zoom = ui.zoom; const k = zoomKeys(i0, i1); if (k) { ui.zoom = k; render(); } }));
       root.addEventListener('pointerover', (e) => { if (e.pointerType === 'mouse') showTip(e.target); });
@@ -194,6 +204,7 @@
   const VIEW_KEYS = ['type', 'x', 'series', 'y', 'agg', 'status', 'range', 'grain', 'f', 'selfToo'];
   function setCfg(patch) {
     if (VIEW_KEYS.some((k) => k in patch && patch[k] !== cfg[k])) { ui.solo = null; ui.zoom = null; }
+    ui.askNote = null;
     Object.assign(cfg, patch);
     // keep the summary (count / sum / average) valid for the value field
     const y = NUMS[cfg.y];
@@ -387,6 +398,165 @@
   }
   function colorFor(d, k, i) { return (d && d.color && d.color(k)) || PALETTE[i % PALETTE.length]; }
 
+  /* ---------- "type a question": plain words → a chart, the way quick add reads a task ---------- */
+  // phrases are matched longest first; each one is used up so it can't count twice
+  const ASK_DIMS = [
+    ['how often it was rescheduled', 'moves'], ['times moved', 'moves'], ['assigned by', 'by'], ['who assigned', 'by'], ['assigned to', 'who'], ['day of the week', 'weekday'], ['day of week', 'weekday'],
+    ['time of day', 'tod'], ['completion date', 'completed'], ['date completed', 'completed'], ['date added', 'created'], ['created date', 'created'], ['due date', 'due'], ['due day', 'weekday'],
+    ['map cluster', 'cluster'], ['map branch', 'branch'], ['map node', 'node'], ['map depth', 'depth'],
+    ['importance', 'level'], ['priority', 'level'], ['priorities', 'level'], ['levels', 'level'], ['level', 'level'], ['types', 'type'], ['type', 'type'], ['kind', 'type'], ['category', 'type'], ['categories', 'type'],
+    ['status', 'status'], ['assignee', 'who'], ['person', 'who'], ['people', 'who'], ['who', 'who'], ['owner', 'by'], ['handoffs', 'handoff'], ['handoff', 'handoff'], ['repeat', 'repeat'],
+    ['clusters', 'cluster'], ['cluster', 'cluster'], ['branches', 'branch'], ['branch', 'branch'], ['nodes', 'node'], ['node', 'node'], ['depth', 'depth'], ['weekday', 'weekday'],
+    ['due', 'due'], ['created', 'created'], ['added', 'created'], ['completed', 'completed'], ['finished', 'completed'], ['done', 'completed'],
+    ['week', '@week'], ['weeks', '@week'], ['month', '@month'], ['months', '@month'], ['day', '@week']
+  ];
+  const ASK_NUMS = [
+    ['days pushed back', 'pushed'], ['pushing back', 'pushed'], ['push back', 'pushed'], ['putting off', 'pushed'], ['put off', 'pushed'], ['keep moving', 'moved'], ['days pushed', 'pushed'], ['pushed back', 'pushed'], ['times rescheduled', 'moved'], ['rescheduled', 'moved'], ['rescheduling', 'moved'], ['reschedules', 'moved'], ['postponed', 'moved'], ['moved', 'moved'],
+    ['days late', 'late'], ['how late', 'late'], ['lateness', 'late'], ['days to complete', 'toDone'], ['days to finish', 'toDone'], ['time to complete', 'toDone'], ['time to finish', 'toDone'], ['how long', 'toDone'],
+    ['on-time rate', 'onTime'], ['on time rate', 'onTime'], ['on-time', 'onTime'], ['on time', 'onTime'], ['how old', 'age'], ['age', 'age'], ['oldest', 'age'],
+    ['checklist steps', 'steps'], ['checklist', 'steps'], ['subtasks', 'steps'], ['steps', 'steps']
+  ];
+  const ASK_TYPES = [['sunburst', 'sunburst'], ['treemap', 'treemap'], ['tree map', 'treemap'], ['burn-up', 'burnup'], ['burn up', 'burnup'], ['burnup', 'burnup'], ['cumulative flow', 'cfd'], ['flow', 'cfd'],
+    ['scatter', 'scatter'], ['donut', 'donut'], ['doughnut', 'donut'], ['pie', 'pie'], ['horizontal bar', 'bar'], ['bars', 'column'], ['bar', 'column'], ['columns', 'column'], ['column', 'column'], ['histogram', 'column'],
+    ['line', 'line'], ['area', 'area'], ['kpi', 'kpi'], ['tile', 'kpi'], ['number', 'kpi']];
+  const reEsc = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s+');
+  /** a whole-word phrase; pre/post are raw regex pieces around it */
+  const RX = (w, post, pre) => new RegExp('(^|\\s)' + (pre || '') + reEsc(w) + (post || '') + '(?=\\s|$)', 'i');
+  function parseAsk(text) {
+    let t = ' ' + text.toLowerCase().replace(/[’']s\b/g, '').replace(/[^\p{L}\p{N}%.\-\s]/gu, ' ').replace(/\s+/g, ' ').trim() + ' ';
+    const out = Object.assign({}, BLANK, { type: null, x: null, series: null, title: '', id: null });
+    const hit = { n: 0 };
+    const take = (re) => { const m = t.match(re); if (!m) return null; t = t.slice(0, m.index) + ' ' + t.slice(m.index + m[0].length); hit.n++; return m; };
+    const has = (re) => re.test(t);
+    // dates
+    const RANGES = [[/\b(all time|ever|always|of all time)\b/, 'all'], [/\b(this|last|past|previous|the)?\s*(year|12 months|365 days)\b/, '1y'], [/\b((this|last|past|previous|the)\s+)?(6 months|six months|half a year|half year)\b/, '6m'],
+      [/\b((this|last|past|previous|the)\s+)?(12 weeks|twelve weeks|3 months|three months|quarter|90 days)\b/, '12w'], [/\b(this|last|past)\s+(month|4 weeks|four weeks|30 days)\b|\b(4 weeks|30 days|a month)\b/, '4w'], [/\b(this|last|past)\s+(week|7 days|seven days)\b/, '4w']];
+    const weekly = has(/\bthis week\b/);
+    for (const [re, v] of RANGES) if (take(re)) { out.range = v; break; }
+    take(/\b(over|in|during|for|from)\s*(the)?\s*$/);
+    if (take(/\b(compared? (with|to)|vs\.? (the )?(last|previous)( period)?|versus (the )?(last|previous)|than (the )?(last|previous)( one)?|previous period)\b/)) out.compare = true;
+    // goals
+    let m;
+    if ((m = take(/\b(?:goal|target)\s*(?:of|is|=|:)?\s*(\d+(?:\.\d+)?)/))) out.goal = +m[1];
+    if ((m = take(/\b(?:at least|min(?:imum)?(?: of)?)\s*(\d+(?:\.\d+)?)/))) { out.goal = +m[1]; out.goalDir = 'atLeast'; }
+    if ((m = take(/\b(?:at most|no more than|max(?:imum)?(?: of)?|under|below|fewer than|less than)\s*(\d+(?:\.\d+)?)/))) { out.goal = +m[1]; out.goalDir = 'atMost'; }
+    if (take(/\b(rolling|moving) average\b/)) out.trend = 'avg'; else if (take(/\b(with (a )?)?trend ?line\b|\bwith (a )?trend\b/)) out.trend = 'linear';
+    if (take(/\b(who (assigns|gives|hands|sends)( out)?( (work|tasks|things))?( to (whom|who))?|hands? off|handed off|handoffs?( (between|from))?|delegat\w*)\b/)) out.type = 'handoff';
+    if (take(/\b(is my (list|backlog) growing|growing|burn ?down|added vs\.? done|added versus done)\b/)) out.type = 'burnup';
+    if (take(/\bacross the map\b/) && !out.type) out.type = 'sunburst';
+    // summary words
+    if (take(/\b(average|avg|mean|typical)\b/)) out.agg = 'avg'; else if (take(/\b(total|sum of|sum)\b/)) out.agg = 'sum';
+    // "by X", "per X", "split by Y", "and Y"
+    const dimAt = (str) => { for (const [w, id] of ASK_DIMS) { const mm = str.match(new RegExp('^(the\\s+)?' + w.replace(/ /g, '\\s+') + '(?=\\s|$)')); if (mm) return { id, len: mm[0].length }; } return null; };
+    let grain = null;
+    const byRe = /\b(split by|broken down by|grouped by|colou?red by|coloured by|by|per|each|across|for each|over)\s+/g;
+    let found = [], mm2;
+    while ((mm2 = byRe.exec(t))) {
+      const rest = t.slice(mm2.index + mm2[0].length), d = dimAt(rest);
+      if (d) found.push({ start: mm2.index, end: mm2.index + mm2[0].length + d.len, id: d.id, split: /split|broken|colou?red/.test(mm2[1]) });
+      else if (mm2[1] === 'over' && /^time\b/.test(rest)) found.push({ start: mm2.index, end: mm2.index + mm2[0].length + 4, id: '@time' });
+    }
+    // "by type and importance"
+    found.slice().forEach((f) => { const rest = t.slice(f.end).match(/^\s*(and|then|&|,)\s+/); if (rest) { const d = dimAt(t.slice(f.end + rest[0].length)); if (d && !d.id.startsWith('@')) found.push({ start: f.end, end: f.end + rest[0].length + d.len, id: d.id, split: true }); } });
+    found.sort((a, b) => b.start - a.start).forEach((f) => { t = t.slice(0, f.start) + ' ' + t.slice(f.end); hit.n++; });
+    found.sort((a, b) => a.start - b.start);
+    if (/\b(weekly|every week)\b/.test(t)) { take(/\b(weekly|every week)\b/); found.push({ id: '@week' }); }
+    if (/\b(monthly|every month)\b/.test(t)) { take(/\b(monthly|every month)\b/); found.push({ id: '@month' }); }
+    let timeAsked = false;
+    found.forEach((f) => {
+      if (f.id === '@week' || f.id === '@month' || f.id === '@time') { timeAsked = true; if (f.id !== '@time') grain = f.id.slice(1); return; }
+      if (DIMS[f.id] && DIMS[f.id].map && !(C.map && C.map.nodes().length)) return;
+      if (!out.x && !f.split) out.x = f.id; else if (!out.series && f.id !== out.x) out.series = f.id; else if (!out.x) out.x = f.id;
+    });
+    // numbers: "steps vs days to complete" makes a scatter
+    const nums = [];
+    for (const [w, id] of ASK_NUMS) { let mm; while ((mm = t.match(RX(w)))) { nums.push({ id, at: mm.index }); t = t.slice(0, mm.index) + ' ' + t.slice(mm.index + mm[0].length); hit.n++; } }
+    nums.sort((a, b) => a.at - b.at);
+    const uniq = [...new Set(nums.map((n) => n.id))];
+    if (uniq.length >= 2 && (has(/\b(vs\.?|versus|against|and)\b/) || out.type === 'scatter')) { out.type = 'scatter'; out.x = uniq[0]; out.y = uniq[1]; take(/\b(vs\.?|versus|against)\b/); }
+    else if (uniq.length) out.y = uniq[0];
+    // "how often tasks get moved" → group tasks by how many times they moved
+    if (/\bhow often\b/.test(text.toLowerCase()) && out.y === 'moved' && !out.x && out.type !== 'scatter') { out.x = 'moves'; out.y = 'count'; out.agg = 'count'; }
+    // chart type words
+    if (!out.type || out.type === 'scatter') for (const [w, id] of ASK_TYPES) { if (take(RX(w, '(\\s+(chart|graph|plot|tile))?'))) { if (!out.type) out.type = id; break; } }
+    if (take(/\b(how many|count of|number of)\b/)) hit.n += 0;
+    if (take(/\b(trend|trending|over time|timeline)\b/)) timeAsked = true;
+    // status
+    if (take(/\b(overdue|late|past due|behind)\b/)) out.status = 'overdue';
+    else if (take(/\b(open|pending|remaining|outstanding|unfinished|to-?do|left|not done)\b/)) out.status = 'open';
+    else if (take(/\b(done|completed|complete|finished|finish|closed)\b/)) out.status = 'done';
+    // filters: names of your types, levels, people and map branches/clusters
+    const f = {};
+    const nameHit = (name) => name && name.length > 1 && RX(name.toLowerCase()).test(t);
+    const takeName = (name) => take(RX(name.toLowerCase(), '(\\s+tasks?)?'));
+    S().state.types.slice().sort((a, b) => b.name.length - a.name.length).forEach((x) => { if (!f.type && nameHit(x.name)) { takeName(x.name); f.type = x.name; } });
+    S().state.levels.slice().sort((a, b) => b.name.length - a.name.length).forEach((x) => { if (!f.level && nameHit(x.name)) { takeName(x.name); f.level = x.name; } });
+    const mc = mapCtx();
+    if (mc) {
+      mc.order.branch.slice().sort((a, b) => b.length - a.length).forEach((b) => { if (!f.branch && b.length > 2 && nameHit(b)) { takeName(b); f.branch = b; } });
+      mc.order.cluster.slice().sort((a, b) => b.length - a.length).forEach((c) => { if (!f.cluster && !f.branch && c.length > 2 && nameHit(c)) { takeName(c); f.cluster = c; } });
+    }
+    const people = new Set(); S().state.tasks.forEach((x) => { const d = doer(x); if (d !== 'Me') people.add(d); });
+    [...people].forEach((p) => { if (!f.who && nameHit(p)) { take(RX(p.toLowerCase(), '', '((for|by|assigned to|from)\\s+)?')); f.who = p; } });
+    if (take(/\b(assigned to me|my tasks|for me)\b/)) f.who = 'Me';
+    if (Object.keys(f).length) out.f = f;
+    // fill in what wasn't said
+    const timeX = () => (out.status === 'done' || ['toDone', 'onTime'].includes(out.y) ? 'completed' : out.status === 'overdue' || out.y === 'late' ? 'due' : 'created');
+    if (out.type === 'handoff' || FLOW_TYPES.includes(out.type)) { out.x = null; out.series = null; out.y = 'count'; out.agg = 'count'; if (out.type !== 'handoff' && out.range === 'all') out.range = '12w'; }
+    else if (out.type === 'sunburst') { out.x = null; out.series = null; }
+    else if (out.type !== 'scatter') {
+      if (timeAsked && !(out.x && DIMS[out.x] && DIMS[out.x].time)) { if (out.x && !out.series) out.series = out.x; out.x = timeX(); }
+      if (grain) out.grain = grain;
+      if (!out.type) out.type = out.x && DIMS[out.x].time ? (timeAsked && !grain ? 'line' : 'column') : out.x ? (out.series ? 'bar' : 'column') : 'kpi';
+      if (out.type === 'kpi') { if (out.x && !DIMS[out.x].time) out.x = null; if (weekly) { out.kpiPeriod = 'week'; out.range = 'all'; } }
+      if (['pie', 'donut', 'treemap'].includes(out.type) && !out.x) out.x = 'type';
+      if (['pie', 'donut'].includes(out.type)) out.series = null;
+      if (['column', 'bar', 'line', 'area'].includes(out.type) && !out.x) out.x = timeAsked ? timeX() : 'type';
+      if (out.x && DIMS[out.x] && DIMS[out.x].time && out.range === 'all' && (grain === 'week' || !grain)) out.range = '12w';
+    }
+    if (!out.y) out.y = 'count';
+    const Y = NUMS[out.y];
+    if (!Y.aggs.includes(out.agg)) out.agg = out.y === 'count' ? 'count' : ['late', 'toDone', 'age', 'onTime'].includes(out.y) ? 'avg' : Y.aggs[0];
+    if (out.type === 'treemap' && out.agg === 'avg') { if (Y.aggs.includes('sum')) out.agg = 'sum'; else { out.y = 'count'; out.agg = 'count'; } }
+    if (out.goal != null && out.goalDir === 'atLeast' && !/at least|min/.test(text.toLowerCase()) && LOWER_IS_BETTER.includes(out.y)) out.goalDir = 'atMost';
+    if (out.status === 'overdue' && out.goal == null && out.type === 'kpi') { out.goal = 0; out.goalDir = 'atMost'; }
+    if (out.compare && !(['column', 'bar', 'line', 'area'].includes(out.type) && RANGE_DAYS[out.range] && !out.series)) { if (!RANGE_DAYS[out.range] && ['column', 'bar', 'line', 'area'].includes(out.type) && !out.series) out.range = '4w'; else out.compare = false; }
+    if (out.trend !== 'none' && !(['column', 'line', 'area'].includes(out.type) && out.x && DIMS[out.x] && DIMS[out.x].time && !out.series)) out.trend = 'none';
+    const left = t.replace(/\b(show|me|my|the|a|an|of|tasks?|chart|graph|plot|please|for|in|with|what|which|how|is|are|do|does|i|did|to|on|and|at|it|get|got|have|has|many|much|so|far|by|per|all|this|that|there|were|was|keep|kept|as|often|get|gets|being)\b/g, ' ').replace(/\s+/g, ' ').trim();
+    return { cfg: out, understood: hit.n > 0 || !!out.status && out.status !== 'all' || Object.keys(f).length > 0, leftover: left };
+  }
+  function askHtml() {
+    const n = ui.askNote;
+    return '<form class="cb-ask" data-ask role="search"><label class="cb-ask-box">' + icon('sparkle') + '<span class="sr">Describe a chart</span>' +
+      '<input id="cb-ask" type="text" autocomplete="off" spellcheck="false" enterkeyhint="go" value="' + esc(ui.askText || '') + '" placeholder="Ask for a chart: “overdue tasks by branch this month”"></label>' +
+      '<button type="submit" class="btn primary sm">Build</button></form>' +
+      (n ? '<p class="cb-asknote' + (n.bad ? ' bad' : '') + '" role="status">' + (n.bad ? icon('flag') : icon('check')) + '<span>' + n.html + '</span></p>'
+        : '<p class="cb-asknote tips"><span class="muted">Try</span>' + ASK_EXAMPLES.slice(0, matchMedia('(max-width: 640px)').matches ? 2 : 4).map((x) => '<button type="button" class="cb-askex" data-askex="' + esc(x) + '">' + esc(x) + '</button>').join('') + '</p>');
+  }
+  function runAsk(text) {
+    text = (text || '').trim();
+    ui.askText = text;
+    if (!text) return;
+    const r = parseAsk(text);
+    if (!r.understood) {
+      ui.askNote = { bad: true, html: 'I couldn’t turn that into a chart. Try naming what to count and how to group it, like <b>open tasks by type</b> or <b>days late per month</b>.' };
+      return render();
+    }
+    ui.picked = null; ui.flash = null;
+    C.withTransition(() => {
+      setCfg(r.cfg);
+      const bits = [esc(autoTitle())];
+      if (RANGE_DAYS[curRange()]) bits.push('last ' + RANGE_WORDS[curRange()]);
+      const f = flt(); FILTERS.forEach((x) => { if (f[x.key]) bits.push(esc(x.label + ': ' + f[x.key])); });
+      if (cfg.status !== 'all' && !FIXED_TYPES.includes(cfg.type) && !/^(open|overdue|done)\b/i.test(autoTitle())) bits.push({ open: 'open tasks only', overdue: 'overdue only', done: 'done only' }[cfg.status]);
+      if (r.leftover && r.leftover.length > 1) bits.push('skipped “' + esc(r.leftover) + '”');
+      ui.askNote = { html: 'Built <b>' + bits[0] + '</b>' + (bits.length > 1 ? ' · ' + bits.slice(1).join(' · ') : '') + (problem() ? '. ' + esc(problem()) : '. Adjust the fields below, or save it.') };
+      render();
+      if (matchMedia('(max-width: 900px)').matches) { const inp = el.querySelector('#cb-ask'); if (inp) inp.blur(); const cv = el.querySelector('.cb-canvas'); if (cv) setTimeout(() => cv.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60); }
+    });
+  }
+  const ASK_EXAMPLES = ['overdue tasks by branch this month', 'average days late per month', 'done per week with a goal of 5', 'open tasks by type and importance as a treemap', 'what I keep pushing back by type', 'how many tasks did I finish this week'];
+
   /* ---------- validity & titles ---------- */
   function problem() {
     if (cfg.type === 'sunburst') {
@@ -443,7 +613,7 @@
     const editing = cfg.id && board.find((b) => b.id === cfg.id);
     const y = NUMS[cfg.y];
     const pie = cfg.type === 'pie' || cfg.type === 'donut';
-    root.innerHTML =
+    root.innerHTML = '<div class="cb-askwrap">' + askHtml() + '</div>' +
       '<div class="cb-layout">' +
       // left: fields + zones
       '<aside class="cb-side">' +
@@ -521,6 +691,8 @@
   const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
   function summaryText() {
     if (problem()) return '';
+    const usesMoves = ['moved', 'pushed'].includes(cfg.y) || ['moves', 'moved', 'pushed'].includes(cfg.x);
+    if (usesMoves && !S().state.tasks.some((t) => !t.sample && t.moved)) return 'Nothing has been rescheduled yet. Cadence counts due-date changes from version 19 on, so this fills in as you move tasks to new dates.';
     const unit = (NUMS[cfg.y] || NUMS.count).unit, isCount = cfg.y === 'count';
     const amt = (v) => fmt(v, unit) + (isCount ? (Math.round(v) === 1 ? ' task' : ' tasks') : '');
     if (cfg.type === 'kpi') {
@@ -1188,6 +1360,8 @@
   function onClick(e) {
     if (swallowClick || swallowZoomClick) { e.preventDefault(); e.stopPropagation(); return; }
     const t = e.target;
+    const ax = t.closest('[data-askex]');
+    if (ax) return runAsk(ax.dataset.askex);
     const lg = t.closest('[data-legend]');
     if (lg) { const k = lg.dataset.legend; ui.solo = k && ui.solo !== k ? k : null; return render(); }
     if (t.closest('[data-unzoom]')) { ui.zoom = null; return render(); }
@@ -1643,7 +1817,8 @@
     if (!r) return;
     closeRecords(true);
     const tk = D.todayKey();
-    const tasks = r.tasks.slice().sort((a, b) => (a.done - b.done) || ((a.due || '9999') < (b.due || '9999') ? -1 : (a.due || '9999') > (b.due || '9999') ? 1 : S().levelRank(a.levelId) - S().levelRank(b.levelId)));
+    const byMoves = ['moved', 'pushed'].includes(item.y) || item.x === 'moves' || item.x === 'moved';
+    const tasks = r.tasks.slice().sort((a, b) => (byMoves ? (b.moved || 0) - (a.moved || 0) || (b.pushed || 0) - (a.pushed || 0) : 0) || (a.done - b.done) || ((a.due || '9999') < (b.due || '9999') ? -1 : (a.due || '9999') > (b.due || '9999') ? 1 : S().levelRank(a.levelId) - S().levelRank(b.levelId)));
     const open = tasks.filter((t) => !t.done).length;
     const wrap = document.createElement('div');
     wrap.className = 'rec-wrap';
@@ -1691,6 +1866,7 @@
       (ty ? '<span class="type-tag" style="--c:' + ty.color + '">' + icon(ty.glyph) + esc(ty.name) + '</span>' : '') +
       (lv ? '<span class="rec-lv"><i></i>' + esc(lv.name) + '</span>' : '') +
       ((t.subtasks || []).length ? '<span>' + icon('rows') + (t.subtasks.filter((x) => x.done).length) + '/' + t.subtasks.length + '</span>' : '') +
+      (t.moved ? '<span class="rec-moved' + (t.moved >= 3 ? ' lots' : '') + '" title="Times rescheduled">' + icon('repeat') + 'Moved ' + t.moved + '×</span>' : '') +
       (C.handoffLabel(t) ? '<span class="rec-who">' + icon('heart') + esc(C.handoffLabel(t)) + '</span>' : '') +
       '</span></span>' + icon('chevR') + '</button></div>';
   }

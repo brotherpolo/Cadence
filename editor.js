@@ -78,6 +78,7 @@
         '<label class="input-wrap"><span class="sr">Time</span>' + icon('clock') + '<input id="ed-time" type="time" value="' + (draft.time || '') + '"></label></div>' +
         '<label class="input-wrap"><span class="sr">Repeat</span>' + icon('repeat') + '<select id="ed-repeat"' + (ro ? ' disabled' : '') + '>' +
         C.REPEATS.map((r) => '<option value="' + r.id + '"' + (draft.repeat === r.id ? ' selected' : '') + '>' + r.label + '</option>').join('') + '</select></label>' +
+        (existing && existing.moved ? '<p class="fine ed-moved">' + icon('repeat') + 'Rescheduled ' + (existing.moved === 1 ? 'once' : existing.moved + ' times') + (existing.pushed ? ' · pushed back ' + existing.pushed + ' day' + (existing.pushed === 1 ? '' : 's') + ' in all' : '') + '</p>' : '') +
         '</div>' +
 
         '<div class="field"><span class="field-label">Checklist <span class="muted mono">' + (sub.length ? sub.filter((x) => x.done).length + '/' + sub.length : '') + '</span></span>' +

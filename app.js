@@ -321,7 +321,7 @@
   /* calendar drops */
   C.drag.init((id, day) => {
     const t = S.get(id); if (!t) return;
-    const prev = { due: t.due, time: t.time };
+    const prev = { due: t.due, time: t.time, moved: t.moved || 0, pushed: t.pushed || 0 };
     if ((t.due || null) === (day || null)) return;
     S.updateTask(id, day ? { due: day } : { due: null, time: null });
     C.toast(day ? 'Moved to ' + C.F.long.format(D.parse(day)) : 'Unscheduled “' + t.title + '”', { action: 'Undo', onAction: () => S.updateTask(id, prev) });

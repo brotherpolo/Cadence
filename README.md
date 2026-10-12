@@ -14,6 +14,8 @@ A build-free task app: plain HTML, CSS and JavaScript files. No bundler, no npm 
 - **Treemap and Handoffs**: a treemap sizes boxes by type (or any category) with smaller boxes inside for a second field; Handoffs draws bands from who assigned each task to who's doing it
 - **Exploring**: click a legend entry to show only that series (or highlight one slice), and drag across a time chart to zoom into a stretch of dates (swipe sideways on touch screens)
 - **Export**: download any chart as a PNG picture or its numbers as a CSV file, from the Chart builder or a Board card's ⋯ menu
+- **Ask for a chart**: type what you want at the top of the Chart builder ("overdue tasks by branch this month", "average days late per month", "done per week with a goal of 5") and it sets the fields, chart type, filters, dates and goal for you
+- **Rescheduling**: from v19, every time a task's due date moves to another date it's counted, along with how many days it was pushed back. Chart it with Times rescheduled, Days pushed back or the Rescheduled field (never / once / 2–3 / 4+); the task editor shows the count, and the Excel export has a column for it. Only changes made from v19 on are counted
 - **Canvas heat overlay**: color every node by open tasks, overdue tasks, days late, age, % on time or recent completions, optionally rolled up through each branch
 - **Board**: your saved charts on their own page, synced to your account (private to you). Group charts into named sections, make each card small, medium or wide, and reorder them; tap any bar, slice or point to open a list of the tasks behind it, complete them, or open one to edit
 - **Map: Canvas, Outline, Table**: one mind map shown three ways. The canvas has nodes in eight shapes, colors and fills, connections and dotted flows, fold/focus/tidy for branches, box select, a minimap, a node inspector, undo/redo, and PNG export. The outline is a keyboard-driven indented list with PDF export. The table lets you sort, filter, edit cells inline and change many nodes at once
@@ -143,4 +145,4 @@ Scripts load in the order listed in `index.html`; keep that order if you add fil
 
 **Don't overwrite your `firebase-config.js`.** Update zips from here leave it out, so your filled-in copy on GitHub stays as it is.
 
-`index.html` loads every file with a version tag (`app.js?v=18`). When you change any file, bump the number in `index.html` (and `C.VERSION` in `utils.js`) so browsers fetch the new copies instead of cached ones. Settings → Your data shows the version each device is running.
+`index.html` loads every file with a version tag (`app.js?v=19`). When you change any file, bump the number in `index.html` (and `C.VERSION` in `utils.js`) so browsers fetch the new copies instead of cached ones. Settings → Your data shows the version each device is running.

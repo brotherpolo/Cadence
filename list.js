@@ -403,9 +403,9 @@
     const id = r.dataset.row;
     if (e.target.closest('[data-check]')) return C.completeTask(id, r);
     if (e.target.closest('[data-snooze]')) {
-      const t = S().get(id); const prev = t.due;
+      const t = S().get(id); const prev = t.due, was = { moved: t.moved || 0, pushed: t.pushed || 0 };
       S().updateTask(id, { due: D.addKey(D.todayKey(), 1) });
-      return C.toast('Moved to tomorrow', { action: 'Undo', onAction: () => S().updateTask(id, { due: prev }) });
+      return C.toast('Moved to tomorrow', { action: 'Undo', onAction: () => S().updateTask(id, { due: prev, moved: was.moved, pushed: was.pushed }) });
     }
     if (e.target.closest('[data-del]')) return C.deleteWithUndo(id);
     C.openEditor(id);

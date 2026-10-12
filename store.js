@@ -462,6 +462,11 @@
     },
     updateTask(id, patch) {
       const t = S.get(id); if (!t) return null;
+      // reschedule tracking (from v19): moving a set due date to another date counts once,
+      // and days moved later add up. Undo passes the old counts back, so it doesn't count.
+      if ('due' in patch && !('moved' in patch) && t.due && patch.due && patch.due !== t.due) {
+        patch = Object.assign({}, patch, { moved: (t.moved || 0) + 1, pushed: (t.pushed || 0) + Math.max(0, D.diff(patch.due, t.due)) });
+      }
       Object.assign(t, patch, { updatedAt: Date.now() });
       commit(id);
       return t;
@@ -486,7 +491,7 @@
         const next = C.clone(t);
         Object.assign(next, { id: C.uid('t'), done: false, doneAt: null, createdAt: Date.now(), due: C.nextDue(t.due, t.repeat), spawnedFrom: t.id });
         next.subtasks = (next.subtasks || []).map((s) => ({ ...s, done: false }));
-        delete next.spawnedNext;
+        delete next.spawnedNext; delete next.moved; delete next.pushed; // each occurrence starts fresh
         spawned = S.addTask(next);
         S.updateTask(id, { spawnedNext: spawned.id });
       } else if (!done && t.spawnedNext) {

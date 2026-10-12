@@ -1,6 +1,6 @@
 rules_version = '2';
 
-// Cadence — Cloud Firestore security rules (app version 14, unchanged through 17)
+// Cadence — Cloud Firestore security rules (app version 19)
 //
 // Data layout written by firebase-sync.js:
 //   tasks/{taskId}               every task. members = [ownerId] or [ownerId, assigneeId]
@@ -18,7 +18,8 @@ rules_version = '2';
 //   - A task can only be assigned to the account that claimed that email in the
 //     people directory, so nobody can drop tasks into a stranger's list by
 //     guessing their account ID or spoofing their email.
-//   - The assignee can complete it, change its date and time, edit the
+//   - The assignee can complete it, change its date and time (which updates its
+//     reschedule count), edit the
 //     checklist and notes, or hand it back to the owner. Nothing else. They
 //     can't change the title, type, importance, repeat or the linked map node.
 //   - The people directory can be looked up one exact email at a time but
@@ -80,7 +81,7 @@ service cloud.firestore {
                'repeat', 'sample', 'spawnedNext', 'spawnedFrom',
                'ownerId', 'ownerName', 'ownerEmail',
                'assigneeId', 'assigneeName', 'assigneeEmail', 'members',
-               'typeSnap', 'levelSnap', 'nodeId'
+               'typeSnap', 'levelSnap', 'nodeId', 'moved', 'pushed'
              ])
           && d.keys().hasAll(['id', 'title', 'done', 'ownerId', 'members'])
           && d.id == taskId
@@ -106,6 +107,9 @@ service cloud.firestore {
           && (!('createdAt' in d) || d.createdAt is number)
           && (!('updatedAt' in d) || d.updatedAt is number)
           && (!('doneAt' in d) || d.doneAt == null || d.doneAt is number)
+          // reschedule counts: how many times the due date moved, and days moved later
+          && (!('moved' in d) || (d.moved is int && d.moved >= 0 && d.moved <= 100000))
+          && (!('pushed' in d) || (d.pushed is int && d.pushed >= 0 && d.pushed <= 10000000))
           // membership always mirrors owner + assignee
           && d.ownerId is string
           && d.members is list && d.members.size() >= 1 && d.members[0] == d.ownerId
@@ -186,7 +190,7 @@ service cloud.firestore {
           // assignee: do the work and move the date
           || (isAssignee()
              && changed().hasOnly(['done', 'doneAt', 'due', 'time', 'subtasks',
-                                   'notes', 'updatedAt', 'spawnedNext']))
+                                   'notes', 'updatedAt', 'spawnedNext', 'moved', 'pushed']))
           // assignee: hand it back to the owner
           || (isAssignee()
              && request.resource.data.get('assigneeId', null) == null
