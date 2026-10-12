@@ -1,12 +1,12 @@
 rules_version = '2';
 
-// Cadence — Cloud Firestore security rules (app version 14)
+// Cadence — Cloud Firestore security rules (app version 14, unchanged through 17)
 //
 // Data layout written by firebase-sync.js:
 //   tasks/{taskId}               every task. members = [ownerId] or [ownerId, assigneeId]
 //   users/{uid}/items/settings   task types, importance levels, defaults (private)
 //   users/{uid}/items/map        the mind map: nodes + edges (private)
-//   users/{uid}/items/board      charts saved to the Board page (private)
+//   users/{uid}/items/board      charts saved to the Board page, with their sections and sizes (private)
 //   people/{email}               { uid, name }, so tasks can be assigned by email
 //
 // Privacy policy these rules enforce:

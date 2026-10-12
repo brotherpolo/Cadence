@@ -112,6 +112,8 @@
     ['donut', 'Donut', '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.5"/><path d="M12 4v4.5"/>'],
     ['burnup', 'Burn-up', '<path d="M3.5 19 9 14l4 2 7.5-9"/><path d="M3.5 19 9 16.5l4 .5 7.5-4" stroke-dasharray="2 2.5"/>'],
     ['cfd', 'Flow', '<path d="M3.5 20.5V14c4-1 6-3 9-3s5 1 8-2v11.5z" fill="currentColor" fill-opacity=".18"/><path d="M3.5 20.5V17c4-.5 6-1.5 9-1.5s5 .5 8-1.5v6.5z" fill="currentColor" fill-opacity=".38"/>'],
+    ['treemap', 'Treemap', '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M11 4.5v15M11 12.5h9.5M16 12.5v7"/>'],
+    ['handoff', 'Handoffs', '<path d="M3.5 6.5h3c5.5 0 5.5 11 11 11h3M3.5 17.5h3c5.5 0 5.5-11 11-11h3"/>'],
     ['sunburst', 'Sunburst', '<circle cx="12" cy="12" r="3"/><path d="M12 4.5a7.5 7.5 0 0 1 7.5 7.5M19.5 12a7.5 7.5 0 0 1-11 6.6M8.5 18.6A7.5 7.5 0 0 1 12 4.5"/><path d="M12 1.5v3M22.5 12h-3"/>'],
     ['kpi', 'KPI', '<rect x="3.5" y="5" width="17" height="14" rx="3"/><path d="M7 15l3-3 2.5 2L17 9.5"/>'],
     ['scatter', 'Scatter', '<circle cx="7" cy="16" r="1.6"/><circle cx="10" cy="10" r="1.6"/><circle cx="14.5" cy="13" r="1.6"/><circle cx="17" cy="7" r="1.6"/><circle cx="18.5" cy="15.5" r="1.6"/><path d="M3.5 3.5v17h17"/>']
@@ -131,10 +133,13 @@
     { name: 'Is my list growing?', cfg: { type: 'burnup', x: null, y: 'count', series: null, range: '12w' } },
     { name: 'Open vs. overdue over time', cfg: { type: 'cfd', x: null, y: 'count', series: null, range: '12w' } },
     { name: 'This month vs. last', cfg: { type: 'column', x: 'type', y: 'count', series: null, status: 'done', range: '4w', compare: true } },
-    { name: 'Weekly completions vs. goal', cfg: { type: 'column', x: 'completed', y: 'count', series: null, status: 'done', range: '12w', goal: 5, goalDir: 'atLeast' } }
+    { name: 'Weekly completions vs. goal', cfg: { type: 'column', x: 'completed', y: 'count', series: null, status: 'done', range: '12w', goal: 5, goalDir: 'atLeast' } },
+    { name: 'Where my open work sits', cfg: { type: 'treemap', x: 'type', y: 'count', series: 'level', status: 'open' } },
+    { name: 'Who hands work to whom', cfg: { type: 'handoff', x: null, y: 'count', series: null, status: 'all', selfToo: false } }
   ];
   const BLANK = { type: 'column', x: null, y: 'count', agg: 'count', series: null, stack: true, status: 'all', range: 'all', grain: 'auto', title: '', goal: null, goalDir: 'atLeast', kpiPeriod: 'all', compare: false, trend: 'none', f: null };
   const FLOW_TYPES = ['burnup', 'cfd'];
+  const FIXED_TYPES = ['burnup', 'cfd', 'handoff']; // these always count tasks and need no fields
   const RANGE_DAYS = { '4w': 28, '12w': 84, '6m': 183, '1y': 365 };
   const RANGE_WORDS = { '4w': '4 weeks', '12w': '12 weeks', '6m': '6 months', '1y': 'year' };
   let rangeOverride = null; // the Board's "same dates for every chart"
@@ -154,7 +159,12 @@
   let board = [];
   const syncBoard = () => { board = S().state.board.charts; };
   const saveBoard = () => S().setBoard(board.slice());
-  const ui = { picked: null, flash: null, flashZone: null };
+  const ui = { picked: null, flash: null, flashZone: null, solo: null, zoom: null };
+  /* what's being looked at right now: one legend entry on its own, and a zoomed date range.
+     These are views, not settings, so they aren't saved with the chart. */
+  let solo = null, zoom = null;
+  const cardUi = {}; // the same per Board card, by chart id
+  const cardView = (id) => (cardUi[id] = cardUi[id] || { solo: null, zoom: null });
   let el = null;
 
   const view = (C.views = C.views || {}).charts = {
@@ -166,6 +176,7 @@
       root.addEventListener('click', onClick);
       root.addEventListener('change', onChange);
       root.addEventListener('pointerdown', onDown);
+      root.addEventListener('pointerdown', (e) => zoomDown(e, (i0, i1) => { solo = ui.solo; zoom = ui.zoom; const k = zoomKeys(i0, i1); if (k) { ui.zoom = k; render(); } }));
       root.addEventListener('pointerover', (e) => { if (e.pointerType === 'mouse') showTip(e.target); });
       root.addEventListener('focusin', (e) => showTip(e.target));
       root.addEventListener('keydown', (e) => {
@@ -180,7 +191,9 @@
     unmount() { el = null; ui.picked = null; }
   };
 
+  const VIEW_KEYS = ['type', 'x', 'series', 'y', 'agg', 'status', 'range', 'grain', 'f', 'selfToo'];
   function setCfg(patch) {
+    if (VIEW_KEYS.some((k) => k in patch && patch[k] !== cfg[k])) { ui.solo = null; ui.zoom = null; }
     Object.assign(cfg, patch);
     // keep the summary (count / sum / average) valid for the value field
     const y = NUMS[cfg.y];
@@ -234,7 +247,7 @@
 
   /** returns { cats:[{key,label,color}], series:[{key,label,color,values:[]}] } or { points } for scatter */
   function build() {
-    if (FLOW_TYPES.includes(cfg.type)) return flowBuild();
+    if (FLOW_TYPES.includes(cfg.type)) return applyView(flowBuild());
     const { list, ctx } = rows();
     if (cfg.type === 'scatter') {
       const X = NUMS[cfg.x], Y = NUMS[cfg.y];
@@ -247,7 +260,8 @@
       });
       const keys = sd ? orderKeys(sd, [...new Set(pts.map((p) => p.s))]) : ['Tasks'];
       const colors = {}; keys.forEach((k, i) => (colors[k] = colorFor(sd, k, i)));
-      return { points: pts, keys, colors, n: list.length };
+      const only = solo && keys.length > 1 && keys.includes(solo) ? solo : null;
+      return { points: only ? pts.filter((p) => p.s === only) : pts, keys, colors, n: list.length, solo: only };
     }
     const xd = DIMS[cfg.x], sd = cfg.type === 'pie' || cfg.type === 'donut' ? null : cfg.series && DIMS[cfg.series];
     const Y = NUMS[cfg.y] || NUMS.count;
@@ -289,7 +303,32 @@
     }));
     const prev = praw ? { values: xKeys.map((xk) => aggregate(praw.filter((r) => r.x === xk).map((r) => r.v), cfg.agg)), total: aggregate(praw.map((r) => r.v), cfg.agg), n: praw.length } : null;
     const trend = cfg.trend !== 'none' && canTrend() ? trendLine(series[0].values, cfg.trend) : null;
-    return { cats, series, grain, n: list.length, colorByCat: !sd && !xd.time && !!xd.color, raw, prev, trend, total: aggregate(raw.map((r) => r.v), cfg.agg) };
+    return applyView({ cats, series, grain, n: list.length, colorByCat: !sd && !xd.time && !!xd.color, raw, prev, trend, total: aggregate(raw.map((r) => r.v), cfg.agg) });
+  }
+  /* time charts can be zoomed by dragging across them */
+  const ZOOM_TYPES = ['column', 'line', 'area', 'burnup', 'cfd'];
+  const zoomable = () => ZOOM_TYPES.includes(cfg.type) && (FLOW_TYPES.includes(cfg.type) || !!(cfg.x && DIMS[cfg.x] && DIMS[cfg.x].time));
+  /** apply the legend pick (one series on its own, or one category highlighted) and the zoom */
+  function applyView(b) {
+    if (solo) {
+      if (b.series.length > 1 && b.series.some((x) => x.key === solo)) { b.allSeries = b.series; b.series = b.series.filter((x) => x.key === solo); b.solo = solo; }
+      else if (b.cats.some((c) => c.key === solo)) b.soloCat = solo;
+    }
+    if (zoom && zoomable() && b.cats.length > 2) {
+      const i0 = b.cats.findIndex((c) => c.key === zoom.a), i1 = b.cats.findIndex((c) => c.key === zoom.b);
+      if (i0 >= 0 && i1 > i0) {
+        const cut = (arr) => (arr ? arr.slice(i0, i1 + 1) : arr);
+        b.fullCats = b.cats.length;
+        b.cats = cut(b.cats);
+        b.series = b.series.map((x) => Object.assign({}, x, { values: cut(x.values) }));
+        if (b.allSeries) b.allSeries = b.allSeries.map((x) => Object.assign({}, x, { values: cut(x.values) }));
+        if (b.prev) b.prev = Object.assign({}, b.prev, { values: cut(b.prev.values), total: null });
+        b.trend = cut(b.trend);
+        b.total = null;
+        b.zoomed = { from: b.cats[0].label, to: b.cats[b.cats.length - 1].label };
+      }
+    }
+    return b;
   }
   /** rolling 3-period average, or a least-squares straight line */
   function trendLine(vals, mode) {
@@ -355,7 +394,14 @@
       if (!cfg.y) return 'Drag a number field onto Values. Tasks counts them.';
       return null;
     }
-    if (FLOW_TYPES.includes(cfg.type)) return null;
+    if (FIXED_TYPES.includes(cfg.type)) return null;
+    if (cfg.type === 'treemap') {
+      if (!cfg.x) return 'Drag a category onto Boxes, for example Type or Map branch.';
+      if (isNum(cfg.x)) return 'Boxes need a category field, like Type or Importance.';
+      if (!cfg.y) return 'Drag a number field onto Values. Tasks counts them.';
+      if (cfg.agg === 'avg') return 'A treemap sizes boxes by totals, so averages don’t fit. Choose Total under Summarize as, or put Tasks on Values.';
+      return null;
+    }
     if (cfg.type === 'kpi') {
       if (!cfg.y) return 'Drag a number field onto Values. Tasks counts them.';
       if (cfg.x && !(DIMS[cfg.x] && DIMS[cfg.x].time)) return 'A KPI tile’s trend runs over time. Put a date field (Due date, Created or Completed) on Trend over, or leave it empty.';
@@ -380,6 +426,7 @@
     const st = { open: 'Open ', overdue: 'Overdue ', done: 'Done ' }[cfg.status] || '';
     if (cfg.type === 'burnup') return 'Tasks added vs. done over time';
     if (cfg.type === 'cfd') return 'Done, open and overdue over time';
+    if (cfg.type === 'handoff') return (st ? st + 'handoffs' : 'Handoffs') + ': who assigns work to whom';
     if (cfg.type === 'sunburst') return (cfg.y === 'count' ? (st ? st + 'tasks' : 'Tasks') : yl) + ' across the map';
     if (cfg.type === 'kpi') return (cfg.y === 'count' ? (st ? st + 'tasks' : 'All tasks') : yl) + (cfg.kpiPeriod === 'week' ? ' this week' : '');
     const pie = cfg.type === 'pie' || cfg.type === 'donut';
@@ -390,6 +437,7 @@
   /* ---------- page ---------- */
   function render() {
     syncBoard();
+    solo = ui.solo; zoom = ui.zoom;
     const root = el && el.querySelector('#cb-root');
     if (!root) return;
     const editing = cfg.id && board.find((b) => b.id === cfg.id);
@@ -400,10 +448,10 @@
       // left: fields + zones
       '<aside class="cb-side">' +
       '<div class="st-sec cb-zones">' +
-      zone('x', cfg.type === 'scatter' ? 'X axis (number)' : pie ? 'Slices' : cfg.type === 'sunburst' ? 'X axis · rings follow the map' : cfg.type === 'kpi' ? 'Trend over (a date)' : FLOW_TYPES.includes(cfg.type) ? 'X axis · time' : 'X axis', cfg.type === 'sunburst' || FLOW_TYPES.includes(cfg.type)) +
-      zone('y', cfg.type === 'scatter' ? 'Y axis (number)' : FLOW_TYPES.includes(cfg.type) ? 'Values · tasks' : 'Values', FLOW_TYPES.includes(cfg.type)) +
+      zone('x', cfg.type === 'scatter' ? 'X axis (number)' : pie ? 'Slices' : cfg.type === 'treemap' ? 'Boxes' : cfg.type === 'handoff' ? 'From “Assigned by” to “Assigned to”' : cfg.type === 'sunburst' ? 'X axis · rings follow the map' : cfg.type === 'kpi' ? 'Trend over (a date)' : FLOW_TYPES.includes(cfg.type) ? 'X axis · time' : 'X axis', cfg.type === 'sunburst' || FIXED_TYPES.includes(cfg.type)) +
+      zone('y', cfg.type === 'scatter' ? 'Y axis (number)' : FIXED_TYPES.includes(cfg.type) ? 'Values · tasks' : 'Values', FIXED_TYPES.includes(cfg.type)) +
       (y && y.aggs.length > 1 && cfg.type !== 'scatter' ? '<div class="cb-agg"><span class="muted">Summarize as</span><div class="seg mini">' + y.aggs.map((a) => '<button type="button" class="seg-btn' + (cfg.agg === a ? ' on' : '') + '" data-agg="' + a + '">' + (a === 'sum' ? 'Total' : 'Average') + '</button>').join('') + '</div></div>' : '') +
-      zone('series', cfg.type === 'scatter' ? 'Color by' : 'Split by', pie || cfg.type === 'sunburst' || cfg.type === 'kpi' || FLOW_TYPES.includes(cfg.type)) +
+      zone('series', cfg.type === 'scatter' ? 'Color by' : cfg.type === 'treemap' ? 'Smaller boxes inside' : 'Split by', pie || cfg.type === 'sunburst' || cfg.type === 'kpi' || FIXED_TYPES.includes(cfg.type)) +
       '</div>' +
       '<div class="st-sec cb-fields"><header><h2>Fields</h2><p class="muted">Categories</p></header><div class="cb-tray">' +
       Object.keys(DIMS).filter((id) => !DIMS[id].map).map((id) => chip(id, 'tray')).join('') + '</div>' +
@@ -419,19 +467,22 @@
       (FLOW_TYPES.includes(cfg.type) ? '' : sel('status', [['all', 'All tasks'], ['open', 'Open only'], ['overdue', 'Overdue only'], ['done', 'Done only']])) +
       sel('range', [['all', 'All time'], ['4w', 'Last 4 weeks'], ['12w', 'Last 12 weeks'], ['6m', 'Last 6 months'], ['1y', 'Last year']]) +
       (cfg.x && DIMS[cfg.x] && DIMS[cfg.x].time && cfg.type !== 'scatter' ? sel('grain', [['auto', 'Auto'], ['week', 'By week'], ['month', 'By month']]) : '') +
-      (cfg.series && !pie && !['scatter', 'line', 'sunburst', 'kpi'].includes(cfg.type) ? '<label class="cb-check"><input type="checkbox" data-stack' + (cfg.stack ? ' checked' : '') + '> Stacked</label>' : '') +
+      (cfg.series && !pie && !['scatter', 'line', 'sunburst', 'kpi', 'treemap', 'handoff'].includes(cfg.type) ? '<label class="cb-check"><input type="checkbox" data-stack' + (cfg.stack ? ' checked' : '') + '> Stacked</label>' : '') +
+      (cfg.type === 'handoff' ? '<label class="cb-check"><input type="checkbox" data-self' + (cfg.selfToo ? ' checked' : '') + '> Include tasks I keep for myself</label>' : '') +
       (cfg.type === 'kpi' ? sel('kpiPeriod', [['all', 'Number: all matching'], ['week', 'Number: this week']]) : '') +
       (GOAL_TYPES.includes(cfg.type) ? '<span class="cb-goal-ctl"><label class="cb-select"><span class="sr">Goal direction</span><select data-cfg="goalDir"><option value="atLeast"' + (cfg.goalDir !== 'atMost' ? ' selected' : '') + '>Goal: at least</option><option value="atMost"' + (cfg.goalDir === 'atMost' ? ' selected' : '') + '>Goal: at most</option></select>' + icon('chevD') + '</label>' +
         '<input type="number" class="cb-goal-in" data-goal inputmode="decimal" step="any" min="0" placeholder="none" aria-label="Goal value" value="' + (cfg.goal == null ? '' : esc(cfg.goal)) + '">' + (NUMS[cfg.y] && NUMS[cfg.y].unit ? '<span class="muted cb-goal-unit">' + (NUMS[cfg.y].unit === 'd' ? 'days' : '%') + '</span>' : '') + '</span>' : '') +
       '</div>' +
       extrasHtml() +
-      '<div class="cb-plot">' + plot(false) + '</div>' +
+      '<div class="cb-plot">' + plot(false) + '</div>' + zoomHtml(true) +
       '<div class="ins-legend cb-legend">' + legendHtml() + '<span class="ins-cap" aria-live="polite"></span></div>' +
       summaryHtml() +
       '<div class="cb-actions">' +
       '<button type="button" class="btn primary sm" data-save' + (problem() ? ' disabled' : '') + '>' + icon(editing ? 'check' : 'plus') + '<span>' + (editing ? 'Update chart' : 'Save to board') + '</span></button>' +
       (editing ? '<button type="button" class="btn sm" data-save-new' + (problem() ? ' disabled' : '') + '>Save as new</button>' : '') +
-      '<button type="button" class="btn sm ghost" data-reset>Start over</button></div>' +
+      '<button type="button" class="btn sm ghost" data-reset>Start over</button>' +
+      '<span class="cb-export"><button type="button" class="btn sm ghost" data-export="png"' + (problem() ? ' disabled' : '') + '>' + icon('image') + '<span>PNG</span></button>' +
+      '<button type="button" class="btn sm ghost" data-export="csv"' + (problem() ? ' disabled' : '') + '>' + icon('download') + '<span>CSV</span></button></span></div>' +
       '</section>' +
       (cfg.type === 'sunburst' && !problem() ? '<div class="cb-heatlink"><button type="button" class="btn sm" data-heat>' + icon('canvas') + '<span>Color the canvas by this</span></button><span class="muted">Tints each node on the canvas by the same numbers.</span></div>' : '') +
       '<div class="cb-presets"><span class="muted">Try one:</span>' + PRESETS.map((p, i) => p.map && !(C.map && C.map.nodes().length) ? '' : '<button type="button" class="chip" data-preset="' + i + '">' + esc(p.name) + '</button>').join('') + '</div>' +
@@ -481,6 +532,14 @@
       const big = sb.center.kids.slice().sort((a, b) => b.all.length - a.all.length)[0];
       return big ? big.title + ' holds the most: ' + big.all.length + ' of ' + sb.center.all.length + ' tasks (' + pct(big.all.length, sb.center.all.length) + '%)' + (sb.off ? '. ' + sb.off + ' more aren’t on the map.' : '.') : '';
     }
+    if (cfg.type === 'handoff') {
+      const h = handoffData(); if (!h.pairs.length) return '';
+      const big = h.links.slice().sort((a, c) => c.tasks.length - a.tasks.length)[0];
+      const fromMe = h.pairs.filter((q) => q.a === 'Me' && q.b !== 'Me').length, toMe = h.pairs.filter((q) => q.b === 'Me' && q.a !== 'Me').length;
+      const late = h.pairs.filter((q) => !q.t.done && q.t.due && q.t.due < D.todayKey()).length;
+      const who = (x) => (x === 'Me' ? 'you' : x);
+      return 'The biggest flow is ' + (big.a === big.b ? 'tasks ' + who(big.a) + ' kept' : who(big.a) + ' → ' + who(big.b)) + ' (' + big.tasks.length + ' of ' + h.pairs.length + '). You handed out ' + fromMe + ' and were given ' + toMe + '.' + (late ? ' ' + late + ' of these ' + (late === 1 ? 'is' : 'are') + ' overdue.' : '');
+    }
     const b = build();
     if (!b.n) return '';
     if (cfg.type === 'scatter') {
@@ -504,6 +563,8 @@
     }
     if (!b.cats.length) return '';
     const parts = [];
+    if (b.solo) { const one = b.series[0]; parts.push('Showing ' + one.label + ' only.'); }
+    else if (b.soloCat) { const c = b.cats.find((x) => x.key === b.soloCat), i = b.cats.indexOf(c), tt = b.series.reduce((a, x) => a + (x.values[i] || 0), 0), all = b.cats.reduce((a, x, k) => a + b.series.reduce((q, y) => q + (y.values[k] || 0), 0), 0); return c.label + ': ' + amt(tt) + (isCount && all ? ', ' + pct(tt, all) + '% of ' + all + '.' : '.'); }
     const xd = DIMS[cfg.x];
     const tot = b.cats.map((c, i) => b.series.reduce((a, sr) => a + (sr.values[i] || 0), 0));
     if (xd.time && b.cats.length > 1 && b.series.length === 1) {
@@ -564,12 +625,26 @@
     if (problem()) return '';
     if (cfg.type === 'kpi') return '';
     if (cfg.type === 'sunburst') { const sb = sunData(); return sb ? sb.legend.map((c) => '<span><i class="lg-bar" style="--c:' + c.hex + '"></i>' + esc(c.name) + '</span>').join('') + (sb.off ? '<span class="muted">' + sb.off + ' not on the map</span>' : '') : ''; }
+    if (cfg.type === 'handoff') { const h = handoffData(); return h.people.length > 1 ? lgItems(h.people.map((p) => [p, h.colors[p], p]), h.people.includes(solo) ? solo : null) : ''; }
     const b = build();
-    if (cfg.type === 'scatter') return cfg.series ? b.keys.map((k) => '<span><i class="lg-bar" style="--c:' + b.colors[k] + '"></i>' + esc(k) + '</span>').join('') : '';
-    if (cfg.type === 'pie' || cfg.type === 'donut' || b.colorByCat) return b.cats.slice(0, 12).map((c) => '<span><i class="lg-bar" style="--c:' + c.color + '"></i>' + esc(c.label) + '</span>').join('');
-    return (b.series.length > 1 ? b.series.map((s) => '<span><i class="lg-bar" style="--c:' + s.color + '"></i>' + esc(s.label) + '</span>').join('') : '') +
+    if (cfg.type === 'scatter') return cfg.series ? lgItems(b.keys.map((k) => [k, b.colors[k], k]), b.solo) : '';
+    const all = b.allSeries || b.series;
+    if (cfg.type === 'pie' || cfg.type === 'donut' || b.colorByCat || (cfg.type === 'treemap' && all.length < 2)) return lgItems(b.cats.slice(0, 12).map((c) => [c.key, c.color, c.label]), b.soloCat);
+    return (all.length > 1 ? lgItems(all.map((x) => [x.key, x.color, x.label]), b.solo) : '') +
       (b.prev ? '<span><i class="lg-ghost"></i>Previous ' + RANGE_WORDS[curRange()] + '</span>' : '') +
       (b.trend ? '<span><i class="lg-trend"></i>' + (cfg.trend === 'avg' ? 'Rolling average' : 'Trend') + '</span>' : '') + goalNote(b);
+  }
+  /** legend entries you can click: the first click shows only that one, the next shows all again */
+  function lgItems(items, on) {
+    return items.map(([key, color, label]) => '<button type="button" class="lg-item' + (on ? (on === key ? ' on' : ' off') : '') + '" data-legend="' + esc(key) + '" aria-pressed="' + (on === key) + '" title="' + (on === key ? 'Show all' : 'Show only ' + esc(label)) + '"><i class="lg-bar" style="--c:' + color + '"></i>' + esc(label) + '</button>').join('') +
+      (on ? '<button type="button" class="lg-all" data-legend="">Show all</button>' : '');
+  }
+  /** under a time chart: the zoomed range with a way back, or (in the builder) how to zoom */
+  function zoomHtml(hint) {
+    if (problem() || !zoomable()) return '';
+    const b = build();
+    if (b.zoomed) return '<div class="cb-zoombar">' + icon('search') + '<span>Zoomed to <b>' + esc(b.zoomed.from) + ' – ' + esc(b.zoomed.to) + '</b></span><button type="button" class="btn sm ghost" data-unzoom>Show all dates</button></div>';
+    return hint && b.cats && b.cats.length > 3 ? '<p class="cb-zoomhint muted">Drag across the chart to zoom into a stretch of dates.</p>' : '';
   }
   /* ---------- drawing ---------- */
   const tip = (s) => ' data-tip="' + esc(s) + '"';
@@ -580,6 +655,7 @@
     const W = size ? size.W : mini ? 420 : narrow ? 360 : 680, H = size ? size.H : mini ? 240 : narrow ? 280 : 360;
     if (cfg.type === 'kpi') return kpi(size && size.kpi);
     if (cfg.type === 'sunburst') return sunburst(W, H);
+    if (cfg.type === 'handoff') return handoff(W, H, mini);
     const b = build();
     if (!b.n) return '<div class="cb-empty"><p>' + noneMsg() + '</p></div>';
     if (cfg.type === 'burnup') return xy(b, W, H, mini, { as: 'line', stacked: false });
@@ -587,11 +663,13 @@
     if (cfg.type === 'scatter') return scatter(b, W, H, mini);
     if (!b.cats.length) return '<div class="cb-empty"><p>No values to show with these fields and filters.</p></div>';
     if (cfg.type === 'pie' || cfg.type === 'donut') return pie(b, W, H, mini);
+    if (cfg.type === 'treemap') return treemap(b, W, H, mini);
     if (cfg.type === 'bar') return barH(b, W, H, mini);
     return xy(b, W, H, mini);
   }
   const noneMsg = () => (S().state.tasks.length && S().state.tasks.every((t) => t.sample) ? 'Charts leave out the example tasks. Add your own tasks, or choose “Keep them” on the Tasks page to count the examples.' : 'No tasks match these filters.');
-  const svgOpen = (W, H, label) => '<svg viewBox="0 0 ' + W + ' ' + H + '" class="chart" role="img" aria-label="' + esc(label) + '">';
+  const svgOpen = (W, H, label, extra) => '<svg viewBox="0 0 ' + W + ' ' + H + '" class="chart" role="img" aria-label="' + esc(label) + '"' + (extra || '') + '>';
+  const fadeCls = (b, key) => (b.soloCat && key !== b.soloCat ? ' faded' : '');
   function niceMax(v) {
     if (v <= 0) return 1;
     const e = Math.pow(10, Math.floor(Math.log10(v))), m = v / e;
@@ -610,7 +688,14 @@
     const counts = cfg.y === 'count' || FLOW_TYPES.includes(cfg.type);
     return { lo: lo < 0 ? -niceMax(-lo) : 0, hi: cfg.y === 'onTime' ? Math.max(100, niceMax(hi)) : counts && hi <= 4 ? 4 : niceMax(hi) };
   }
+  /** whole-number scales get whole-number ticks (0, 1, 2… not 1.3, 2.5) */
+  function tickSteps(lo, hi, unit, steps) {
+    const span = hi - lo;
+    if (unit === '%' || !Number.isInteger(span) || span % steps === 0) return steps;
+    return [4, 5, 3, 2, 1].find((k) => span % k === 0 && k <= steps + 1) || steps;
+  }
   function gridY(L, R, W, y, lo, hi, unit, steps) {
+    steps = tickSteps(lo, hi, unit, steps);
     let g = '';
     for (let i = 0; i <= steps; i++) {
       const v = lo + ((hi - lo) / steps) * i;
@@ -631,7 +716,8 @@
     const { lo, hi } = yRange(b, stacked);
     const y = (v) => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
     const n = b.cats.length, cw = (W - L - R) / n;
-    let s = svgOpen(W, H, autoTitle()) + gridY(L, R, W, y, lo, hi, unit, mini ? 2 : 4);
+    const zAttr = !mini && zoomable() && n > 2 ? ' data-zoom="' + [L, R, n, W, T, H - B].join(',') + '"' : '';
+    let s = svgOpen(W, H, autoTitle(), zAttr) + gridY(L, R, W, y, lo, hi, unit, mini ? 2 : 4);
     const maxLabels = Math.floor((W - L - R) / (mini ? 52 : 64));
     const every = Math.max(1, Math.ceil(n / maxLabels));
     b.cats.forEach((c, i) => {
@@ -655,7 +741,7 @@
           let top, bot, x, w;
           if (stacked) { if (v >= 0) { bot = pos; pos += v; top = pos; } else { top = neg; neg += v; bot = neg; } x = x0; w = groupW; }
           else { top = Math.max(v, 0); bot = Math.min(v, 0); w = groupW / b.series.length; x = x0 + w * j; w = Math.max(2, w - (multi ? 2 : 0)); }
-          s += '<rect class="cb-bar' + missCls(v, i) + '" x="' + x.toFixed(1) + '" y="' + y(top).toFixed(1) + '" width="' + w.toFixed(1) + '" height="' + Math.max(1, y(bot) - y(top)).toFixed(1) + '" rx="' + Math.min(4, w / 4) + '" style="--c:' + col + '" tabindex="0" data-seg="' + i + ':' + j + '"' + tip(valTip(c.label, ser.label, v, multi)) + '/>';
+          s += '<rect class="cb-bar' + missCls(v, i) + fadeCls(b, c.key) + '" x="' + x.toFixed(1) + '" y="' + y(top).toFixed(1) + '" width="' + w.toFixed(1) + '" height="' + Math.max(1, y(bot) - y(top)).toFixed(1) + '" rx="' + Math.min(4, w / 4) + '" style="--c:' + col + '" tabindex="0" data-seg="' + i + ':' + j + '"' + tip(valTip(c.label, ser.label, v, multi)) + '/>';
         });
       });
     } else {
@@ -703,7 +789,8 @@
     const { lo, hi } = yRange(b, stacked);
     const x = (v) => L + (W - L - R) * ((v - lo) / (hi - lo));
     let s = svgOpen(W, H, autoTitle());
-    for (let i = 0; i <= 4; i++) { const v = lo + ((hi - lo) / 4) * i; s += '<line y1="' + T + '" y2="' + (H - B) + '" x1="' + x(v) + '" x2="' + x(v) + '" class="grid"/><text y="' + (H - 8) + '" x="' + x(v) + '" class="ax" text-anchor="middle">' + fmt(v, unit) + '</text>'; }
+    const xs = tickSteps(lo, hi, unit, 4);
+    for (let i = 0; i <= xs; i++) { const v = lo + ((hi - lo) / xs) * i; s += '<line y1="' + T + '" y2="' + (H - B) + '" x1="' + x(v) + '" x2="' + x(v) + '" class="grid"/><text y="' + (H - 8) + '" x="' + x(v) + '" class="ax" text-anchor="middle">' + fmt(v, unit) + '</text>'; }
     const rh = (H - T - B) / n;
     b.cats.forEach((c, i) => {
       const y0 = T + rh * i, bh = Math.min(rh * 0.7, multi && !stacked ? 9 * b.series.length + 4 : 26), yy = y0 + (rh - bh) / 2;
@@ -719,7 +806,7 @@
         let a, z, yy2 = yy, h = bh;
         if (stacked) { if (v >= 0) { a = pos; pos += v; z = pos; } else { z = neg; neg += v; a = neg; } }
         else { a = Math.min(v, 0); z = Math.max(v, 0); h = bh / b.series.length; yy2 = yy + h * j; h = Math.max(2, h - (multi ? 1.5 : 0)); }
-        s += '<rect class="cb-bar' + (hasGoal() ? ((stacked ? meets(b.series.reduce((q, s2) => q + (s2.values[i] || 0), 0)) : meets(v)) ? ' hit-goal' : ' miss') : '') + '" y="' + yy2.toFixed(1) + '" x="' + x(a).toFixed(1) + '" height="' + h.toFixed(1) + '" width="' + Math.max(1, x(z) - x(a)).toFixed(1) + '" rx="' + Math.min(4, h / 4) + '" style="--c:' + col + '" tabindex="0" data-seg="' + i + ':' + j + '"' + tip(valTip(c.label, ser.label, v, multi)) + '/>';
+        s += '<rect class="cb-bar' + fadeCls(b, c.key) + (hasGoal() ? ((stacked ? meets(b.series.reduce((q, s2) => q + (s2.values[i] || 0), 0)) : meets(v)) ? ' hit-goal' : ' miss') : '') + '" y="' + yy2.toFixed(1) + '" x="' + x(a).toFixed(1) + '" height="' + h.toFixed(1) + '" width="' + Math.max(1, x(z) - x(a)).toFixed(1) + '" rx="' + Math.min(4, h / 4) + '" style="--c:' + col + '" tabindex="0" data-seg="' + i + ':' + j + '"' + tip(valTip(c.label, ser.label, v, multi)) + '/>';
       });
       if (!multi || stacked) { const v = stacked ? total : b.series[0].values[i]; if (v != null) s += '<text x="' + (x(Math.max(stacked ? pos : v, 0)) + 5) + '" y="' + (yy + bh / 2 + 4) + '" class="ax val">' + fmt(v, unit) + '</text>'; }
     });
@@ -742,14 +829,16 @@
       if (frac >= 0.9999) d = ir ? 'M' + pt(0, r) + 'A' + r + ' ' + r + ' 0 1 1 ' + pt(Math.PI, r) + 'A' + r + ' ' + r + ' 0 1 1 ' + pt(0, r) + 'M' + pt(0, ir) + 'A' + ir + ' ' + ir + ' 0 1 0 ' + pt(Math.PI, ir) + 'A' + ir + ' ' + ir + ' 0 1 0 ' + pt(0, ir) + 'Z'
         : 'M' + pt(0, r) + 'A' + r + ' ' + r + ' 0 1 1 ' + pt(Math.PI, r) + 'A' + r + ' ' + r + ' 0 1 1 ' + pt(0, r) + 'Z';
       else d = 'M' + pt(a0, r) + 'A' + r + ' ' + r + ' 0 ' + big + ' 1 ' + pt(a1, r) + (ir ? 'L' + pt(a1, ir) + 'A' + ir + ' ' + ir + ' 0 ' + big + ' 0 ' + pt(a0, ir) : 'L' + cx + ' ' + cy) + 'Z';
-      s += '<path d="' + d + '" class="cb-slice" fill-rule="evenodd" style="--c:' + c.color + '" tabindex="0" data-seg="' + i + ':0"' + tip(label) + '/>';
+      s += '<path d="' + d + '" class="cb-slice' + fadeCls(b, c.key) + '" fill-rule="evenodd" style="--c:' + c.color + '" tabindex="0" data-seg="' + i + ':0"' + tip(label) + '/>';
       if (frac > 0.07 && !mini) {
         const mid = (a0 + a1) / 2, lr = ir ? (r + ir) / 2 : r * 0.62;
         s += '<text x="' + (cx + lr * Math.cos(mid)) + '" y="' + (cy + lr * Math.sin(mid) + 4) + '" class="cb-slice-lab" text-anchor="middle">' + Math.round(frac * 100) + '%</text>';
       }
       a0 = a1;
     });
-    if (ir) s += '<text x="' + cx + '" y="' + (cy - 2) + '" class="cb-donut-num" text-anchor="middle">' + fmt(total, NUMS[cfg.y].unit === '%' ? '' : NUMS[cfg.y].unit) + '</text><text x="' + cx + '" y="' + (cy + 18) + '" class="ax" text-anchor="middle">' + (cfg.y === 'count' ? 'tasks' : 'total') + '</text>';
+    const one = b.soloCat && vals.find((x) => x.c.key === b.soloCat);
+    if (ir && one) s += '<text x="' + cx + '" y="' + (cy - 2) + '" class="cb-donut-num" text-anchor="middle">' + Math.round((one.v / total) * 100) + '%</text><text x="' + cx + '" y="' + (cy + 18) + '" class="ax" text-anchor="middle">' + esc(clip(one.c.label, ir * 1.6)) + '</text>';
+    else if (ir) s += '<text x="' + cx + '" y="' + (cy - 2) + '" class="cb-donut-num" text-anchor="middle">' + fmt(total, NUMS[cfg.y].unit === '%' ? '' : NUMS[cfg.y].unit) + '</text><text x="' + cx + '" y="' + (cy + 18) + '" class="ax" text-anchor="middle">' + (cfg.y === 'count' ? 'tasks' : 'total') + '</text>';
     return s + '</svg>';
   }
 
@@ -771,6 +860,115 @@
       s += '<circle cx="' + (x(p.x) + jit()).toFixed(1) + '" cy="' + (y(p.y) + jit()).toFixed(1) + '" r="' + (mini ? 3.5 : 5) + '" class="cb-pt" style="--c:' + b.colors[p.s] + '" tabindex="0" data-seg="p' + k + '"' +
         tip(p.t.title + ' · ' + X.label + ' ' + fmt(p.x, X.unit) + ', ' + Y.label + ' ' + fmt(p.y, Y.unit) + (cfg.series ? ' · ' + p.s : '')) + '/>';
     });
+    return s + '</svg>';
+  }
+
+  /* ---------- treemap: boxes sized by value, optionally split into smaller boxes ---------- */
+  /** squarified layout: items [{v}] → the same items with x, y, w, h filled in */
+  function squarify(items, x, y, w, h) {
+    const list = items.filter((q) => q.v > 0).sort((a, b) => b.v - a.v);
+    const total = list.reduce((a, q) => a + q.v, 0);
+    if (!total || w <= 0 || h <= 0) return [];
+    const k = (w * h) / total;
+    list.forEach((q) => (q.a = q.v * k));
+    const out = [];
+    let i = 0;
+    while (i < list.length) {
+      const side = Math.min(w, h);
+      const worst = (row) => { const sm = row.reduce((a, q) => a + q.a, 0), mx = row[0].a, mn = row[row.length - 1].a; return Math.max((side * side * mx) / (sm * sm), (sm * sm) / (side * side * mn)); };
+      const row = [list[i++]];
+      while (i < list.length && worst(row.concat(list[i])) <= worst(row)) row.push(list[i++]);
+      const sm = row.reduce((a, q) => a + q.a, 0);
+      if (w >= h) { const cw = sm / h; let yy = y; row.forEach((q) => { const hh = q.a / cw; out.push(Object.assign(q, { x, y: yy, w: cw, h: hh })); yy += hh; }); x += cw; w -= cw; }
+      else { const ch = sm / w; let xx = x; row.forEach((q) => { const ww = q.a / ch; out.push(Object.assign(q, { x: xx, y, w: ww, h: ch })); xx += ww; }); y += ch; h -= ch; }
+    }
+    return out;
+  }
+  const clip = (t, px) => { const max = Math.max(0, Math.floor(px / 6.6)); return t.length <= max ? t : max < 3 ? '' : t.slice(0, max - 1) + '…'; };
+  function treemap(b, W, H, mini) {
+    const unit = NUMS[cfg.y].unit, split = !!cfg.series;
+    const groups = b.cats.map((c, i) => {
+      const kids = b.series.map((ser, j) => ({ j, ser, v: Math.max(0, ser.values[i] || 0) })).filter((q) => q.v > 0);
+      return { i, c, kids, v: kids.reduce((a, q) => a + q.v, 0) };
+    });
+    const boxes = squarify(groups, 0, 0, W, H);
+    if (!boxes.length) return '<div class="cb-empty"><p>Nothing to show: every value is zero.</p></div>';
+    const total = boxes.reduce((a, g) => a + g.v, 0);
+    let s = svgOpen(W, H, autoTitle()), labs = '';
+    const label = (x, y, w, h, t, v, big) => {
+      if (w < 38 || h < (big ? 34 : 28)) return '';
+      const t1 = clip(t, w - 12); if (!t1) return '';
+      return '<text x="' + (x + 7).toFixed(1) + '" y="' + (y + 17).toFixed(1) + '" class="cb-tm-lab' + (big ? ' big' : '') + '">' + esc(t1) + '</text>' +
+        (h >= 44 ? '<text x="' + (x + 7).toFixed(1) + '" y="' + (y + 32).toFixed(1) + '" class="cb-tm-lab sub">' + esc(fmt(v, unit)) + '</text>' : '');
+    };
+    boxes.forEach((g) => {
+      const pctTxt = ' (' + Math.round((g.v / total) * 100) + '%)';
+      const fade = b.soloCat && g.c.key !== b.soloCat ? ' faded' : '';
+      if (!split) {
+        s += '<rect class="cb-tm' + fade + '" x="' + (g.x + 1).toFixed(1) + '" y="' + (g.y + 1).toFixed(1) + '" width="' + Math.max(1, g.w - 2).toFixed(1) + '" height="' + Math.max(1, g.h - 2).toFixed(1) + '" rx="5" style="--c:' + g.c.color + '" tabindex="0" data-seg="' + g.i + ':0"' + tip(valTip(g.c.label, '', g.v, false) + pctTxt) + '/>';
+        labs += label(g.x, g.y, g.w, g.h, g.c.label, g.v, !mini);
+        return;
+      }
+      // a group: a header strip you can tap for all of it, with its pieces inside
+      const head = g.h > 48 && g.w > 64 ? 22 : 0;
+      s += '<rect class="cb-tm-group" x="' + (g.x + 1).toFixed(1) + '" y="' + (g.y + 1).toFixed(1) + '" width="' + Math.max(1, g.w - 2).toFixed(1) + '" height="' + Math.max(1, g.h - 2).toFixed(1) + '" rx="6" style="--c:' + g.c.color + '" data-seg="' + g.i + ':*"' + tip(catTotal(b, g.i) + pctTxt) + '/>';
+      if (head) { const t = clip(g.c.label + ' · ' + fmt(g.v, unit), g.w - 14); if (t) labs += '<text x="' + (g.x + 8).toFixed(1) + '" y="' + (g.y + 16).toFixed(1) + '" class="cb-tm-head">' + esc(t) + '</text>'; }
+      squarify(g.kids, g.x + 3, g.y + 3 + head, g.w - 6, g.h - 6 - head).forEach((q) => {
+        s += '<rect class="cb-tm" x="' + (q.x + 1).toFixed(1) + '" y="' + (q.y + 1).toFixed(1) + '" width="' + Math.max(1, q.w - 2).toFixed(1) + '" height="' + Math.max(1, q.h - 2).toFixed(1) + '" rx="4" style="--c:' + q.ser.color + '" tabindex="0" data-seg="' + g.i + ':' + q.j + '"' + tip(valTip(g.c.label, q.ser.label, q.v, true)) + '/>';
+        labs += label(q.x, q.y, q.w, q.h, q.ser.label, q.v, false);
+      });
+    });
+    return s + labs + '</svg>';
+  }
+
+  /* ---------- handoffs: bands from who assigned a task to who's doing it ---------- */
+  function handoffData() {
+    const { list } = rows();
+    const pairs = list.filter((t) => cfg.selfToo || shared(t)).map((t) => ({ t, a: owner(t), b: doer(t) }));
+    const people = orderKeys(DIMS.by, [...new Set(pairs.map((p) => p.a).concat(pairs.map((p) => p.b)))]);
+    const colors = {}; let n = 0;
+    people.forEach((p) => (colors[p] = p === 'Me' ? 'var(--accent)' : PALETTE[1 + (n++ % (PALETTE.length - 1))]));
+    const left = orderKeys(DIMS.by, [...new Set(pairs.map((p) => p.a))]), right = orderKeys(DIMS.who, [...new Set(pairs.map((p) => p.b))]);
+    const links = [];
+    left.forEach((a, li) => right.forEach((bb, ri) => { const tasks = pairs.filter((p) => p.a === a && p.b === bb).map((p) => p.t); if (tasks.length) links.push({ a, b: bb, li, ri, tasks }); }));
+    return { pairs, people, colors, left, right, links, n: list.length, sharedN: list.filter(shared).length };
+  }
+  function handoff(W, H, mini) {
+    const h = handoffData();
+    if (!h.pairs.length) return '<div class="cb-empty">' + typeSvg(TYPES.find((t) => t[0] === 'handoff')[2]) + '<p>' + (h.n ? 'None of these tasks are shared. Assign a task to someone, or tick “Include tasks I keep for myself”.' : noneMsg()) + '</p></div>';
+    const total = h.pairs.length, gap = 10, T = 24, B = 8, bw = 12;
+    const lw = Math.min(130, W * 0.26), x1 = lw, x2 = W - lw - bw;
+    const avail = (side) => H - T - B - gap * (side.length - 1);
+    const k = Math.min(avail(h.left), avail(h.right)) / total;
+    const stack = (side, count) => { let y = T; return side.map((p) => { const hh = Math.max(2, count(p) * k); const o = { p, y, h: hh, used: 0 }; y += hh + gap; return o; }); };
+    const L = stack(h.left, (p) => h.pairs.filter((q) => q.a === p).length), R = stack(h.right, (p) => h.pairs.filter((q) => q.b === p).length);
+    // centre each column
+    [L, R].forEach((col) => { const end = col[col.length - 1]; const off = (H - B - (end.y + end.h)) / 2; col.forEach((o) => (o.y += off)); });
+    const lit = (p) => !solo || !h.people.includes(solo) || p === solo;
+    let s = svgOpen(W, H, autoTitle()), bands = '';
+    const mx = (x1 + bw + x2) / 2;
+    // bands: leave each source in target order and enter each target in source order, so they don't twist
+    const byTarget = h.links.slice().sort((a, b) => a.ri - b.ri || a.li - b.li);
+    const yIn = new Map(); byTarget.forEach((l) => { const r = R[l.ri]; yIn.set(l, r.y + r.used); r.used += l.tasks.length * k; });
+    h.links.forEach((l) => {
+      const src = L[l.li], th = l.tasks.length * k, y0 = src.y + src.used, y1 = yIn.get(l);
+      src.used += th;
+      const d = 'M' + (x1 + bw) + ' ' + y0.toFixed(1) + 'C' + mx + ' ' + y0.toFixed(1) + ' ' + mx + ' ' + y1.toFixed(1) + ' ' + x2 + ' ' + y1.toFixed(1) +
+        'L' + x2 + ' ' + (y1 + th).toFixed(1) + 'C' + mx + ' ' + (y1 + th).toFixed(1) + ' ' + mx + ' ' + (y0 + th).toFixed(1) + ' ' + (x1 + bw) + ' ' + (y0 + th).toFixed(1) + 'Z';
+      const on = lit(l.a) || lit(l.b);
+      bands += '<path d="' + d + '" class="cb-band' + (on ? '' : ' faded') + '" style="--c:' + h.colors[l.a] + '" tabindex="0" data-seg="h' + l.li + ':' + l.ri + '"' + tip(l.a + ' → ' + l.b + ': ' + l.tasks.length + (l.tasks.length === 1 ? ' task' : ' tasks')) + '/>';
+    });
+    s += bands;
+    const node = (o, x, side, li) => {
+      const cnt = Math.round(o.h / k), name = o.p;
+      const lab = clip(name, lw - 30) || name.slice(0, 2);
+      return '<rect class="cb-hnode' + (lit(name) ? '' : ' faded') + '" x="' + x + '" y="' + o.y.toFixed(1) + '" width="' + bw + '" height="' + o.h.toFixed(1) + '" rx="3" style="--c:' + h.colors[name] + '" tabindex="0" data-seg="h' + side + li + '"' +
+        tip((side === 'l' ? name + ' assigned ' : name + ' is doing ') + cnt + (cnt === 1 ? ' task' : ' tasks')) + '/>' +
+        '<text x="' + (side === 'l' ? x - 8 : x + bw + 8) + '" y="' + (o.y + o.h / 2 + 4).toFixed(1) + '" class="ax lab" text-anchor="' + (side === 'l' ? 'end' : 'start') + '">' + esc(lab) + ' <tspan class="cb-hcount">' + cnt + '</tspan></text>';
+    };
+    L.forEach((o, i) => (s += node(o, x1, 'l', i)));
+    R.forEach((o, i) => (s += node(o, x2, 'r', i)));
+    s += '<text x="' + (x1 + bw) + '" y="12" class="ax cb-hhead" text-anchor="end">Assigned by</text><text x="' + x2 + '" y="12" class="ax cb-hhead">Assigned to</text>';
     return s + '</svg>';
   }
 
@@ -921,7 +1119,9 @@
     if (z === 'y' && NUMS[fid]) { patch.agg = NUMS[fid].aggs[0]; if (cfg.goal == null) patch.goalDir = LOWER_IS_BETTER.includes(fid) ? 'atMost' : 'atLeast'; }
     if (z === 'x' && cfg.type === 'kpi' && !(DIMS[fid] && DIMS[fid].time)) return nope(z, 'A KPI trend needs a date field, like Completed or Created.');
     if (FLOW_TYPES.includes(cfg.type) && z !== 'y') return nope(z, 'This chart always runs over time and splits tasks by status, so it doesn’t use this.');
-    if (FLOW_TYPES.includes(cfg.type) && z === 'y') return nope(z, 'This chart counts tasks.');
+    if (cfg.type === 'handoff' && z !== 'y') return nope(z, 'This chart always runs from who assigned each task to who’s doing it.');
+    if (FIXED_TYPES.includes(cfg.type) && z === 'y') return nope(z, 'This chart counts tasks.');
+    if (cfg.type === 'treemap' && z === 'y' && NUMS[fid] && !NUMS[fid].aggs.includes('sum') && fid !== 'count') return nope(z, 'A treemap adds values up, and ' + NUMS[fid].label + ' only makes sense as an average.');
     if (z === 'x' && cfg.type === 'sunburst') return nope(z, 'A sunburst follows your map, so it doesn’t use the X axis.');
     ui.picked = null;
     setCfg(patch);
@@ -986,8 +1186,13 @@
 
   /* ---------- clicks & inputs ---------- */
   function onClick(e) {
-    if (swallowClick) { e.preventDefault(); e.stopPropagation(); return; }
+    if (swallowClick || swallowZoomClick) { e.preventDefault(); e.stopPropagation(); return; }
     const t = e.target;
+    const lg = t.closest('[data-legend]');
+    if (lg) { const k = lg.dataset.legend; ui.solo = k && ui.solo !== k ? k : null; return render(); }
+    if (t.closest('[data-unzoom]')) { ui.zoom = null; return render(); }
+    const ex = t.closest('[data-export]');
+    if (ex) { const ti = el.querySelector('#cb-title'); const title = (ti && ti.value.trim()) || autoTitle(); solo = ui.solo; zoom = ui.zoom; return ex.dataset.export === 'csv' ? exportCsv(title) : exportPng(el.querySelector('.cb-canvas'), title); }
     const clr = t.closest('[data-clear]');
     if (clr) { const z = clr.dataset.clear; return setCfg({ [z]: z === 'y' ? 'count' : null, agg: z === 'y' ? 'count' : cfg.agg }); }
     const c = t.closest('.cb-chip');
@@ -1000,8 +1205,14 @@
       if (type === 'scatter' && (!isNum(cfg.x) || cfg.x === 'count')) { patch.x = 'age'; patch.y = cfg.y && cfg.y !== 'count' ? cfg.y : 'late'; patch.series = cfg.series || (cfg.x && !isNum(cfg.x) ? cfg.x : null); }
       if (type !== 'scatter' && cfg.type === 'scatter') { patch.x = cfg.series || 'type'; patch.series = null; if (type === 'kpi' || type === 'sunburst') patch.x = null; if (NUMS[cfg.y] && cfg.y !== 'count' && type !== 'scatter') patch.y = cfg.y; }
       if (type === 'kpi' && cfg.x && !(DIMS[cfg.x] && DIMS[cfg.x].time)) patch.x = null;
-      if (FLOW_TYPES.includes(type)) patch.y = 'count';
-      if ((cfg.type === 'kpi' || cfg.type === 'sunburst' || FLOW_TYPES.includes(cfg.type)) && type !== 'kpi' && type !== 'sunburst' && !FLOW_TYPES.includes(type) && type !== 'scatter' && !cfg.x) patch.x = 'type';
+      if (FIXED_TYPES.includes(type)) patch.y = 'count';
+      if ((cfg.type === 'kpi' || cfg.type === 'sunburst' || FIXED_TYPES.includes(cfg.type)) && type !== 'kpi' && type !== 'sunburst' && !FIXED_TYPES.includes(type) && type !== 'scatter' && !cfg.x) patch.x = 'type';
+      if (type === 'treemap') {
+        const yy = patch.y || cfg.y;
+        if (NUMS[yy] && yy !== 'count' && !NUMS[yy].aggs.includes('sum')) patch.y = 'count';
+        else if (cfg.agg === 'avg') patch.agg = 'sum';
+        if (!patch.x && !cfg.x) patch.x = 'type';
+      }
       return C.withTransition(() => setCfg(patch));
     }
     const ag = t.closest('[data-agg]'); if (ag) return setCfg({ agg: ag.dataset.agg });
@@ -1029,9 +1240,181 @@
     // tapping anywhere else cancels a picked field
     if (ui.picked && !t.closest('.cb-fields')) { ui.picked = null; render(); }
   }
+  /* ================= export: the chart's numbers as CSV, or a picture as PNG ================= */
+  const slug = (t) => (t || 'chart').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'chart';
+  /** the numbers behind the current chart, as a header row and data rows */
+  function tableData() {
+    const unit = (NUMS[cfg.y] || NUMS.count).unit, num = (v) => (v == null ? '' : unit === '%' ? Math.round(v) : Math.round(v * 100) / 100);
+    const yLabel = cfg.y === 'count' ? 'Tasks' : (cfg.agg === 'avg' ? 'Average ' : cfg.agg === 'sum' ? 'Total ' : '') + (NUMS[cfg.y] || NUMS.count).label.toLowerCase();
+    if (cfg.type === 'kpi') {
+      const k = kpiData();
+      return { head: ['Week starting', yLabel], rows: k.keys.map((key, i) => [key, num(k.spark[i])]).concat([[k.week ? 'This week' : 'All matching', num(k.value)]]) };
+    }
+    if (cfg.type === 'sunburst') {
+      const sb = sunData(); if (!sb) return null;
+      const out = []; const walk = (nd, path) => { nd.kids.forEach((k) => { const p2 = path.concat(k.title); out.push([p2.join(' / '), k.depth, k.all.length, num(sb.value(k.all))]); walk(k, p2); }); };
+      walk(sb.center, []);
+      return { head: ['Node', 'Depth', 'Tasks', yLabel], rows: [['Whole map', 0, sb.center.all.length, num(sb.value(sb.center.all))]].concat(out) };
+    }
+    if (cfg.type === 'handoff') { const h = handoffData(); return { head: ['Assigned by', 'Assigned to', 'Tasks'], rows: h.links.map((l) => [l.a, l.b, l.tasks.length]) }; }
+    const b = build();
+    if (cfg.type === 'scatter') return { head: ['Task', NUMS[cfg.x].label, NUMS[cfg.y].label].concat(cfg.series ? [DIMS[cfg.series].label] : []), rows: b.points.map((p) => [p.t.title, num(p.x), num(p.y)].concat(cfg.series ? [p.s] : [])) };
+    const xLabel = b.flow ? 'Up to' : DIMS[cfg.x].label;
+    const head = [xLabel].concat(b.series.map((x) => (b.series.length > 1 || cfg.series ? x.label : yLabel)));
+    if (b.prev) head.push('Previous ' + RANGE_WORDS[curRange()]);
+    if (b.trend) head.push(cfg.trend === 'avg' ? 'Rolling average' : 'Trend');
+    return { head, rows: b.cats.map((c, i) => [c.label].concat(b.series.map((x) => num(x.values[i])), b.prev ? [num(b.prev.values[i])] : [], b.trend ? [num(b.trend[i])] : [])) };
+  }
+  const csvCell = (v) => { let t = v == null ? '' : String(v); if (/^[=+\-@\t\r]/.test(t) && isNaN(+t)) t = "'" + t; return /[",\n\r]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
+  function exportCsv(title) {
+    const t = tableData();
+    if (!t || !t.rows.length) return C.toast('Nothing to export yet');
+    const csv = '﻿' + [t.head].concat(t.rows).map((r) => r.map(csvCell).join(',')).join('\r\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    C.map.download(url, slug(title) + '.csv');
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    C.toast('Downloaded ' + slug(title) + '.csv');
+  }
+  /* SVG → PNG: copy the computed look onto each element so the picture matches the screen */
+  const STYLE_PROPS = ['fill', 'fill-opacity', 'stroke', 'stroke-width', 'stroke-dasharray', 'stroke-opacity', 'stroke-linecap', 'stroke-linejoin', 'opacity', 'font-family', 'font-size', 'font-weight', 'paint-order', 'display', 'visibility'];
+  function svgImage(svg, W, H) {
+    const clone = svg.cloneNode(true);
+    const src = [svg, ...svg.querySelectorAll('*')], dst = [clone, ...clone.querySelectorAll('*')];
+    src.forEach((n, i) => { const cs = getComputedStyle(n); dst[i].setAttribute('style', STYLE_PROPS.map((p) => p + ':' + cs.getPropertyValue(p)).join(';')); dst[i].removeAttribute('class'); dst[i].removeAttribute('tabindex'); dst[i].removeAttribute('data-tip'); dst[i].removeAttribute('data-seg'); });
+    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    clone.setAttribute('width', W); clone.setAttribute('height', H);
+    const xml = new XMLSerializer().serializeToString(clone);
+    return new Promise((res, rej) => { const img = new Image(); img.onload = () => res(img); img.onerror = () => rej(new Error('Couldn’t draw this chart')); img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(xml); });
+  }
+  function wrapLines(ctx, text, max) {
+    const words = text.split(/\s+/), lines = []; let cur = '';
+    words.forEach((w) => { const t = cur ? cur + ' ' + w : w; if (ctx.measureText(t).width > max && cur) { lines.push(cur); cur = w; } else cur = t; });
+    if (cur) lines.push(cur);
+    return lines;
+  }
+  /** card: the element holding the chart (builder canvas or a Board card) */
+  async function exportPng(card, title) {
+    card.querySelectorAll('.tipped').forEach((x) => x.classList.remove('tipped'));
+    const svg = card.querySelector('.cb-plot svg.chart, .kpi');
+    if (!svg) return C.toast('Nothing to export yet');
+    const cs = getComputedStyle(card), body = getComputedStyle(document.body);
+    const bg = cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)' ? cs.backgroundColor : body.backgroundColor || '#fff';
+    const ink = body.color || '#111', muted = getComputedStyle(card.querySelector('.muted') || card).color;
+    const font = body.fontFamily || 'system-ui, sans-serif', dfont = getComputedStyle(document.documentElement).getPropertyValue('--font-display').trim() || font;
+    const scale = 2, pad = 28;
+    try {
+      let W, H, img = null, kpiBox = null;
+      if (svg.tagName.toLowerCase() === 'svg') { const vb = svg.viewBox.baseVal; W = vb.width; H = vb.height; img = await svgImage(svg, W, H); }
+      else { kpiBox = svg; W = 480; H = 212; const sp = svg.querySelector('.kpi-spark'); if (sp) img = await svgImage(sp, 240, 54); }
+      const width = Math.max(W, 480) + pad * 2;
+      const cv = document.createElement('canvas'), ctx = cv.getContext('2d');
+      // measure first: title and summary wrap to the picture's width
+      ctx.font = '700 22px ' + dfont;
+      const tl = wrapLines(ctx, title, width - pad * 2);
+      const legend = [...card.querySelectorAll('.cb-legend .lg-item, .cb-legend > span:not(.ins-cap)')].map((n) => { const i = n.querySelector('i'), ic = i && getComputedStyle(i); return { label: n.textContent.trim(), bg: ic ? ic.backgroundColor : null, line: ic ? ic.borderTopColor : null, lineStyle: ic ? ic.borderTopStyle : 'none', off: n.classList.contains('off') }; }).filter((x) => x.label);
+      const summary = (card.querySelector('.cb-summary') || {}).textContent || '';
+      ctx.font = '13px ' + font;
+      const sl = summary ? wrapLines(ctx, summary.trim(), width - pad * 2) : [];
+      // lay out the legend in rows
+      const lrows = []; let row = [], rx = 0;
+      legend.forEach((it) => { const w = 22 + ctx.measureText(it.label).width + 18; if (rx + w > width - pad * 2 && row.length) { lrows.push(row); row = []; rx = 0; } row.push(Object.assign(it, { w })); rx += w; });
+      if (row.length) lrows.push(row);
+      const height = pad + tl.length * 28 + 12 + H + (lrows.length ? 14 + lrows.length * 22 : 0) + (sl.length ? 14 + sl.length * 19 : 0) + pad;
+      cv.width = width * scale; cv.height = height * scale; ctx.scale(scale, scale);
+      ctx.fillStyle = bg; ctx.fillRect(0, 0, width, height);
+      let y = pad;
+      ctx.fillStyle = ink; ctx.font = '700 22px ' + dfont; ctx.textBaseline = 'top';
+      tl.forEach((l) => { ctx.fillText(l, pad, y); y += 28; });
+      y += 12;
+      if (kpiBox) {
+        const num = kpiBox.querySelector('.kpi-num'), sub = kpiBox.querySelector('.kpi-sub'), rowEl = kpiBox.querySelector('.kpi-row');
+        ctx.fillStyle = getComputedStyle(num).color; ctx.font = '750 64px ' + dfont; ctx.fillText(num.textContent, pad, y);
+        ctx.fillStyle = muted; ctx.font = '13px ' + font; const bits = [sub ? sub.textContent.trim() : ''].concat(rowEl ? [...rowEl.children].map((c) => c.textContent.trim()) : []).filter(Boolean);
+        ctx.fillText(bits.join('  ·  '), pad, y + 76);
+        if (img) ctx.drawImage(img, pad, y + 104, 440, 99);
+      } else ctx.drawImage(img, (width - W) / 2, y, W, H);
+      y += H;
+      if (lrows.length) {
+        y += 14; ctx.font = '13px ' + font;
+        lrows.forEach((r) => { let x = pad; r.forEach((it) => {
+          ctx.globalAlpha = it.off ? 0.45 : 1;
+          if (it.bg && it.bg !== 'rgba(0, 0, 0, 0)') { ctx.fillStyle = it.bg; ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x, y + 3, 11, 11, 3); else ctx.rect(x, y + 3, 11, 11); ctx.fill(); }
+          else if (it.line && it.lineStyle !== 'none') { ctx.strokeStyle = it.line; ctx.lineWidth = 2; ctx.setLineDash(it.lineStyle === 'dotted' ? [2, 3] : [5, 3]); ctx.beginPath(); ctx.moveTo(x, y + 9); ctx.lineTo(x + 16, y + 9); ctx.stroke(); ctx.setLineDash([]); }
+          ctx.fillStyle = ink; ctx.fillText(it.label, x + 20, y + 2); x += it.w; ctx.globalAlpha = 1;
+        }); y += 22; });
+      }
+      if (sl.length) { y += 14; ctx.fillStyle = muted; ctx.font = '13px ' + font; sl.forEach((l) => { ctx.fillText(l, pad, y); y += 19; }); }
+      const blob = await new Promise((r) => cv.toBlob(r, 'image/png'));
+      if (!blob) throw new Error('Couldn’t make the picture');
+      const url = URL.createObjectURL(blob);
+      C.map.download(url, slug(title) + '.png');
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      C.toast('Downloaded ' + slug(title) + '.png');
+    } catch (err) { C.toast(err.message || 'Couldn’t export the chart'); }
+  }
+
+  /* ================= drag across a time chart to zoom ================= */
+  let zd = null, swallowZoomClick = false;
+  /** onDone(i0, i1) gets the first and last category index the drag covered */
+  function zoomDown(e, onDone) {
+    if (e.button) return;
+    if (zd) zEnd(); // a drag that never got its pointerup
+    const svg = e.target.closest && e.target.closest('svg[data-zoom]');
+    if (!svg) return;
+    const [L, R, n, W, T, Bt] = svg.dataset.zoom.split(',').map(Number);
+    const r = svg.getBoundingClientRect();
+    const toV = (cx) => Math.max(L, Math.min(W - R, ((cx - r.left) / r.width) * W));
+    zd = { svg, L, R, n, W, T, Bt, toV, x0: toV(e.clientX), cx0: e.clientX, cy0: e.clientY, pid: e.pointerId, on: false, onDone, sel: null };
+    window.addEventListener('pointermove', zMove, { passive: false });
+    window.addEventListener('pointerup', zUp);
+    window.addEventListener('pointercancel', zEnd);
+  }
+  function zMove(e) {
+    if (!zd || e.pointerId !== zd.pid) return;
+    const dx = e.clientX - zd.cx0, dy = e.clientY - zd.cy0;
+    if (!zd.on) {
+      if (Math.abs(dx) < 8) { if (Math.abs(dy) > 10) zEnd(); return; }
+      if (Math.abs(dy) > Math.abs(dx)) return zEnd(); // scrolling, not zooming
+      zd.on = true;
+      zd.sel = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      zd.sel.setAttribute('class', 'cb-zoomsel');
+      zd.sel.setAttribute('y', zd.T); zd.sel.setAttribute('height', zd.Bt - zd.T); zd.sel.setAttribute('rx', 4);
+      zd.svg.appendChild(zd.sel);
+      zd.svg.classList.add('zooming');
+    }
+    e.preventDefault();
+    const x = zd.toV(e.clientX), a = Math.min(x, zd.x0), b = Math.max(x, zd.x0);
+    zd.sel.setAttribute('x', a.toFixed(1)); zd.sel.setAttribute('width', (b - a).toFixed(1));
+    zd.x1 = x;
+  }
+  function zUp(e) {
+    if (!zd || e.pointerId !== zd.pid) return;
+    const d = zd; zEnd();
+    if (!d.on) return;
+    swallowZoomClick = true; setTimeout(() => (swallowZoomClick = false), 80);
+    const cw = (d.W - d.L - d.R) / d.n, idx = (x) => Math.max(0, Math.min(d.n - 1, Math.floor((x - d.L) / cw)));
+    const i0 = idx(Math.min(d.x0, d.x1)), i1 = idx(Math.max(d.x0, d.x1));
+    if (i1 > i0) d.onDone(i0, i1);
+    else C.toast('Drag across at least two ' + (FLOW_TYPES.includes(cfg.type) ? 'points' : 'bars or points') + ' to zoom');
+  }
+  function zEnd() {
+    if (!zd) return;
+    if (zd.sel) zd.sel.remove();
+    zd.svg.classList.remove('zooming');
+    window.removeEventListener('pointermove', zMove);
+    window.removeEventListener('pointerup', zUp);
+    window.removeEventListener('pointercancel', zEnd);
+    zd = null;
+  }
+  const zoomKeys = (i0, i1) => { const b = build(); return b.cats[i0] && b.cats[i1] ? { a: b.cats[i0].key, b: b.cats[i1].key } : null; };
+
   /* ================= Board page ================= */
   let elB = null;
-  const withCfg = (item, fn) => { const saved = cfg, ro = rangeOverride; cfg = Object.assign({}, BLANK, item); rangeOverride = boardRange(); try { return fn(); } finally { cfg = saved; rangeOverride = ro; } };
+  const withCfg = (item, fn) => {
+    const saved = cfg, ro = rangeOverride, so = solo, zo = zoom, v = cardView(item.id);
+    cfg = Object.assign({}, BLANK, item); rangeOverride = boardRange(); solo = v.solo; zoom = v.zoom;
+    try { return fn(); } finally { cfg = saved; rangeOverride = ro; solo = so; zoom = zo; }
+  };
   const BOARD_RANGE = 'cadence.board.range';
   const boardRange = () => { const v = load(BOARD_RANGE, ''); return v && v !== 'own' ? v : null; };
 
@@ -1046,7 +1429,12 @@
         '<a href="#charts" class="btn primary sm">' + icon('plus') + '<span>New chart</span></a></div></div>' +
         '<p class="muted cb-lede">Tap any bar, slice, point or dot to see the tasks behind it.</p></header><div id="bd-root"></div></section>';
       root.addEventListener('click', onBoardClick);
-      root.addEventListener('change', (e) => { if (e.target.id === 'bd-range') { keep(BOARD_RANGE, e.target.value); renderBoard(); } });
+      root.addEventListener('change', (e) => { if (e.target.id === 'bd-range') { keep(BOARD_RANGE, e.target.value); Object.values(cardUi).forEach((v) => (v.zoom = null)); renderBoard(); } });
+      root.addEventListener('pointerdown', (e) => zoomDown(e, (i0, i1) => {
+        const card = e.target.closest('[data-card]'), item = card && board.find((b) => b.id === card.dataset.card);
+        if (!item) return;
+        const k = withCfg(item, () => zoomKeys(i0, i1)); if (k) { cardView(item.id).zoom = k; renderBoard(); }
+      }));
       root.addEventListener('pointerover', (e) => { if (e.pointerType === 'mouse') boardTip(e.target); });
       root.addEventListener('focusin', (e) => boardTip(e.target));
       root.addEventListener('keydown', (e) => { const n = e.target.closest('[data-seg]'); if (n && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); n.dispatchEvent(new MouseEvent('click', { bubbles: true })); } });
@@ -1056,6 +1444,14 @@
     unmount() { elB = null; closeRecords(); }
   };
 
+  const SIZES = [['sm', 'Small'], ['md', 'Medium'], ['wide', 'Wide']];
+  const PLOT_SIZE = { sm: { W: 400, H: 290 }, md: { W: 560, H: 320 }, wide: { W: 1000, H: 340 } };
+  /** sections in the order they first appear; charts with no section come first */
+  function sections() {
+    const out = [''];
+    board.forEach((it) => { const sct = it.section || ''; if (!out.includes(sct)) out.push(sct); });
+    return out;
+  }
   function renderBoard() {
     const root = elB && elB.querySelector('#bd-root');
     if (!root) return;
@@ -1065,22 +1461,107 @@
       return;
     }
     const narrow = matchMedia('(max-width: 640px)').matches;
-    const size = narrow ? { W: 360, H: 260 } : { W: 560, H: 320 };
-    const kpis = board.filter((it) => it.type === 'kpi'), charts = board.filter((it) => it.type !== 'kpi');
     const btns = (item) => '<div class="cb-card-btns"><button type="button" class="icon-btn sm" data-edit="' + item.id + '" aria-label="Edit chart" title="Edit in Chart builder">' + icon('settings') + '</button>' +
-      '<button type="button" class="icon-btn sm" data-del="' + item.id + '" aria-label="Remove chart" title="Remove">' + icon('trash') + '</button></div>';
-    root.innerHTML = (kpis.length ? '<div class="bd-kpis">' + kpis.map((item) => withCfg(item, () =>
-      '<article class="st-sec bd-card bd-kpi" data-card="' + item.id + '"><header class="cb-card-head"><h2>' + esc(item.title || autoTitle()) + '</h2>' + btns(item) + '</header>' + plot(false, { W: 240, H: 120, kpi: true }) + '</article>')).join('') + '</div>' : '') +
-      (charts.length ? '<div class="bd-grid">' + charts.map((item) => withCfg(item, () =>
-      '<article class="st-sec bd-card" data-card="' + item.id + '">' +
-      '<header class="cb-card-head"><h2>' + esc(item.title || autoTitle()) + '</h2>' +
-      '<div class="cb-card-btns"><button type="button" class="icon-btn sm" data-edit="' + item.id + '" aria-label="Edit chart" title="Edit in Chart builder">' + icon('settings') + '</button>' +
-      '<button type="button" class="icon-btn sm" data-del="' + item.id + '" aria-label="Remove chart" title="Remove">' + icon('trash') + '</button></div></header>' +
-      '<p class="bd-filters muted">' + esc(filterText()) + '</p>' +
-      '<div class="cb-plot bd-plot">' + plot(false, size) + '</div>' +
-      '<div class="ins-legend cb-legend">' + legendHtml() + '<span class="ins-cap" aria-live="polite"></span></div>' +
-      summaryHtml() +
-      '</article>')).join('') + '</div>' : '');
+      '<button type="button" class="icon-btn sm" data-cmenu="' + item.id + '" aria-label="More for this chart" aria-haspopup="menu" title="Size, section, download">' + icon('more') + '</button></div>';
+    const kpiCard = (item) => withCfg(item, () =>
+      '<article class="st-sec bd-card bd-kpi" data-card="' + item.id + '"><header class="cb-card-head"><h2>' + esc(item.title || autoTitle()) + '</h2>' + btns(item) + '</header>' + plot(false, { W: 240, H: 120, kpi: true }) + '</article>');
+    const chartCard = (item) => withCfg(item, () => {
+      const sz = SIZES.some((x) => x[0] === item.size) ? item.size : 'md';
+      return '<article class="st-sec bd-card sz-' + sz + '" data-card="' + item.id + '">' +
+        '<header class="cb-card-head"><h2>' + esc(item.title || autoTitle()) + '</h2>' + btns(item) + '</header>' +
+        '<p class="bd-filters muted">' + esc(filterText()) + '</p>' +
+        '<div class="cb-plot bd-plot">' + plot(false, narrow ? { W: 360, H: 260 } : PLOT_SIZE[sz]) + '</div>' + zoomHtml(false) +
+        '<div class="ins-legend cb-legend">' + legendHtml() + '<span class="ins-cap" aria-live="polite"></span></div>' +
+        summaryHtml() + '</article>';
+    });
+    const secs = sections();
+    root.innerHTML = secs.map((name, si) => {
+      const items = board.filter((it) => (it.section || '') === name);
+      if (!items.length) return '';
+      const kpis = items.filter((it) => it.type === 'kpi'), charts = items.filter((it) => it.type !== 'kpi');
+      return '<section class="bd-sec" data-sec="' + esc(name) + '">' +
+        (name ? '<header class="bd-sec-head"><h2>' + esc(name) + '</h2><span class="muted">' + items.length + ' chart' + (items.length === 1 ? '' : 's') + '</span>' +
+          '<button type="button" class="icon-btn sm" data-smenu="' + si + '" aria-label="Section options" aria-haspopup="menu">' + icon('more') + '</button></header>' : '') +
+        (kpis.length ? '<div class="bd-kpis">' + kpis.map(kpiCard).join('') + '</div>' : '') +
+        (charts.length ? '<div class="bd-grid">' + charts.map(chartCard).join('') + '</div>' : '') + '</section>';
+    }).join('');
+  }
+  /* ---------- Board layout changes ---------- */
+  function patchItem(id, patch, moveToEnd) {
+    syncBoard();
+    const it = board.find((b) => b.id === id); if (!it) return;
+    const next = Object.assign({}, it, patch);
+    Object.keys(next).forEach((k) => { if (next[k] == null) delete next[k]; });
+    board = moveToEnd ? board.filter((b) => b.id !== id).concat([next]) : board.map((b) => (b.id === id ? next : b));
+    saveBoard(); renderBoard();
+  }
+  /** move a chart one place earlier or later among the charts drawn next to it */
+  function nudge(id, dir) {
+    syncBoard();
+    const it = board.find((b) => b.id === id); if (!it) return;
+    const peers = board.filter((b) => (b.section || '') === (it.section || '') && (b.type === 'kpi') === (it.type === 'kpi'));
+    const pi = peers.indexOf(it), other = peers[pi + dir]; if (!other) return;
+    const a = board.indexOf(it), b2 = board.indexOf(other);
+    board = board.slice(); board[a] = other; board[b2] = it;
+    saveBoard(); renderBoard();
+    const card = elB && elB.querySelector('[data-card="' + id + '"]'); if (card) card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+  function reorderSections(order) { board = order.flatMap((name) => board.filter((b) => (b.section || '') === name)); saveBoard(); renderBoard(); }
+  /** a small popover with one text field */
+  function askName(anchor, label, value, onOk) {
+    const pop = C.map.openPop('<form class="bd-ask"><label class="bd-ask-l" for="bd-ask-in">' + esc(label) + '</label><div class="input-wrap sm"><input id="bd-ask-in" maxlength="60" autocomplete="off" value="' + esc(value || '') + '" placeholder="For example: Weekly review"></div>' +
+      '<div class="bd-ask-btns"><button type="button" class="btn sm ghost" data-ask-cancel>Cancel</button><button type="submit" class="btn primary sm">Save</button></div></form>', { anchor, cls: 'bd-askpop' });
+    const input = pop.querySelector('input');
+    setTimeout(() => { input.focus(); input.select(); }, 30);
+    pop.querySelector('form').addEventListener('submit', (e) => { e.preventDefault(); const v = input.value.trim(); C.map.closePop(); if (v) onOk(v); });
+    pop.querySelector('[data-ask-cancel]').addEventListener('click', () => C.map.closePop());
+  }
+  function cardMenu(btn, id) {
+    syncBoard();
+    const it = board.find((b) => b.id === id); if (!it) return;
+    const secs = sections().filter(Boolean), cur = it.section || '', kpi = it.type === 'kpi';
+    const peers = board.filter((b) => (b.section || '') === cur && (b.type === 'kpi') === kpi), pi = peers.indexOf(it);
+    const items = [];
+    if (!kpi) {
+      items.push({ head: 'Size' });
+      SIZES.forEach(([k, l]) => items.push({ label: l, ic: (it.size || 'md') === k ? 'check' : null, run: () => patchItem(id, { size: k === 'md' ? null : k }) }));
+      items.push('sep');
+    }
+    items.push({ head: 'Section' });
+    secs.filter((x) => x !== cur).forEach((x) => items.push({ label: 'Move to ' + x, ic: 'rows', run: () => patchItem(id, { section: x }, true) }));
+    if (cur) items.push({ label: 'Take out of “' + cur + '”', ic: 'x', run: () => patchItem(id, { section: null }, true) });
+    items.push({ label: 'New section…', ic: 'plus', run: () => askName(btn, 'Name the new section', '', (v) => patchItem(id, { section: v }, true)) });
+    if (peers.length > 1) {
+      items.push('sep');
+      if (pi > 0) items.push({ label: 'Move earlier', ic: 'up', run: () => nudge(id, -1) });
+      if (pi < peers.length - 1) items.push({ label: 'Move later', ic: 'down', run: () => nudge(id, 1) });
+    }
+    items.push('sep');
+    items.push({ label: 'Download PNG', ic: 'image', run: () => { const card = elB.querySelector('[data-card="' + id + '"]'); withCfg(it, () => exportPng(card, it.title || autoTitle())); } });
+    items.push({ label: 'Download CSV', ic: 'download', run: () => withCfg(it, () => exportCsv(it.title || autoTitle())) });
+    items.push('sep');
+    items.push({ label: 'Remove from board', ic: 'trash', danger: true, run: () => removeItem(id) });
+    C.map.menu(items, { anchor: btn, cls: 'menu bd-menu' });
+  }
+  function sectionMenu(btn, si) {
+    syncBoard();
+    const order = sections(), name = order[+si]; if (!name) return;
+    const named = order.filter(Boolean), ni = named.indexOf(name);
+    const items = [{ label: 'Rename section…', ic: 'note', run: () => askName(btn, 'Rename section', name, (v) => { board = board.map((b) => ((b.section || '') === name ? Object.assign({}, b, { section: v }) : b)); saveBoard(); renderBoard(); }) }];
+    const swap = (d) => { const o = named.slice(); [o[ni], o[ni + d]] = [o[ni + d], o[ni]]; reorderSections([''].concat(o)); };
+    if (ni > 0) items.push({ label: 'Move section up', ic: 'up', run: () => swap(-1) });
+    if (ni < named.length - 1) items.push({ label: 'Move section down', ic: 'down', run: () => swap(1) });
+    items.push('sep', { label: 'Ungroup (keep the charts)', ic: 'x', run: () => { board = board.map((x) => { if ((x.section || '') !== name) return x; const c = Object.assign({}, x); delete c.section; return c; }); saveBoard(); renderBoard(); } });
+    C.map.menu(items, { anchor: btn, cls: 'menu bd-menu' });
+  }
+  function removeItem(id) {
+    syncBoard();
+    const idx = board.findIndex((b) => b.id === id); if (idx < 0) return;
+    const gone = board[idx];
+    board = board.filter((b) => b.id !== gone.id); saveBoard();
+    if (cfg.id === gone.id) { cfg.id = null; keep(LS_DRAFT, cfg); }
+    renderBoard();
+    C.toast('Removed “' + (gone.title || 'chart') + '”', { action: 'Undo', onAction: () => { syncBoard(); if (!board.some((b) => b.id === gone.id)) { board = board.slice(); board.splice(Math.min(idx, board.length), 0, gone); saveBoard(); } } });
   }
   function filterText() {
     const st = { all: 'All tasks', open: 'Open tasks', overdue: 'Overdue tasks', done: 'Done tasks' }[cfg.status] || 'All tasks';
@@ -1098,25 +1579,23 @@
   }
 
   function onBoardClick(e) {
+    if (swallowZoomClick) { e.preventDefault(); return; }
     const t = e.target;
     syncBoard();
+    const card = t.closest('[data-card]');
+    const lg = t.closest('[data-legend]');
+    if (lg && card) { const v = cardView(card.dataset.card), k = lg.dataset.legend; v.solo = k && v.solo !== k ? k : null; return renderBoard(); }
+    if (t.closest('[data-unzoom]') && card) { cardView(card.dataset.card).zoom = null; return renderBoard(); }
     const seg = t.closest('[data-seg]');
-    if (seg) { const card = seg.closest('[data-card]'); return openRecords(card.dataset.card, seg.dataset.seg, seg.dataset.tip); }
+    if (seg && card) return openRecords(card.dataset.card, seg.dataset.seg, seg.dataset.tip);
     const ed = t.closest('[data-edit]');
     if (ed) {
       const item = board.find((b) => b.id === ed.dataset.edit);
-      if (item) { Object.assign(cfg, BLANK, item); keep(LS_DRAFT, cfg); C.go('charts'); }
+      if (item) { Object.assign(cfg, BLANK, item); keep(LS_DRAFT, cfg); const v = cardView(item.id); ui.solo = v.solo; ui.zoom = v.zoom; C.go('charts'); }
       return;
     }
-    const del = t.closest('[data-del]');
-    if (del) {
-      const idx = board.findIndex((b) => b.id === del.dataset.del); if (idx < 0) return;
-      const gone = board[idx];
-      board = board.filter((b) => b.id !== gone.id); saveBoard();
-      if (cfg.id === gone.id) { cfg.id = null; keep(LS_DRAFT, cfg); }
-      renderBoard();
-      C.toast('Removed “' + (gone.title || 'chart') + '”', { action: 'Undo', onAction: () => { syncBoard(); if (!board.some((b) => b.id === gone.id)) { board = board.slice(); board.splice(Math.min(idx, board.length), 0, gone); saveBoard(); } } });
-    }
+    const cm = t.closest('[data-cmenu]'); if (cm) return cardMenu(cm, cm.dataset.cmenu);
+    const sm = t.closest('[data-smenu]'); if (sm) return sectionMenu(sm, sm.dataset.smenu);
   }
 
   /* ---------- records modal ---------- */
@@ -1129,6 +1608,15 @@
         const nd = seg === 'nall' ? sb.center : sb.find(seg.slice(1));
         if (!nd) return null;
         return { title: item.title || autoTitle(), label: seg === 'nall' ? 'Whole map' : nd.title, color: nd.hex, tasks: nd.all };
+      }
+      if (seg[0] === 'h' && cfg.type === 'handoff') {
+        const h = handoffData();
+        if (seg[1] === 'l' || seg[1] === 'r') {
+          const side = seg[1], p = (side === 'l' ? h.left : h.right)[+seg.slice(2)]; if (p == null) return null;
+          return { title: item.title || autoTitle(), label: side === 'l' ? 'Assigned by ' + p : 'Assigned to ' + p, color: h.colors[p], tasks: h.pairs.filter((q) => (side === 'l' ? q.a : q.b) === p).map((q) => q.t) };
+        }
+        const [li, ri] = seg.slice(1).split(':').map(Number), l = h.links.find((x) => x.li === li && x.ri === ri);
+        return l ? { title: item.title || autoTitle(), label: l.a + ' → ' + l.b, color: h.colors[l.a], tasks: l.tasks } : null;
       }
       const b = build();
       if (seg[0] === 'p') {
@@ -1221,6 +1709,7 @@
     if (t.dataset.filter) { const f = Object.assign({}, flt(), { [t.dataset.filter]: t.value || null }); Object.keys(f).forEach((k) => { if (!f[k]) delete f[k]; }); return setCfg({ f: Object.keys(f).length ? f : null }); }
     if (t.hasAttribute('data-goal')) { const v = t.value.trim(); return setCfg({ goal: v === '' || !isFinite(+v) ? null : +v }); }
     if (t.hasAttribute('data-stack')) return setCfg({ stack: t.checked });
+    if (t.hasAttribute('data-self')) return setCfg({ selfToo: t.checked });
     if (t.id === 'cb-title') { cfg.title = t.value.trim(); keep(LS_DRAFT, cfg); }
   }
 })();

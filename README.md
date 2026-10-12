@@ -11,8 +11,11 @@ A build-free task app: plain HTML, CSS and JavaScript files. No bundler, no npm 
 - **Over time**: Burn-up (added vs. done, and whether your open list is growing) and Flow (done / open / overdue stacked over time)
 - **Reading charts**: compare with the previous period (faint bars or a dashed line), rolling-average or straight-line trends, and a one-sentence summary under every chart
 - **Filters**: narrow any chart by type, importance, map cluster, map branch or person; on the Board, one date range can apply to every chart
+- **Treemap and Handoffs**: a treemap sizes boxes by type (or any category) with smaller boxes inside for a second field; Handoffs draws bands from who assigned each task to who's doing it
+- **Exploring**: click a legend entry to show only that series (or highlight one slice), and drag across a time chart to zoom into a stretch of dates (swipe sideways on touch screens)
+- **Export**: download any chart as a PNG picture or its numbers as a CSV file, from the Chart builder or a Board card's ⋯ menu
 - **Canvas heat overlay**: color every node by open tasks, overdue tasks, days late, age, % on time or recent completions, optionally rolled up through each branch
-- **Board**: your saved charts on their own page, synced to your account (private to you); tap any bar, slice or point to open a list of the tasks behind it, complete them, or open one to edit
+- **Board**: your saved charts on their own page, synced to your account (private to you). Group charts into named sections, make each card small, medium or wide, and reorder them; tap any bar, slice or point to open a list of the tasks behind it, complete them, or open one to edit
 - **Map: Canvas, Outline, Table**: one mind map shown three ways. The canvas has nodes in eight shapes, colors and fills, connections and dotted flows, fold/focus/tidy for branches, box select, a minimap, a node inspector, undo/redo, and PNG export. The outline is a keyboard-driven indented list with PDF export. The table lets you sort, filter, edit cells inline and change many nodes at once
 - **Tasks on the map**: link any task to a node (in the editor, or with `@node` in quick add). Nodes show their open-task count, the inspector lists their tasks, and the Tasks page can filter by node or group by map cluster
 - **Settings**: task types (name, color, icon, order), importance levels (name, color, rank, default), theme, week start, backup and restore
@@ -140,4 +143,4 @@ Scripts load in the order listed in `index.html`; keep that order if you add fil
 
 **Don't overwrite your `firebase-config.js`.** Update zips from here leave it out, so your filled-in copy on GitHub stays as it is.
 
-`index.html` loads every file with a version tag (`app.js?v=16`). When you change any file, bump the number in `index.html` (and `C.VERSION` in `utils.js`) so browsers fetch the new copies instead of cached ones. Settings → Your data shows the version each device is running.
+`index.html` loads every file with a version tag (`app.js?v=17`). When you change any file, bump the number in `index.html` (and `C.VERSION` in `utils.js`) so browsers fetch the new copies instead of cached ones. Settings → Your data shows the version each device is running.

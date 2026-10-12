@@ -1092,3 +1092,66 @@ button.mix-key:hover { color: var(--ink); }
 .bd-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: .6em; }
 .bd-acts .cb-select select { background: var(--surface); }
 .bd-title .bd-acts .btn { margin-bottom: 0; }
+
+/* ---------- Chart builder: treemap, handoffs, legend isolate, zoom, export; Board layout (v17) ---------- */
+.chart .cb-tm { fill: var(--c); stroke: var(--surface); stroke-width: 1; outline: none; cursor: pointer; transition: opacity .15s; }
+.chart .cb-tm-group { fill: var(--c); fill-opacity: .14; stroke: var(--c); stroke-opacity: .55; stroke-width: 1.2; cursor: pointer; }
+.chart .cb-tm-head { fill: var(--ink); font: 650 12px var(--font-body); pointer-events: none; }
+.chart .cb-tm-lab { fill: #fff; font: 650 12px var(--font-body); pointer-events: none; paint-order: stroke; stroke: rgb(0 0 0 / .28); stroke-width: 2.5px; stroke-linejoin: round; }
+.chart .cb-tm-lab.big { font-size: 13px; }
+.chart .cb-tm-lab.sub { font-weight: 500; font-size: 11px; }
+.cb-canvas .chart:has(.cb-tm.tipped) .cb-tm:not(.tipped), .bd-plot .chart:has(.cb-tm.tipped) .cb-tm:not(.tipped) { opacity: .5; }
+.chart .cb-band { fill: var(--c); fill-opacity: .32; stroke: none; outline: none; cursor: pointer; transition: fill-opacity .15s, opacity .15s; }
+.chart .cb-band:hover, .chart .cb-band.tipped, .chart .cb-band:focus-visible { fill-opacity: .6; }
+.chart .cb-hnode { fill: var(--c); outline: none; cursor: pointer; }
+.chart .cb-hcount { fill: var(--ink-3); font-weight: 500; }
+.chart .cb-hhead { fill: var(--ink-3); font-size: 10.5px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; }
+.chart .faded { opacity: .18; }
+.chart .cb-band.faded { opacity: .25; }
+/* legend entries are buttons: click one to show only it */
+.ins-legend .lg-item, .ins-legend .lg-all { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; margin: -3px -8px; border: 0; border-radius: 8px; background: none; color: inherit; font: inherit; cursor: pointer; transition: background .12s, opacity .12s; }
+.ins-legend .lg-item:hover { background: var(--surface-2); }
+.ins-legend .lg-item.on { background: var(--accent-soft); color: var(--ink); font-weight: 600; }
+.ins-legend .lg-item.off { opacity: .5; }
+.ins-legend .lg-all { color: var(--accent); font-weight: 600; }
+.ins-legend .lg-all:hover { background: var(--accent-soft); }
+.ins-legend .lg-item:focus-visible, .ins-legend .lg-all:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* zoom */
+.chart[data-zoom] { touch-action: pan-y; cursor: crosshair; }
+.chart[data-zoom] [data-seg] { cursor: pointer; }
+.chart.zooming, .chart.zooming * { cursor: ew-resize !important; }
+.chart .cb-zoomsel { fill: var(--accent); fill-opacity: .14; stroke: var(--accent); stroke-width: 1.2; stroke-dasharray: 4 3; pointer-events: none; }
+.cb-zoombar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: -4px; font-size: var(--fs-sm); color: var(--ink-2); }
+.cb-zoombar > .ic { width: 15px; height: 15px; color: var(--accent); }
+.cb-zoomhint { margin: -6px 0 0; font-size: var(--fs-xs); }
+@media (hover: none) { .cb-zoomhint::after { content: " Swipe sideways across it on touch screens."; } }
+.cb-export { display: inline-flex; gap: 4px; margin-left: auto; }
+/* Board: sections and card sizes */
+.bd-sec { display: flex; flex-direction: column; gap: 14px; }
+.bd-sec + .bd-sec { margin-top: 26px; }
+.bd-sec-head { display: flex; align-items: center; gap: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.bd-sec-head h2 { margin: 0; font-family: var(--font-display); font-size: 1.3rem; letter-spacing: -.02em; }
+.bd-sec-head .muted { font-size: var(--fs-xs); }
+.bd-sec-head .icon-btn { margin-left: auto; }
+.bd-sec .bd-kpis { margin-bottom: 0; }
+.bd-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.bd-card.sz-sm { grid-column: span 2; }
+.bd-card.sz-md { grid-column: span 3; }
+.bd-card.sz-wide { grid-column: 1 / -1; }
+.bd-card.sz-wide .cb-plot .chart { max-height: 380px; }
+/* sizes follow the room the board actually has (the sidebar takes some of the window) */
+.bd-sec { container-type: inline-size; }
+@container (max-width: 980px) {
+  .bd-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .bd-card.sz-sm, .bd-card.sz-md { grid-column: span 1; }
+}
+@container (max-width: 620px) {
+  .bd-grid { grid-template-columns: minmax(0, 1fr); }
+  .bd-card.sz-sm, .bd-card.sz-md, .bd-card.sz-wide { grid-column: 1 / -1; }
+}
+.bd-askpop { padding: 12px; width: min(300px, calc(100vw - 24px)); }
+.bd-ask { display: flex; flex-direction: column; gap: 8px; }
+.bd-ask-l { font-size: var(--fs-sm); font-weight: 600; }
+.bd-ask .input-wrap { height: 38px; }
+.bd-ask-btns { display: flex; justify-content: flex-end; gap: 6px; }
+.bd-menu .menu-item > .menu-l:first-child { padding-left: 26px; }
