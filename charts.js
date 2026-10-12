@@ -117,6 +117,7 @@
     ['donut', 'Donut', '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.5"/><path d="M12 4v4.5"/>'],
     ['burnup', 'Burn-up', '<path d="M3.5 19 9 14l4 2 7.5-9"/><path d="M3.5 19 9 16.5l4 .5 7.5-4" stroke-dasharray="2 2.5"/>'],
     ['cfd', 'Flow', '<path d="M3.5 20.5V14c4-1 6-3 9-3s5 1 8-2v11.5z" fill="currentColor" fill-opacity=".18"/><path d="M3.5 20.5V17c4-.5 6-1.5 9-1.5s5 .5 8-1.5v6.5z" fill="currentColor" fill-opacity=".38"/>'],
+    ['table', 'Table', '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 9h17M3.5 13.5h17M9.5 9v10.5"/>'],
     ['treemap', 'Treemap', '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M11 4.5v15M11 12.5h9.5M16 12.5v7"/>'],
     ['handoff', 'Handoffs', '<path d="M3.5 6.5h3c5.5 0 5.5 11 11 11h3M3.5 17.5h3c5.5 0 5.5-11 11-11h3"/>'],
     ['sunburst', 'Sunburst', '<circle cx="12" cy="12" r="3"/><path d="M12 4.5a7.5 7.5 0 0 1 7.5 7.5M19.5 12a7.5 7.5 0 0 1-11 6.6M8.5 18.6A7.5 7.5 0 0 1 12 4.5"/><path d="M12 1.5v3M22.5 12h-3"/>'],
@@ -139,15 +140,23 @@
     { name: 'Open vs. overdue over time', cfg: { type: 'cfd', x: null, y: 'count', series: null, range: '12w' } },
     { name: 'This month vs. last', cfg: { type: 'column', x: 'type', y: 'count', series: null, status: 'done', range: '4w', compare: true } },
     { name: 'Weekly completions vs. goal', cfg: { type: 'column', x: 'completed', y: 'count', series: null, status: 'done', range: '12w', goal: 5, goalDir: 'atLeast' } },
+    { name: 'List: overdue tasks', cfg: { type: 'table', x: null, status: 'overdue', cols: ['due', 'late', 'type', 'level', 'who'], sort: { k: 'late', d: -1 } } },
+    { name: 'List: due in the next 7 days', cfg: { type: 'table', x: 'type', status: 'open', f: { due: 'week' }, cols: ['due', 'level', 'branch', 'steps'], sort: { k: 'due', d: 1 } } },
+    { name: 'List: most rescheduled', cfg: { type: 'table', x: null, status: 'open', cols: ['moved', 'pushed', 'due', 'type'], sort: { k: 'moved', d: -1 }, limit: '10' } },
     { name: 'How often open tasks get moved', cfg: { type: 'column', x: 'moves', y: 'count', series: null, status: 'open' } },
     { name: 'What I keep pushing back', cfg: { type: 'bar', x: 'type', y: 'pushed', agg: 'avg', series: null, status: 'open' } },
     { name: 'Does rescheduling make tasks late?', cfg: { type: 'scatter', x: 'moved', y: 'late', series: 'type', status: 'all' } },
     { name: 'Where my open work sits', cfg: { type: 'treemap', x: 'type', y: 'count', series: 'level', status: 'open' } },
     { name: 'Who hands work to whom', cfg: { type: 'handoff', x: null, y: 'count', series: null, status: 'all', selfToo: false } }
   ];
-  const BLANK = { type: 'column', x: null, y: 'count', agg: 'count', series: null, stack: true, status: 'all', range: 'all', grain: 'auto', title: '', goal: null, goalDir: 'atLeast', kpiPeriod: 'all', compare: false, trend: 'none', f: null };
+  const BLANK = { type: 'column', x: null, y: 'count', agg: 'count', series: null, stack: true, status: 'all', range: 'all', grain: 'auto', title: '', goal: null, goalDir: 'atLeast', kpiPeriod: 'all', compare: false, trend: 'none', f: null, cols: null, sort: null, limit: '25' };
   const FLOW_TYPES = ['burnup', 'cfd'];
   const FIXED_TYPES = ['burnup', 'cfd', 'handoff']; // these always count tasks and need no fields
+  /* table: one row per task. Title always comes first; these can be added as columns */
+  const DEFAULT_COLS = ['due', 'type', 'level', 'status'];
+  const EXTRA_COLS = { time: { label: 'Time', ic: 'clock' }, notes: { label: 'Notes', ic: 'note' } };
+  const colField = (id) => EXTRA_COLS[id] || DIMS[id] || NUMS[id];
+  const tCols = () => (Array.isArray(cfg.cols) ? cfg.cols.filter((c) => colField(c) && c !== 'count') : DEFAULT_COLS);
   const RANGE_DAYS = { '4w': 28, '12w': 84, '6m': 183, '1y': 365 };
   const RANGE_WORDS = { '4w': '4 weeks', '12w': '12 weeks', '6m': '6 months', '1y': 'year' };
   let rangeOverride = null; // the Board's "same dates for every chart"
@@ -190,6 +199,8 @@
       root.addEventListener('pointerover', (e) => { if (e.pointerType === 'mouse') showTip(e.target); });
       root.addEventListener('focusin', (e) => showTip(e.target));
       root.addEventListener('keydown', (e) => {
+        if (e.target.matches && e.target.matches('[data-trow]') && e.key === 'Enter') { e.preventDefault(); return C.openEditor(e.target.dataset.trow); }
+        if (e.target.matches && e.target.matches('[data-clear]') && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); return e.target.click(); }
         const z = e.target.closest('[data-zone]');
         if (z && (e.key === 'Enter' || e.key === ' ') && e.target === z) { e.preventDefault(); z.click(); }
         if (e.key === 'Escape' && ui.picked) { ui.picked = null; render(); }
@@ -214,11 +225,22 @@
   }
 
   /* ---------- data ---------- */
+  const DUE_WINDOWS = [['overdue', 'Due: overdue'], ['today', 'Due: today'], ['week', 'Due: next 7 days'], ['month', 'Due: next 30 days'], ['dated', 'Due: has a date'], ['none', 'Due: no date']];
+  function dueOk(t, w, tk) {
+    if (w === 'none') return !t.due;
+    if (!t.due) return false;
+    if (w === 'dated') return true;
+    if (w === 'overdue') return !t.done && t.due < tk;
+    if (w === 'today') return t.due === tk;
+    return t.due >= tk && t.due <= D.addKey(tk, w === 'week' ? 6 : 29);
+  }
   function rows(opts) {
     const tk = D.todayKey(), now = Date.now();
     const ctx = { tk, now, map: mapCtx() };
     let list = S().state.tasks.filter((t) => !t.sample);
     const f = flt();
+    if (f.text) { const q = String(f.text).toLowerCase(); list = list.filter((t) => (t.title || '').toLowerCase().includes(q) || (t.notes || '').toLowerCase().includes(q)); }
+    if (f.due) list = list.filter((t) => dueOk(t, f.due, tk));
     if (f.type) list = list.filter((t) => (S().typeOf(t) || {}).name === f.type);
     if (f.level) list = list.filter((t) => (S().levelOf(t) || {}).name === f.level);
     if (f.cluster) list = list.filter((t) => DIMS.cluster.get(t, ctx) === f.cluster);
@@ -418,7 +440,7 @@
   ];
   const ASK_TYPES = [['sunburst', 'sunburst'], ['treemap', 'treemap'], ['tree map', 'treemap'], ['burn-up', 'burnup'], ['burn up', 'burnup'], ['burnup', 'burnup'], ['cumulative flow', 'cfd'], ['flow', 'cfd'],
     ['scatter', 'scatter'], ['donut', 'donut'], ['doughnut', 'donut'], ['pie', 'pie'], ['horizontal bar', 'bar'], ['bars', 'column'], ['bar', 'column'], ['columns', 'column'], ['column', 'column'], ['histogram', 'column'],
-    ['line', 'line'], ['area', 'area'], ['kpi', 'kpi'], ['tile', 'kpi'], ['number', 'kpi']];
+    ['line', 'line'], ['area', 'area'], ['kpi', 'kpi'], ['tile', 'kpi'], ['number', 'kpi'], ['table', 'table'], ['list of', 'table'], ['list', 'table'], ['spreadsheet', 'table']];
   const reEsc = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s+');
   /** a whole-word phrase; pre/post are raw regex pieces around it */
   const RX = (w, post, pre) => new RegExp('(^|\\s)' + (pre || '') + reEsc(w) + (post || '') + '(?=\\s|$)', 'i');
@@ -428,6 +450,40 @@
     const hit = { n: 0 };
     const take = (re) => { const m = t.match(re); if (!m) return null; t = t.slice(0, m.index) + ' ' + t.slice(m.index + m[0].length); hit.n++; return m; };
     const has = (re) => re.test(t);
+    // a table's columns: "… with due date, importance and days late"
+    let askCols = null;
+    const cm = t.match(/\s(with|showing|including|columns?)\s+(.*?)(?=\s(sorted|sort|ordered|order|ranked|grouped|by|per|this|last|for|from|in the)\s|$)/);
+    if (cm) {
+      let seg = ' ' + cm[2] + ' '; const got = [];
+      const words = ASK_NUMS.map(([w, id]) => [w, id]).concat(ASK_DIMS.filter(([, id]) => !id.startsWith('@')), [['notes', 'notes'], ['note', 'notes'], ['time', 'time'], ['title', 'title'], ['name', 'title']]).sort((a, b) => b[0].length - a[0].length);
+      words.forEach(([w, id]) => { const r = RX(w); let mm; while ((mm = seg.match(r))) { got.push({ id, at: mm.index }); seg = seg.slice(0, mm.index) + ' '.repeat(mm[0].length) + seg.slice(mm.index + mm[0].length); } });
+      const ids = [...new Set(got.sort((a, b) => a.at - b.at).map((g) => g.id))].filter((id) => id !== 'title' && id !== 'count');
+      if (ids.length) { askCols = ids; t = t.slice(0, cm.index) + ' ' + t.slice(cm.index + cm[0].length); hit.n++; }
+    }
+    // "sorted by days late", "oldest first"
+    let askSort = null;
+    const sm = t.match(/\b(?:sorted|sort|ordered|order|ranked|rank)\s+by\s+/);
+    if (sm) {
+      const rest = t.slice(sm.index + sm[0].length);
+      let k = null, len = 0;
+      for (const [w, id] of ASK_NUMS) { const mm = rest.match(new RegExp('^' + reEsc(w) + '(?=\\s|$)')); if (mm) { k = id; len = mm[0].length; break; } }
+      if (!k) for (const [w, id] of ASK_DIMS) { if (id.startsWith('@')) continue; const mm = rest.match(new RegExp('^(the\\s+)?' + reEsc(w) + '(?=\\s|$)')); if (mm) { k = id; len = mm[0].length; break; } }
+      if (!k && /^(name|title)\b/.test(rest)) { k = 'title'; len = rest.match(/^(name|title)/)[0].length; }
+      if (k) { t = t.slice(0, sm.index) + ' ' + t.slice(sm.index + sm[0].length + len); askSort = nextSort(null, k); hit.n++; }
+      if (askSort && take(/\b(ascending|lowest first|smallest first|earliest first|soonest first)\b/)) askSort.d = 1;
+      else if (askSort && take(/\b(descending|highest first|biggest first|latest first|most first)\b/)) askSort.d = -1;
+    }
+    if (take(/\boldest first\b/)) askSort = askSort ? Object.assign(askSort, { d: 1 }) : { k: 'created', d: 1 };
+    else if (take(/\b(newest|most recent) first\b/)) askSort = askSort ? Object.assign(askSort, { d: -1 }) : { k: 'created', d: -1 };
+    else if (take(/\b(soonest|earliest) first\b/)) askSort = { k: 'due', d: 1 };
+    else if (take(/\bmost (rescheduled|moved|postponed)\b/)) { askSort = { k: 'moved', d: -1 }; askCols = askCols || null; out.type = out.type || 'table'; if (!askCols) askCols = ['moved', 'pushed', 'due', 'type']; }
+    else if (take(/\b(latest|most overdue|furthest behind)\b/)) askSort = { k: 'late', d: -1 };
+    // when it's due (a filter, not a date range)
+    let askDue = null;
+    if (take(/\bdue (this week|in the next (7|seven) days|within (a|one) week|next 7 days|soon|this coming week)\b/)) askDue = 'week';
+    else if (take(/\bdue (today|now)\b/)) askDue = 'today';
+    else if (take(/\bdue (this month|in the next (30|thirty) days|within (a|one) month)\b/)) askDue = 'month';
+    else if (take(/\b(with no (due )?date|no due date|without a (due )?date|undated|unscheduled)\b/)) askDue = 'none';
     // dates
     const RANGES = [[/\b(all time|ever|always|of all time)\b/, 'all'], [/\b(this|last|past|previous|the)?\s*(year|12 months|365 days)\b/, '1y'], [/\b((this|last|past|previous|the)\s+)?(6 months|six months|half a year|half year)\b/, '6m'],
       [/\b((this|last|past|previous|the)\s+)?(12 weeks|twelve weeks|3 months|three months|quarter|90 days)\b/, '12w'], [/\b(this|last|past)\s+(month|4 weeks|four weeks|30 days)\b|\b(4 weeks|30 days|a month)\b/, '4w'], [/\b(this|last|past)\s+(week|7 days|seven days)\b/, '4w']];
@@ -499,10 +555,22 @@
     const people = new Set(); S().state.tasks.forEach((x) => { const d = doer(x); if (d !== 'Me') people.add(d); });
     [...people].forEach((p) => { if (!f.who && nameHit(p)) { take(RX(p.toLowerCase(), '', '((for|by|assigned to|from)\\s+)?')); f.who = p; } });
     if (take(/\b(assigned to me|my tasks|for me)\b/)) f.who = 'Me';
+    if (askDue) f.due = askDue;
     if (Object.keys(f).length) out.f = f;
     // fill in what wasn't said
     const timeX = () => (out.status === 'done' || ['toDone', 'onTime'].includes(out.y) ? 'completed' : out.status === 'overdue' || out.y === 'late' ? 'due' : 'created');
-    if (out.type === 'handoff' || FLOW_TYPES.includes(out.type)) { out.x = null; out.series = null; out.y = 'count'; out.agg = 'count'; if (out.type !== 'handoff' && out.range === 'all') out.range = '12w'; }
+    if (!out.type && (askCols || askSort || /\b(which tasks|show me (the |my )?tasks)\b/.test(text.toLowerCase()))) out.type = 'table';
+    if (out.type === 'table') {
+      if (out.x && (isNum(out.x) || !DIMS[out.x])) out.x = null;
+      out.series = null;
+      const extraNums = uniq.filter((id) => !(askCols || []).includes(id));
+      out.cols = askCols || DEFAULT_COLS.concat(extraNums.filter((id) => !DEFAULT_COLS.includes(id)));
+      out.sort = askSort || (out.y && out.y !== 'count' ? nextSort(null, out.y) : out.status === 'overdue' ? { k: 'late', d: -1 } : { k: 'due', d: 1 });
+      if (out.sort.k !== 'title' && out.sort.k !== 'due' && !out.cols.includes(out.sort.k)) out.cols = out.cols.concat(out.sort.k);
+      if (out.status === 'overdue' && !askCols && !out.cols.includes('late')) out.cols = ['due', 'late'].concat(out.cols.filter((c) => c !== 'due' && c !== 'status'));
+      if (out.status !== 'all' && !askCols) out.cols = out.cols.filter((c) => c !== 'status'); // every row has the same status
+      out.y = 'count'; out.agg = 'count';
+    } else if (out.type === 'handoff' || FLOW_TYPES.includes(out.type)) { out.x = null; out.series = null; out.y = 'count'; out.agg = 'count'; if (out.type !== 'handoff' && out.range === 'all') out.range = '12w'; }
     else if (out.type === 'sunburst') { out.x = null; out.series = null; }
     else if (out.type !== 'scatter') {
       if (timeAsked && !(out.x && DIMS[out.x] && DIMS[out.x].time)) { if (out.x && !out.series) out.series = out.x; out.x = timeX(); }
@@ -515,6 +583,7 @@
       if (out.x && DIMS[out.x] && DIMS[out.x].time && out.range === 'all' && (grain === 'week' || !grain)) out.range = '12w';
     }
     if (!out.y) out.y = 'count';
+    if (askSort && out.type !== 'table') askSort = null;
     const Y = NUMS[out.y];
     if (!Y.aggs.includes(out.agg)) out.agg = out.y === 'count' ? 'count' : ['late', 'toDone', 'age', 'onTime'].includes(out.y) ? 'avg' : Y.aggs[0];
     if (out.type === 'treemap' && out.agg === 'avg') { if (Y.aggs.includes('sum')) out.agg = 'sum'; else { out.y = 'count'; out.agg = 'count'; } }
@@ -547,7 +616,7 @@
       setCfg(r.cfg);
       const bits = [esc(autoTitle())];
       if (RANGE_DAYS[curRange()]) bits.push('last ' + RANGE_WORDS[curRange()]);
-      const f = flt(); FILTERS.forEach((x) => { if (f[x.key]) bits.push(esc(x.label + ': ' + f[x.key])); });
+      const f = flt(); FILTERS.forEach((x) => { if (f[x.key]) bits.push(esc(x.label + ': ' + filterWord(x, f[x.key]))); }); if (f.text) bits.push(esc('“' + f.text + '”'));
       if (cfg.status !== 'all' && !FIXED_TYPES.includes(cfg.type) && !/^(open|overdue|done)\b/i.test(autoTitle())) bits.push({ open: 'open tasks only', overdue: 'overdue only', done: 'done only' }[cfg.status]);
       if (r.leftover && r.leftover.length > 1) bits.push('skipped “' + esc(r.leftover) + '”');
       ui.askNote = { html: 'Built <b>' + bits[0] + '</b>' + (bits.length > 1 ? ' · ' + bits.slice(1).join(' · ') : '') + (problem() ? '. ' + esc(problem()) : '. Adjust the fields below, or save it.') };
@@ -555,7 +624,7 @@
       if (matchMedia('(max-width: 900px)').matches) { const inp = el.querySelector('#cb-ask'); if (inp) inp.blur(); const cv = el.querySelector('.cb-canvas'); if (cv) setTimeout(() => cv.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60); }
     });
   }
-  const ASK_EXAMPLES = ['overdue tasks by branch this month', 'average days late per month', 'done per week with a goal of 5', 'open tasks by type and importance as a treemap', 'what I keep pushing back by type', 'how many tasks did I finish this week'];
+  const ASK_EXAMPLES = ['list overdue work tasks sorted by days late', 'overdue tasks by branch this month', 'average days late per month', 'done per week with a goal of 5', 'open tasks by type and importance as a treemap', 'what I keep pushing back by type', 'how many tasks did I finish this week'];
 
   /* ---------- validity & titles ---------- */
   function problem() {
@@ -564,7 +633,7 @@
       if (!cfg.y) return 'Drag a number field onto Values. Tasks counts them.';
       return null;
     }
-    if (FIXED_TYPES.includes(cfg.type)) return null;
+    if (FIXED_TYPES.includes(cfg.type) || cfg.type === 'table') return null;
     if (cfg.type === 'treemap') {
       if (!cfg.x) return 'Drag a category onto Boxes, for example Type or Map branch.';
       if (isNum(cfg.x)) return 'Boxes need a category field, like Type or Importance.';
@@ -597,6 +666,7 @@
     if (cfg.type === 'burnup') return 'Tasks added vs. done over time';
     if (cfg.type === 'cfd') return 'Done, open and overdue over time';
     if (cfg.type === 'handoff') return (st ? st + 'handoffs' : 'Handoffs') + ': who assigns work to whom';
+    if (cfg.type === 'table') { const f = flt(); return (st ? st + 'tasks' : 'Tasks') + (f.due ? ' ' + filterWord(FILTERS.find((x) => x.key === 'due'), f.due).replace(/^next/, 'due in the next').replace(/^today$/, 'due today').replace(/^overdue$/, '(overdue)').replace(/^has a date$/, 'with a date').replace(/^no date$/, 'with no date') : '') + (cfg.x && DIMS[cfg.x] ? ' by ' + (DIMS[cfg.x].words || DIMS[cfg.x].label.toLowerCase()) : ''); }
     if (cfg.type === 'sunburst') return (cfg.y === 'count' ? (st ? st + 'tasks' : 'Tasks') : yl) + ' across the map';
     if (cfg.type === 'kpi') return (cfg.y === 'count' ? (st ? st + 'tasks' : 'All tasks') : yl) + (cfg.kpiPeriod === 'week' ? ' this week' : '');
     const pie = cfg.type === 'pie' || cfg.type === 'donut';
@@ -618,15 +688,17 @@
       // left: fields + zones
       '<aside class="cb-side">' +
       '<div class="st-sec cb-zones">' +
-      zone('x', cfg.type === 'scatter' ? 'X axis (number)' : pie ? 'Slices' : cfg.type === 'treemap' ? 'Boxes' : cfg.type === 'handoff' ? 'From “Assigned by” to “Assigned to”' : cfg.type === 'sunburst' ? 'X axis · rings follow the map' : cfg.type === 'kpi' ? 'Trend over (a date)' : FLOW_TYPES.includes(cfg.type) ? 'X axis · time' : 'X axis', cfg.type === 'sunburst' || FIXED_TYPES.includes(cfg.type)) +
-      zone('y', cfg.type === 'scatter' ? 'Y axis (number)' : FIXED_TYPES.includes(cfg.type) ? 'Values · tasks' : 'Values', FIXED_TYPES.includes(cfg.type)) +
-      (y && y.aggs.length > 1 && cfg.type !== 'scatter' ? '<div class="cb-agg"><span class="muted">Summarize as</span><div class="seg mini">' + y.aggs.map((a) => '<button type="button" class="seg-btn' + (cfg.agg === a ? ' on' : '') + '" data-agg="' + a + '">' + (a === 'sum' ? 'Total' : 'Average') + '</button>').join('') + '</div></div>' : '') +
-      zone('series', cfg.type === 'scatter' ? 'Color by' : cfg.type === 'treemap' ? 'Smaller boxes inside' : 'Split by', pie || cfg.type === 'sunburst' || cfg.type === 'kpi' || FIXED_TYPES.includes(cfg.type)) +
+      (cfg.type === 'table' ? colsZone() : '') +
+      zone('x', cfg.type === 'scatter' ? 'X axis (number)' : pie ? 'Slices' : cfg.type === 'table' ? 'Group rows by (optional)' : cfg.type === 'treemap' ? 'Boxes' : cfg.type === 'handoff' ? 'From “Assigned by” to “Assigned to”' : cfg.type === 'sunburst' ? 'X axis · rings follow the map' : cfg.type === 'kpi' ? 'Trend over (a date)' : FLOW_TYPES.includes(cfg.type) ? 'X axis · time' : 'X axis', cfg.type === 'sunburst' || FIXED_TYPES.includes(cfg.type)) +
+      (cfg.type === 'table' ? '' : zone('y', cfg.type === 'scatter' ? 'Y axis (number)' : FIXED_TYPES.includes(cfg.type) ? 'Values · tasks' : 'Values', FIXED_TYPES.includes(cfg.type))) +
+      (y && y.aggs.length > 1 && cfg.type !== 'scatter' && cfg.type !== 'table' ? '<div class="cb-agg"><span class="muted">Summarize as</span><div class="seg mini">' + y.aggs.map((a) => '<button type="button" class="seg-btn' + (cfg.agg === a ? ' on' : '') + '" data-agg="' + a + '">' + (a === 'sum' ? 'Total' : 'Average') + '</button>').join('') + '</div></div>' : '') +
+      (cfg.type === 'table' ? '' : zone('series', cfg.type === 'scatter' ? 'Color by' : cfg.type === 'treemap' ? 'Smaller boxes inside' : 'Split by', pie || cfg.type === 'sunburst' || cfg.type === 'kpi' || FIXED_TYPES.includes(cfg.type))) +
       '</div>' +
       '<div class="st-sec cb-fields"><header><h2>Fields</h2><p class="muted">Categories</p></header><div class="cb-tray">' +
       Object.keys(DIMS).filter((id) => !DIMS[id].map).map((id) => chip(id, 'tray')).join('') + '</div>' +
       (C.map && C.map.nodes().length ? '<p class="muted cb-sub">The map</p><div class="cb-tray">' + Object.keys(DIMS).filter((id) => DIMS[id].map).map((id) => chip(id, 'tray')).join('') + '</div>' : '') +
-      '<p class="muted cb-sub">Numbers</p><div class="cb-tray">' + Object.keys(NUMS).map((id) => chip(id, 'tray')).join('') + '</div></div>' +
+      '<p class="muted cb-sub">Numbers</p><div class="cb-tray">' + Object.keys(NUMS).map((id) => chip(id, 'tray')).join('') + '</div>' +
+      (cfg.type === 'table' ? '<p class="muted cb-sub">Table only</p><div class="cb-tray">' + Object.keys(EXTRA_COLS).map((id) => chip(id, 'tray')).join('') + '</div>' : '') + '</div>' +
       '</aside>' +
       // right: chart
       '<div class="cb-main">' +
@@ -638,6 +710,7 @@
       sel('range', [['all', 'All time'], ['4w', 'Last 4 weeks'], ['12w', 'Last 12 weeks'], ['6m', 'Last 6 months'], ['1y', 'Last year']]) +
       (cfg.x && DIMS[cfg.x] && DIMS[cfg.x].time && cfg.type !== 'scatter' ? sel('grain', [['auto', 'Auto'], ['week', 'By week'], ['month', 'By month']]) : '') +
       (cfg.series && !pie && !['scatter', 'line', 'sunburst', 'kpi', 'treemap', 'handoff'].includes(cfg.type) ? '<label class="cb-check"><input type="checkbox" data-stack' + (cfg.stack ? ' checked' : '') + '> Stacked</label>' : '') +
+      (cfg.type === 'table' ? sel('limit', [['10', 'Show 10 rows'], ['25', 'Show 25 rows'], ['50', 'Show 50 rows'], ['100', 'Show 100 rows'], ['all', 'Show every row']]) : '') +
       (cfg.type === 'handoff' ? '<label class="cb-check"><input type="checkbox" data-self' + (cfg.selfToo ? ' checked' : '') + '> Include tasks I keep for myself</label>' : '') +
       (cfg.type === 'kpi' ? sel('kpiPeriod', [['all', 'Number: all matching'], ['week', 'Number: this week']]) : '') +
       (GOAL_TYPES.includes(cfg.type) ? '<span class="cb-goal-ctl"><label class="cb-select"><span class="sr">Goal direction</span><select data-cfg="goalDir"><option value="atLeast"' + (cfg.goalDir !== 'atMost' ? ' selected' : '') + '>Goal: at least</option><option value="atMost"' + (cfg.goalDir === 'atMost' ? ' selected' : '') + '>Goal: at most</option></select>' + icon('chevD') + '</label>' +
@@ -645,7 +718,7 @@
       '</div>' +
       extrasHtml() +
       '<div class="cb-plot">' + plot(false) + '</div>' + zoomHtml(true) +
-      '<div class="ins-legend cb-legend">' + legendHtml() + '<span class="ins-cap" aria-live="polite"></span></div>' +
+      (cfg.type === 'table' ? '' : '<div class="ins-legend cb-legend">' + legendHtml() + '<span class="ins-cap" aria-live="polite"></span></div>') +
       summaryHtml() +
       '<div class="cb-actions">' +
       '<button type="button" class="btn primary sm" data-save' + (problem() ? ' disabled' : '') + '>' + icon(editing ? 'check' : 'plus') + '<span>' + (editing ? 'Update chart' : 'Save to board') + '</span></button>' +
@@ -667,8 +740,10 @@
     { key: 'level', label: 'Importance', opts: () => S().state.levels.map((x) => x.name) },
     { key: 'cluster', label: 'Cluster', map: true, opts: () => { const c = mapCtx(); return c ? c.order.cluster : []; } },
     { key: 'branch', label: 'Branch', map: true, opts: () => { const c = mapCtx(); return c ? c.order.branch : []; } },
-    { key: 'who', label: 'Person', opts: () => { const set = new Set(['Me']); S().state.tasks.forEach((t) => set.add(doer(t))); return [...set]; } }
+    { key: 'who', label: 'Person', opts: () => { const set = new Set(['Me']); S().state.tasks.forEach((t) => set.add(doer(t))); return [...set]; } },
+    { key: 'due', label: 'Due', opts: () => DUE_WINDOWS.map((x) => x[0]), word: (v) => (DUE_WINDOWS.find((x) => x[0] === v) || [, v])[1].replace('Due: ', '') }
   ];
+  const filterWord = (x, v) => (x.word ? x.word(v) : v);
   function extrasHtml() {
     const f = flt(), n = Object.keys(f).filter((k) => f[k]).length;
     const hasMap = C.map && C.map.nodes().length;
@@ -680,9 +755,10 @@
     if (ui.filters || n) {
       h += '<div class="cb-fbar">' + FILTERS.filter((x) => !x.map || hasMap).map((x) => {
         const o = x.opts(), cur = f[x.key] || '';
-        return '<label class="cb-select"><span class="sr">' + x.label + '</span><select data-filter="' + x.key + '"><option value="">Any ' + x.label.toLowerCase() + '</option>' +
-          (cur && !o.includes(cur) ? '<option selected>' + esc(cur) + '</option>' : '') + o.map((v) => '<option' + (v === cur ? ' selected' : '') + '>' + esc(v) + '</option>').join('') + '</select>' + icon('chevD') + '</label>';
-      }).join('') + (n ? '<button type="button" class="btn sm ghost" data-filters-clear>Clear filters</button>' : '') + '</div>';
+        return '<label class="cb-select"><span class="sr">' + x.label + '</span><select data-filter="' + x.key + '"><option value="">' + (x.key === 'due' ? 'Any due date' : 'Any ' + x.label.toLowerCase()) + '</option>' +
+          (cur && !o.includes(cur) ? '<option selected value="' + esc(cur) + '">' + esc(filterWord(x, cur)) + '</option>' : '') + o.map((v) => '<option value="' + esc(v) + '"' + (v === cur ? ' selected' : '') + '>' + esc(x.key === 'due' ? (DUE_WINDOWS.find((w) => w[0] === v) || [, v])[1] : filterWord(x, v)) + '</option>').join('') + '</select>' + icon('chevD') + '</label>';
+      }).join('') +
+        '<label class="input-wrap sm cb-ftext">' + icon('search') + '<span class="sr">Title or notes contain</span><input data-ftext type="search" placeholder="Title or notes contain…" value="' + esc(f.text || '') + '"></label>' + (n ? '<button type="button" class="btn sm ghost" data-filters-clear>Clear filters</button>' : '') + '</div>';
     }
     return h;
   }
@@ -703,6 +779,12 @@
       const sb = sunData(); if (!sb || !sb.center.all.length) return '';
       const big = sb.center.kids.slice().sort((a, b) => b.all.length - a.all.length)[0];
       return big ? big.title + ' holds the most: ' + big.all.length + ' of ' + sb.center.all.length + ' tasks (' + pct(big.all.length, sb.center.all.length) + '%)' + (sb.off ? '. ' + sb.off + ' more aren’t on the map.' : '.') : '';
+    }
+    if (cfg.type === 'table') {
+      const tb = tableRows(); if (!tb.n) return '';
+      const tk = tb.ctx.tk, over = tb.list.filter((x) => !x.done && x.due && x.due < tk).length, soon = tb.list.filter((x) => !x.done && x.due && x.due >= tk && x.due <= D.addKey(tk, 6)).length, done = tb.list.filter((x) => x.done).length;
+      const sf = tb.sort.k === 'title' ? 'task name' : (colField(tb.sort.k).words || colField(tb.sort.k).label.toLowerCase());
+      return tb.n + (tb.n === 1 ? ' task' : ' tasks') + (over ? ', ' + over + ' overdue' : '') + (soon ? ', ' + soon + ' due in the next 7 days' : '') + (done ? ', ' + done + ' done' : '') + '. Sorted by ' + sf + (tb.sort.d > 0 ? (['due', 'created', 'completed'].includes(tb.sort.k) ? ', earliest first' : '') : (NUMS[tb.sort.k] ? ', highest first' : ['due', 'created', 'completed'].includes(tb.sort.k) ? ', latest first' : ', reversed')) + '.';
     }
     if (cfg.type === 'handoff') {
       const h = handoffData(); if (!h.pairs.length) return '';
@@ -772,10 +854,25 @@
   function summaryHtml() { const t = summaryText(); return t ? '<p class="cb-summary">' + icon('sparkle') + '<span>' + esc(t) + '</span></p>' : ''; }
 
   function chip(id, where) {
-    const f = field(id);
+    const f = colField(id);
     const picked = where === 'tray' && ui.picked === id;
     return '<button type="button" class="cb-chip ' + (isNum(id) ? 'num' : 'dim') + (picked ? ' picked' : '') + '" data-field="' + id + '" data-from="' + where + '" aria-pressed="' + picked + '">' +
       icon(f.ic) + '<span>' + esc(f.label) + '</span>' + (where !== 'tray' ? '<span class="cb-x" data-clear="' + where + '" aria-label="Remove ' + esc(f.label) + '">' + icon('x') + '</span>' : '') + '</button>';
+  }
+  function colsZone() {
+    const cols = tCols();
+    const chipC = (c, i) => { const f = colField(c); return '<span class="cb-chip col ' + (NUMS[c] ? 'num' : 'dim') + '" data-field="' + c + '" data-from="colsz">' + icon(f.ic) + '<span>' + esc(f.label) + '</span>' +
+      '<span class="cb-colmv">' + (i > 0 ? '<button type="button" data-colmove="' + c + ':-1" aria-label="Move ' + esc(f.label) + ' left">' + icon('chevL') + '</button>' : '') + (i < cols.length - 1 ? '<button type="button" data-colmove="' + c + ':1" aria-label="Move ' + esc(f.label) + ' right">' + icon('chevR') + '</button>' : '') + '</span>' +
+      '<span class="cb-x" data-clear="cols:' + c + '" role="button" tabindex="0" aria-label="Remove ' + esc(f.label) + ' column">' + icon('x') + '</span></span>'; };
+    return '<div class="cb-zone cb-colzone' + (ui.picked ? ' ready' : '') + '" data-zone="cols" tabindex="0" role="button" aria-label="Columns">' +
+      '<span class="cb-zone-label">Columns</span><div class="cb-colchips"><span class="cb-chip fixed">' + icon('list') + '<span>Task</span></span>' + cols.map(chipC).join('') + '</div>' +
+      '<span class="cb-zone-empty">' + (ui.picked ? 'Tap here to add it as a column' : 'Drag a field here, or tap a field and then tap here') + '</span>' +
+      '<div class="cb-addcol"><label class="cb-select"><span class="sr">Add a column</span><select data-addcol><option value="">+ Add a column</option>' +
+      Object.keys(DIMS).filter((k) => !cols.includes(k) && (!DIMS[k].map || (C.map && C.map.nodes().length))).map((k) => '<option value="' + k + '">' + esc(DIMS[k].label) + '</option>').join('') +
+      Object.keys(NUMS).filter((k) => k !== 'count' && !cols.includes(k)).map((k) => '<option value="' + k + '">' + esc(NUMS[k].label) + '</option>').join('') +
+      Object.keys(EXTRA_COLS).filter((k) => !cols.includes(k)).map((k) => '<option value="' + k + '">' + esc(EXTRA_COLS[k].label) + '</option>').join('') +
+      '</select>' + icon('chevD') + '</label></div>' +
+      (ui.flash && ui.flashZone === 'cols' ? '<span class="cb-zone-msg" role="alert">' + esc(ui.flash) + '</span>' : '') + '</div>';
   }
   function zone(z, label, off) {
     const id = cfg[z];
@@ -795,7 +892,7 @@
   }
   function legendHtml() {
     if (problem()) return '';
-    if (cfg.type === 'kpi') return '';
+    if (cfg.type === 'kpi' || cfg.type === 'table') return '';
     if (cfg.type === 'sunburst') { const sb = sunData(); return sb ? sb.legend.map((c) => '<span><i class="lg-bar" style="--c:' + c.hex + '"></i>' + esc(c.name) + '</span>').join('') + (sb.off ? '<span class="muted">' + sb.off + ' not on the map</span>' : '') : ''; }
     if (cfg.type === 'handoff') { const h = handoffData(); return h.people.length > 1 ? lgItems(h.people.map((p) => [p, h.colors[p], p]), h.people.includes(solo) ? solo : null) : ''; }
     const b = build();
@@ -828,6 +925,7 @@
     if (cfg.type === 'kpi') return kpi(size && size.kpi);
     if (cfg.type === 'sunburst') return sunburst(W, H);
     if (cfg.type === 'handoff') return handoff(W, H, mini);
+    if (cfg.type === 'table') return table(!!size);
     const b = build();
     if (!b.n) return '<div class="cb-empty"><p>' + noneMsg() + '</p></div>';
     if (cfg.type === 'burnup') return xy(b, W, H, mini, { as: 'line', stacked: false });
@@ -1033,6 +1131,81 @@
         tip(p.t.title + ' · ' + X.label + ' ' + fmt(p.x, X.unit) + ', ' + Y.label + ' ' + fmt(p.y, Y.unit) + (cfg.series ? ' · ' + p.s : '')) + '/>';
     });
     return s + '</svg>';
+  }
+
+  /* ---------- table: one row per task, with the columns you choose ---------- */
+  const shortDate = (k) => (k ? C.F.short.format(D.parse(k)) : '');
+  /** one cell: v sorts, h is the HTML, txt is for CSV and pictures */
+  function cellOf(t, id, ctx) {
+    const blank = { v: null, h: '<span class="muted">—</span>', txt: '' };
+    if (id === 'title') return { v: (t.title || '').toLowerCase(), h: '<span class="cb-tt">' + esc(t.title || 'Untitled') + '</span>', txt: t.title || '' };
+    if (id === 'time') return t.time ? { v: t.time, h: esc(C.fmtTime(t.time)), txt: C.fmtTime(t.time) } : blank;
+    if (id === 'notes') { const n = (t.notes || '').replace(/\s+/g, ' ').trim(); return n ? { v: n.toLowerCase(), h: '<span class="cb-tnote">' + esc(n.length > 90 ? n.slice(0, 89) + '…' : n) + '</span>', txt: n } : blank; }
+    if (id === 'type') { const ty = S().typeOf(t); return ty ? { v: S().state.types.indexOf(ty), h: '<span class="type-tag" style="--c:' + ty.color + '">' + icon(ty.glyph) + esc(ty.name) + '</span>', txt: ty.name } : blank; }
+    if (id === 'level') { const l = S().levelOf(t); return l ? { v: S().levelRank(t.levelId), h: '<span class="cb-tlv" style="--c:' + l.color + '"><i class="dot"></i>' + esc(l.name) + '</span>', txt: l.name } : blank; }
+    if (id === 'status') { const st = statusOf(t, ctx.tk); return { v: ['Overdue', 'Open', 'Done'].indexOf(st), h: '<span class="cb-tst ' + st.toLowerCase() + '">' + st + '</span>', txt: st }; }
+    if (id === 'due') return t.due ? { v: t.due, h: '<span class="' + (!t.done && t.due < ctx.tk ? 'cb-tlate' : '') + '">' + esc(C.relDate(t.due)) + '</span>', txt: t.due } : blank;
+    if (id === 'created' || id === 'completed') { const k = DIMS[id].get(t, ctx); return k ? { v: k, h: esc(shortDate(k)), txt: k } : blank; }
+    if (id === 'steps') { const n = (t.subtasks || []).length; return n ? { v: n, h: (t.subtasks.filter((x) => x.done).length) + '/' + n, txt: t.subtasks.filter((x) => x.done).length + '/' + n } : blank; }
+    if (id === 'onTime') { const v = NUMS.onTime.get(t, ctx); return v == null ? blank : { v, h: v ? '<span class="cb-tst done">On time</span>' : '<span class="cb-tst overdue">Late</span>', txt: v ? 'On time' : 'Late' }; }
+    if (NUMS[id]) { const v = NUMS[id].get(t, ctx); return v == null || (['moved', 'pushed'].includes(id) && !v) ? (v === 0 ? { v: 0, h: '<span class="muted">0</span>', txt: '0' } : blank) : { v, h: '<span class="cb-tnum' + (id === 'late' && v > 0 ? ' cb-tlate' : '') + (id === 'moved' && v >= 3 ? ' cb-tlate' : '') + '">' + esc(fmt(v, NUMS[id].unit)) + '</span>', txt: fmt(v, NUMS[id].unit) }; }
+    if (DIMS[id]) {
+      const v = DIMS[id].get(t, ctx); if (v == null) return blank;
+      const c = DIMS[id].color && DIMS[id].color(v);
+      return { v: DIMS[id].order ? (DIMS[id].order().indexOf(v) + 1 || 999) + ':' + v : String(v).toLowerCase(), h: c && DIMS[id].map ? '<span class="cb-tlv" style="--c:' + c + '"><i class="dot"></i>' + esc(v) + '</span>' : esc(v), txt: String(v) };
+    }
+    return blank;
+  }
+  /** every matching task in table order, grouped when "Group rows by" is set */
+  function tableRows() {
+    const { list, ctx } = rows();
+    const cols = ['title'].concat(tCols());
+    const sort = cfg.sort && (cfg.sort.k === 'title' || colField(cfg.sort.k)) ? cfg.sort : { k: 'due', d: 1 };
+    const key = (t) => cellOf(t, sort.k, ctx).v;
+    const cmp = (a, b) => {
+      const x = key(a), y = key(b);
+      if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1; // blanks last either way
+      return (x < y ? -1 : x > y ? 1 : 0) * sort.d || (a.done - b.done) || String(a.due || '9999').localeCompare(String(b.due || '9999'));
+    };
+    const sorted = list.slice().sort(cmp);
+    const gd = cfg.x && DIMS[cfg.x] && !DIMS[cfg.x].time ? DIMS[cfg.x] : cfg.x && DIMS[cfg.x] ? DIMS[cfg.x] : null;
+    let groups = null;
+    if (gd) {
+      const m = new Map();
+      sorted.forEach((t) => { const g = gd.get(t, ctx); const k = g == null ? '—' : gd.time ? timeLabel(timeBucket(g, 'month'), 'month') : g; if (!m.has(k)) m.set(k, []); m.get(k).push(t); });
+      const keys = gd.time ? [...m.keys()] : orderKeys(gd, [...m.keys()]);
+      groups = keys.map((k, i) => ({ key: k, color: gd.time ? null : colorFor(gd, k, i), tasks: m.get(k) }));
+    }
+    return { list: sorted, ctx, cols, sort, groups, n: list.length };
+  }
+  /** clicking a column header: sort by it; click again to flip. Numbers start biggest first */
+  function nextSort(cur, k) {
+    if (cur && cur.k === k) return { k, d: -cur.d };
+    return { k, d: NUMS[k] || ['created', 'completed'].includes(k) ? -1 : 1 };
+  }
+  const LIMITS = { '10': 10, '25': 25, '50': 50, '100': 100, all: Infinity };
+  function table(board) {
+    const tb = tableRows();
+    if (!tb.n) return '<div class="cb-empty"><p>' + noneMsg() + '</p></div>';
+    const lim = LIMITS[cfg.limit] || 25;
+    const head = '<thead><tr><th class="cb-tchk"><span class="sr">Done</span></th>' + tb.cols.map((c) => {
+      const on = tb.sort.k === c, f = c === 'title' ? { label: 'Task' } : colField(c);
+      return '<th scope="col" class="' + (c === 'title' ? 'cb-ttitle' : '') + (NUMS[c] ? ' num' : '') + '" aria-sort="' + (on ? (tb.sort.d > 0 ? 'ascending' : 'descending') : 'none') + '"><button type="button" class="cb-tsort' + (on ? ' on' : '') + '" data-tsort="' + c + '">' + esc(f.label) + (on ? icon(tb.sort.d > 0 ? 'up' : 'down') : '') + '</button></th>';
+    }).join('') + '</tr></thead>';
+    let shown = 0;
+    const rowHtml = (t) => { shown++; return '<tr class="cb-trow' + (t.done ? ' done' : '') + '" data-trow="' + t.id + '" tabindex="0"><td class="cb-tchk"><button type="button" class="check sm" data-tcheck="' + t.id + '" aria-pressed="' + !!t.done + '" aria-label="' + (t.done ? 'Reopen ' : 'Complete ') + esc(t.title) + '">' + icon('check') + '</button></td>' +
+      tb.cols.map((c) => '<td class="' + (c === 'title' ? 'cb-ttitle' : '') + (NUMS[c] ? ' num' : '') + '">' + cellOf(t, c, tb.ctx).h + '</td>').join('') + '</tr>'; };
+    let body = '';
+    const span = tb.cols.length + 1;
+    if (tb.groups) tb.groups.forEach((g) => {
+      if (shown >= lim) return;
+      body += '<tr class="cb-tgroup"><th colspan="' + span + '" scope="rowgroup">' + (g.color ? '<i class="dot" style="--c:' + g.color + '"></i>' : '') + esc(g.key) + ' <span class="muted">' + g.tasks.length + '</span></th></tr>';
+      g.tasks.forEach((t) => { if (shown < lim) body += rowHtml(t); });
+    });
+    else tb.list.forEach((t) => { if (shown < lim) body += rowHtml(t); });
+    const more = tb.n - shown;
+    return '<div class="cb-twrap"><table class="cb-tbl' + (board ? ' board' : '') + '"><caption class="sr">' + esc(autoTitle()) + '</caption>' + head + '<tbody>' + body + '</tbody></table></div>' +
+      (more > 0 ? '<button type="button" class="btn sm ghost cb-tmore" data-tmore>' + icon('list') + '<span>' + (board ? 'See all ' + tb.n + ' tasks' : 'Show all ' + tb.n + ' rows') + '</span></button>' : '');
   }
 
   /* ---------- treemap: boxes sized by value, optionally split into smaller boxes ---------- */
@@ -1278,6 +1451,18 @@
   /* ---------- placing fields ---------- */
   function place(fid, z, from) {
     ui.flash = null;
+    if (z === 'cols' || (from === 'colsz' && !z)) {
+      const cols = tCols().slice();
+      if (!z) return setCfg({ cols: cols.filter((c) => c !== fid) }); // dragged off the table
+      if (from === 'colsz') return;
+      if (fid === 'count') return nope(z, 'Every row is one task, so Tasks isn’t a column. Try Checklist steps or Days late.');
+      if (cols.includes(fid)) return nope(z, colField(fid).label + ' is already a column.');
+      ui.picked = null;
+      return setCfg({ cols: cols.concat(fid) });
+    }
+    if (EXTRA_COLS[fid]) return nope(z, colField(fid).label + ' only works as a table column.');
+    if (cfg.type === 'table' && z === 'x' && isNum(fid)) return nope(z, 'Rows can be grouped by a category, like Type or Map branch. Numbers go on Columns.');
+    if (from === 'colsz') return place(fid, z, 'tray');
     if (!z) { if (from && from !== 'tray') setCfg({ [from]: null }); return; }
     if (z === 'y' && !isNum(fid)) return nope(z, 'Values need a number field, like Tasks or Days late.');
     if (z === 'series' && isNum(fid)) return nope(z, 'Split by needs a category field, like Status or Type.');
@@ -1286,7 +1471,7 @@
       patch[from] = cfg[z] && (from === 'y' ? isNum(cfg[z]) : !isNum(cfg[z])) ? cfg[z] : null; // swap when it fits, otherwise clear
       if (from === 'y' && !patch.y) patch.y = 'count';
     }
-    if (z === 'x' && isNum(fid) && cfg.type !== 'scatter' && cfg.type !== 'kpi') { patch.type = 'scatter'; if (cfg.y === 'count') patch.y = null; C.toast('Switched to a scatter plot to show ' + field(fid).label + ' as numbers.'); }
+    if (z === 'x' && isNum(fid) && cfg.type !== 'scatter' && cfg.type !== 'kpi' && cfg.type !== 'table') { patch.type = 'scatter'; if (cfg.y === 'count') patch.y = null; C.toast('Switched to a scatter plot to show ' + field(fid).label + ' as numbers.'); }
     if (z === 'x' && !isNum(fid) && cfg.type === 'scatter') patch.type = 'column';
     if (z === 'y' && NUMS[fid]) { patch.agg = NUMS[fid].aggs[0]; if (cfg.goal == null) patch.goalDir = LOWER_IS_BETTER.includes(fid) ? 'atMost' : 'atLeast'; }
     if (z === 'x' && cfg.type === 'kpi' && !(DIMS[fid] && DIMS[fid].time)) return nope(z, 'A KPI trend needs a date field, like Completed or Created.');
@@ -1307,7 +1492,7 @@
   function onDown(e) {
     if (e.button) return;
     const c = e.target.closest('.cb-chip');
-    if (!c || e.target.closest('[data-clear]')) return;
+    if (!c || c.classList.contains('fixed') || e.target.closest('[data-clear]') || e.target.closest('[data-colmove]')) return;
     drag = { c, fid: c.dataset.field, from: c.dataset.from, x0: e.clientX, y0: e.clientY, pid: e.pointerId, on: false, over: null };
     window.addEventListener('pointermove', dMove, { passive: false });
     window.addEventListener('pointerup', dUp);
@@ -1368,6 +1553,13 @@
     const ex = t.closest('[data-export]');
     if (ex) { const ti = el.querySelector('#cb-title'); const title = (ti && ti.value.trim()) || autoTitle(); solo = ui.solo; zoom = ui.zoom; return ex.dataset.export === 'csv' ? exportCsv(title) : exportPng(el.querySelector('.cb-canvas'), title); }
     const clr = t.closest('[data-clear]');
+    if (clr && clr.dataset.clear.startsWith('cols:')) { const id = clr.dataset.clear.slice(5); return setCfg({ cols: tCols().filter((c) => c !== id) }); }
+    const cm = t.closest('[data-colmove]');
+    if (cm) { const [id, d] = cm.dataset.colmove.split(':'), cols = tCols().slice(), i = cols.indexOf(id), j = i + +d; if (i < 0 || j < 0 || j >= cols.length) return; [cols[i], cols[j]] = [cols[j], cols[i]]; return setCfg({ cols }); }
+    const ts = t.closest('[data-tsort]'); if (ts) return setCfg({ sort: nextSort(cfg.sort, ts.dataset.tsort) });
+    const tc = t.closest('[data-tcheck]'); if (tc) return C.completeTask(tc.dataset.tcheck);
+    if (t.closest('[data-tmore]')) return setCfg({ limit: 'all' });
+    const tr = t.closest('[data-trow]'); if (tr) return C.openEditor(tr.dataset.trow);
     if (clr) { const z = clr.dataset.clear; return setCfg({ [z]: z === 'y' ? 'count' : null, agg: z === 'y' ? 'count' : cfg.agg }); }
     const c = t.closest('.cb-chip');
     if (c && c.dataset.from === 'tray') { ui.picked = ui.picked === c.dataset.field ? null : c.dataset.field; ui.flash = null; return render(); }
@@ -1380,7 +1572,8 @@
       if (type !== 'scatter' && cfg.type === 'scatter') { patch.x = cfg.series || 'type'; patch.series = null; if (type === 'kpi' || type === 'sunburst') patch.x = null; if (NUMS[cfg.y] && cfg.y !== 'count' && type !== 'scatter') patch.y = cfg.y; }
       if (type === 'kpi' && cfg.x && !(DIMS[cfg.x] && DIMS[cfg.x].time)) patch.x = null;
       if (FIXED_TYPES.includes(type)) patch.y = 'count';
-      if ((cfg.type === 'kpi' || cfg.type === 'sunburst' || FIXED_TYPES.includes(cfg.type)) && type !== 'kpi' && type !== 'sunburst' && !FIXED_TYPES.includes(type) && type !== 'scatter' && !cfg.x) patch.x = 'type';
+      if (type === 'table') { patch.x = null; patch.series = null; }
+      if ((cfg.type === 'kpi' || cfg.type === 'sunburst' || cfg.type === 'table' || FIXED_TYPES.includes(cfg.type)) && type !== 'kpi' && type !== 'sunburst' && !FIXED_TYPES.includes(type) && type !== 'scatter' && !cfg.x) patch.x = 'type';
       if (type === 'treemap') {
         const yy = patch.y || cfg.y;
         if (NUMS[yy] && yy !== 'count' && !NUMS[yy].aggs.includes('sum')) patch.y = 'count';
@@ -1405,6 +1598,7 @@
       const titleIn = el.querySelector('#cb-title');
       const item = Object.assign({}, cfg, { title: titleIn ? titleIn.value.trim() : cfg.title });
       syncBoard();
+      if (item.type === 'table' && !item.size && asNew) item.size = 'wide';
       if (asNew) { item.id = C.uid('ch'); board = board.concat([item]); } else board = board.map((b) => (b.id === item.id ? item : b));
       saveBoard();
       setCfg({ id: item.id, title: item.title });
@@ -1429,6 +1623,12 @@
       const out = []; const walk = (nd, path) => { nd.kids.forEach((k) => { const p2 = path.concat(k.title); out.push([p2.join(' / '), k.depth, k.all.length, num(sb.value(k.all))]); walk(k, p2); }); };
       walk(sb.center, []);
       return { head: ['Node', 'Depth', 'Tasks', yLabel], rows: [['Whole map', 0, sb.center.all.length, num(sb.value(sb.center.all))]].concat(out) };
+    }
+    if (cfg.type === 'table') {
+      const tb = tableRows(), gd = cfg.x && DIMS[cfg.x];
+      const list = tb.groups ? tb.groups.flatMap((g) => g.tasks.map((t) => [g.key, t])) : tb.list.map((t) => [null, t]);
+      return { head: (gd ? [gd.label] : []).concat(tb.cols.map((c) => (c === 'title' ? 'Task' : colField(c).label)), ['Done']),
+        rows: list.map(([g, t]) => (gd ? [g] : []).concat(tb.cols.map((c) => cellOf(t, c, tb.ctx).txt), [t.done ? 'Yes' : ''])) };
     }
     if (cfg.type === 'handoff') { const h = handoffData(); return { head: ['Assigned by', 'Assigned to', 'Tasks'], rows: h.links.map((l) => [l.a, l.b, l.tasks.length]) }; }
     const b = build();
@@ -1469,6 +1669,8 @@
   /** card: the element holding the chart (builder canvas or a Board card) */
   async function exportPng(card, title) {
     card.querySelectorAll('.tipped').forEach((x) => x.classList.remove('tipped'));
+    const tblEl = card.querySelector('.cb-tbl');
+    if (tblEl) return exportTablePng(card, tblEl, title);
     const svg = card.querySelector('.cb-plot svg.chart, .kpi');
     if (!svg) return C.toast('Nothing to export yet');
     const cs = getComputedStyle(card), body = getComputedStyle(document.body);
@@ -1525,6 +1727,44 @@
       setTimeout(() => URL.revokeObjectURL(url), 4000);
       C.toast('Downloaded ' + slug(title) + '.png');
     } catch (err) { C.toast(err.message || 'Couldn’t export the chart'); }
+  }
+
+  /** a table as a picture: the visible rows, laid out on a canvas */
+  async function exportTablePng(card, tbl, title) {
+    const body = getComputedStyle(document.body), cs = getComputedStyle(card);
+    const bg = cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)' ? cs.backgroundColor : body.backgroundColor || '#fff';
+    const ink = body.color || '#111', font = body.fontFamily || 'system-ui, sans-serif', dfont = getComputedStyle(document.documentElement).getPropertyValue('--font-display').trim() || font;
+    const line = getComputedStyle(tbl.querySelector('td, th')).borderBottomColor || '#ddd', muted = getComputedStyle(card.querySelector('.muted') || card).color;
+    const head = [...tbl.querySelectorAll('thead th')].slice(1).map((th) => th.textContent.trim());
+    const rowsOut = [...tbl.querySelectorAll('tbody tr')].map((tr) => tr.classList.contains('cb-tgroup') ? { group: tr.textContent.trim().replace(/\s+(\d+)$/, ' · $1') } : { cells: [...tr.children].slice(1).map((td) => td.textContent.trim()), done: tr.classList.contains('done'), late: [...tr.children].slice(1).map((td) => !!td.querySelector('.cb-tlate')) });
+    const cv = document.createElement('canvas'), ctx = cv.getContext('2d'), scale = 2, pad = 28, rowH = 30, gap = 18;
+    ctx.font = '13px ' + font;
+    const widths = head.map((h, i) => { ctx.font = '650 12px ' + font; const hw = ctx.measureText(h.toUpperCase()).width + 4; ctx.font = (i === 0 ? '600 ' : '') + '13px ' + font; return Math.min(i === 0 ? 340 : 220, Math.max(hw, ...rowsOut.filter((r) => r.cells).map((r) => ctx.measureText(r.cells[i] || '').width))) + gap; });
+    const width = Math.max(520, widths.reduce((a, b) => a + b, 0) + pad * 2);
+    ctx.font = '700 22px ' + dfont;
+    const tl = wrapLines(ctx, title, width - pad * 2);
+    const summary = ((card.querySelector('.cb-summary') || {}).textContent || '').trim();
+    ctx.font = '13px ' + font; const sl = summary ? wrapLines(ctx, summary, width - pad * 2) : [];
+    const height = pad + tl.length * 28 + 14 + rowH * (rowsOut.length + 1) + (sl.length ? 16 + sl.length * 19 : 0) + pad;
+    cv.width = width * scale; cv.height = height * scale; ctx.scale(scale, scale);
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, width, height); ctx.textBaseline = 'middle';
+    let y = pad; ctx.fillStyle = ink; ctx.font = '700 22px ' + dfont; ctx.textBaseline = 'top'; tl.forEach((l) => { ctx.fillText(l, pad, y); y += 28; }); y += 14; ctx.textBaseline = 'middle';
+    const fit = (txt, w) => { if (ctx.measureText(txt).width <= w) return txt; let t = txt; while (t.length > 1 && ctx.measureText(t + '…').width > w) t = t.slice(0, -1); return t + '…'; };
+    const hline = (yy) => { ctx.strokeStyle = line; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(pad, yy + 0.5); ctx.lineTo(width - pad, yy + 0.5); ctx.stroke(); };
+    ctx.font = '650 12px ' + font; ctx.fillStyle = muted; let x = pad;
+    head.forEach((h, i) => { ctx.fillText(fit(h.toUpperCase(), widths[i] - gap), x, y + rowH / 2); x += widths[i]; });
+    y += rowH; hline(y);
+    const danger = getComputedStyle(document.documentElement).getPropertyValue('--danger').trim() || '#d33';
+    rowsOut.forEach((r) => {
+      if (r.group) { ctx.font = '650 13px ' + font; ctx.fillStyle = ink; ctx.fillText(fit(r.group, width - pad * 2), pad, y + rowH / 2); }
+      else { x = pad; r.cells.forEach((c, i) => { ctx.font = (i === 0 ? '600 ' : '') + '13px ' + font; ctx.fillStyle = r.late[i] ? danger : r.done ? muted : ink; ctx.fillText(fit(c, widths[i] - gap), x, y + rowH / 2); x += widths[i]; }); }
+      y += rowH; hline(y);
+    });
+    if (sl.length) { y += 16; ctx.fillStyle = muted; ctx.font = '13px ' + font; ctx.textBaseline = 'top'; sl.forEach((l) => { ctx.fillText(l, pad, y); y += 19; }); }
+    const blob = await new Promise((res) => cv.toBlob(res, 'image/png'));
+    if (!blob) return C.toast('Couldn’t make the picture');
+    const url = URL.createObjectURL(blob); C.map.download(url, slug(title) + '.png'); setTimeout(() => URL.revokeObjectURL(url), 4000);
+    C.toast('Downloaded ' + slug(title) + '.png');
   }
 
   /* ================= drag across a time chart to zoom ================= */
@@ -1611,7 +1851,7 @@
       }));
       root.addEventListener('pointerover', (e) => { if (e.pointerType === 'mouse') boardTip(e.target); });
       root.addEventListener('focusin', (e) => boardTip(e.target));
-      root.addEventListener('keydown', (e) => { const n = e.target.closest('[data-seg]'); if (n && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); n.dispatchEvent(new MouseEvent('click', { bubbles: true })); } });
+      root.addEventListener('keydown', (e) => { if (e.target.matches && e.target.matches('[data-trow]') && e.key === 'Enter') { e.preventDefault(); return C.openEditor(e.target.dataset.trow); } const n = e.target.closest('[data-seg]'); if (n && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); n.dispatchEvent(new MouseEvent('click', { bubbles: true })); } });
       renderBoard();
     },
     update() { if (elB) renderBoard(); },
@@ -1645,7 +1885,7 @@
         '<header class="cb-card-head"><h2>' + esc(item.title || autoTitle()) + '</h2>' + btns(item) + '</header>' +
         '<p class="bd-filters muted">' + esc(filterText()) + '</p>' +
         '<div class="cb-plot bd-plot">' + plot(false, narrow ? { W: 360, H: 260 } : PLOT_SIZE[sz]) + '</div>' + zoomHtml(false) +
-        '<div class="ins-legend cb-legend">' + legendHtml() + '<span class="ins-cap" aria-live="polite"></span></div>' +
+        (item.type === 'table' ? '' : '<div class="ins-legend cb-legend">' + legendHtml() + '<span class="ins-cap" aria-live="polite"></span></div>') +
         summaryHtml() + '</article>';
     });
     const secs = sections();
@@ -1740,7 +1980,7 @@
   function filterText() {
     const st = { all: 'All tasks', open: 'Open tasks', overdue: 'Overdue tasks', done: 'Done tasks' }[cfg.status] || 'All tasks';
     const rg = { all: 'all time', '4w': 'last 4 weeks', '12w': 'last 12 weeks', '6m': 'last 6 months', '1y': 'last year' }[curRange()] || 'all time';
-    const f = flt(), extra = FILTERS.filter((x) => f[x.key]).map((x) => x.label + ': ' + f[x.key]);
+    const f = flt(), extra = FILTERS.filter((x) => f[x.key]).map((x) => x.label + ': ' + filterWord(x, f[x.key])).concat(f.text ? ['“' + f.text + '”'] : []);
     return (FLOW_TYPES.includes(cfg.type) ? 'All tasks' : st) + ' · ' + rg + (extra.length ? ' · ' + extra.join(', ') : '');
   }
   function boardTip(t) {
@@ -1760,6 +2000,12 @@
     const lg = t.closest('[data-legend]');
     if (lg && card) { const v = cardView(card.dataset.card), k = lg.dataset.legend; v.solo = k && v.solo !== k ? k : null; return renderBoard(); }
     if (t.closest('[data-unzoom]') && card) { cardView(card.dataset.card).zoom = null; return renderBoard(); }
+    if (card) {
+      const tc = t.closest('[data-tcheck]'); if (tc) return C.completeTask(tc.dataset.tcheck);
+      const ts = t.closest('[data-tsort]'); if (ts) { const it = board.find((b) => b.id === card.dataset.card); if (it) patchItem(it.id, { sort: nextSort(it.sort, ts.dataset.tsort) }); return; }
+      if (t.closest('[data-tmore]')) return openRecords(card.dataset.card, 'all', '');
+      const tr = t.closest('[data-trow]'); if (tr) return C.openEditor(tr.dataset.trow);
+    }
     const seg = t.closest('[data-seg]');
     if (seg && card) return openRecords(card.dataset.card, seg.dataset.seg, seg.dataset.tip);
     const ed = t.closest('[data-edit]');
@@ -1776,6 +2022,7 @@
   let modal = null;
   function recordsFor(item, seg) {
     return withCfg(item, () => {
+      if (seg === 'all' && cfg.type === 'table') return { title: item.title || autoTitle(), label: 'All ' + tableRows().n + ' tasks', color: 'var(--accent)', tasks: tableRows().list };
       if (seg === 'all' && cfg.type === 'kpi') { const k = kpiData(); return { title: item.title || autoTitle(), label: fmt(k.value, k.unit) + ' · ' + (item.title || autoTitle()), color: 'var(--accent)', tasks: k.tasks }; }
       if (seg[0] === 'n' && cfg.type === 'sunburst') {
         const sb = sunData(); if (!sb) return null;
@@ -1880,6 +2127,8 @@
 
   function onChange(e) {
     const t = e.target;
+    if (t.hasAttribute('data-addcol')) { if (t.value) return setCfg({ cols: tCols().concat(t.value) }); return; }
+    if (t.hasAttribute('data-ftext')) { const f = Object.assign({}, flt(), { text: t.value.trim() || null }); Object.keys(f).forEach((k) => { if (!f[k]) delete f[k]; }); return setCfg({ f: Object.keys(f).length ? f : null }); }
     if (t.dataset.cfg) return setCfg({ [t.dataset.cfg]: t.value });
     if (t.hasAttribute('data-compare')) return setCfg({ compare: t.checked });
     if (t.dataset.filter) { const f = Object.assign({}, flt(), { [t.dataset.filter]: t.value || null }); Object.keys(f).forEach((k) => { if (!f[k]) delete f[k]; }); return setCfg({ f: Object.keys(f).length ? f : null }); }

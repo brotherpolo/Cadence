@@ -1191,3 +1191,57 @@ button.mix-key:hover { color: var(--ink); }
 .ed-moved { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
 .ed-moved .ic { width: 13px; height: 13px; }
 .cb-askwrap { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+
+/* ---------- Chart builder: Table (v20) ---------- */
+.cb-colzone .cb-colchips { display: flex; flex-wrap: wrap; gap: 6px; }
+.cb-colzone .cb-zone-empty { min-height: 0; font-size: var(--fs-xs); }
+.cb-chip.fixed { cursor: default; background: var(--surface-2); color: var(--ink-2); border-style: dashed; }
+.cb-chip.fixed .ic { color: var(--ink-3); }
+.cb-chip.col { padding-right: 6px; }
+.cb-colmv { display: inline-flex; margin: 0 -2px 0 2px; }
+.cb-colmv button { display: inline-grid; place-items: center; width: 20px; height: 22px; border: 0; background: none; border-radius: 6px; color: var(--ink-3); cursor: pointer; }
+.cb-colmv button:hover { background: var(--surface-2); color: var(--ink); }
+.cb-colmv .ic { width: 12px; height: 12px; }
+.cb-addcol .cb-select select { height: 30px; background: var(--surface); font-size: var(--fs-xs); }
+.cb-ftext { height: 32px; flex: 1 1 200px; max-width: 280px; }
+.cb-ftext input { font-size: var(--fs-sm); }
+@media (max-width: 640px) { .cb-ftext { max-width: none; } .cb-ftext input { font-size: 16px; } }
+
+.cb-plot:has(.cb-twrap) { display: block; min-height: 0; }
+.cb-twrap { overflow-x: auto; margin: 0 -4px; padding: 0 4px; -webkit-overflow-scrolling: touch; }
+.cb-tbl { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+.cb-tbl th, .cb-tbl td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: middle; white-space: nowrap; }
+.cb-tbl thead th { padding: 0 4px 6px; border-bottom-color: var(--line-strong); }
+.cb-tbl th.num, .cb-tbl td.num { text-align: right; }
+.cb-tsort { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 6px; border: 0; border-radius: 7px; background: none; color: var(--ink-3); font: 650 11px var(--font-body); letter-spacing: .05em; text-transform: uppercase; cursor: pointer; }
+.cb-tsort:hover { background: var(--surface-2); color: var(--ink); }
+.cb-tsort.on { color: var(--accent); }
+.cb-tsort .ic { width: 12px; height: 12px; }
+th.num .cb-tsort { flex-direction: row-reverse; }
+.cb-tbl .cb-tchk { width: 34px; padding-left: 2px; padding-right: 0; }
+.cb-tbl td.cb-ttitle { white-space: normal; min-width: 180px; max-width: 360px; }
+.cb-tt { font-weight: 550; color: var(--ink); }
+.cb-trow { cursor: pointer; transition: background .12s; }
+.cb-trow:hover, .cb-trow:focus-visible { background: var(--surface-2); outline: none; }
+.cb-trow.done .cb-tt { color: var(--ink-3); text-decoration: line-through; text-decoration-color: var(--line-strong); }
+.cb-tbl .type-tag { vertical-align: middle; }
+.cb-tlv { display: inline-flex; align-items: center; gap: 6px; }
+.cb-tlv .dot { box-shadow: 0 0 0 3px color-mix(in oklab, var(--c) 20%, transparent); }
+.cb-tst { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 11.5px; font-weight: 650; background: var(--accent-soft); color: var(--accent); }
+.cb-tst.overdue { background: color-mix(in oklab, var(--danger) 12%, var(--surface)); color: var(--danger); }
+.cb-tst.done { background: color-mix(in oklab, var(--ok) 13%, var(--surface)); color: var(--ok); }
+.cb-tlate { color: var(--danger); font-weight: 600; }
+.cb-tnum { font-variant-numeric: tabular-nums; }
+.cb-tnote { display: inline-block; max-width: 260px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; color: var(--ink-2); }
+.cb-tgroup th { padding: 14px 6px 6px; border-bottom: 1px solid var(--line-strong); font-weight: 650; font-size: var(--fs-sm); color: var(--ink); white-space: normal; }
+.cb-tgroup .dot { margin-right: 6px; vertical-align: 1px; }
+.cb-tgroup .muted { font-weight: 500; margin-left: 4px; }
+.cb-tbl tbody tr:last-child td { border-bottom: 0; }
+.cb-tmore { margin-top: 8px; }
+.cb-tbl.board td, .cb-tbl.board th { padding-top: 6px; padding-bottom: 6px; }
+.bd-plot:has(.cb-twrap) { min-height: 0; max-height: 520px; overflow-y: auto; }
+/* phones: drop the less important columns' padding and let the table scroll sideways */
+@media (max-width: 640px) {
+  .cb-tbl th, .cb-tbl td { padding: 8px 7px; }
+  .cb-tbl td.cb-ttitle { min-width: 150px; }
+}
