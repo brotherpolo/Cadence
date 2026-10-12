@@ -1,0 +1,189 @@
+rules_version = '2';
+
+// Cadence — Cloud Firestore security rules
+//
+// Data layout written by firebase-sync.js:
+//   tasks/{taskId}               every task. members = [ownerId] or [ownerId, assigneeId]
+//   users/{uid}/items/settings   task types, importance levels, defaults (private)
+//   users/{uid}/items/map        the mind map: nodes + edges (private)
+//   people/{email}               { uid, name }, so tasks can be assigned by email
+//
+// Policy:
+//   - A task is visible only to its owner and its assignee.
+//   - The owner can change anything except who owns it, and can delete it.
+//   - The assignee can complete it, change its date and time, edit the
+//     checklist and notes, or hand it back to the owner. Nothing else.
+//   - The people directory can be looked up one exact email at a time but
+//     never listed, and only verified emails can claim an entry. Email/password
+//     accounts verify through the link the app emails at sign-up.
+//   - Everything else is denied. Writes are shape-checked.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function optString(d, key, max) {
+      return !(key in d) || d[key] == null || (d[key] is string && d[key].size() <= max);
+    }
+
+    function isDateKey(v) {
+      return v == null || (v is string && v.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'));
+    }
+
+    function isTimeKey(v) {
+      return v == null || (v is string && v.matches('^[0-9]{2}:[0-9]{2}$'));
+    }
+
+    function okSnap(d, key) {
+      return !(key in d) || d[key] == null
+          || (d[key] is map && d[key].keys().hasOnly(['name', 'color', 'glyph']));
+    }
+
+    function validTask(d, taskId) {
+      return d.keys().hasOnly([
+               'id', 'title', 'notes', 'typeId', 'levelId', 'due', 'time',
+               'done', 'doneAt', 'createdAt', 'updatedAt', 'subtasks',
+               'repeat', 'sample', 'spawnedNext', 'spawnedFrom',
+               'ownerId', 'ownerName', 'ownerEmail',
+               'assigneeId', 'assigneeName', 'assigneeEmail', 'members',
+               'typeSnap', 'levelSnap', 'nodeId'
+             ])
+          && d.keys().hasAll(['id', 'title', 'done', 'ownerId', 'members'])
+          && d.id == taskId
+          && d.title is string && d.title.size() > 0 && d.title.size() <= 500
+          && d.done is bool
+          && optString(d, 'notes', 20000)
+          && optString(d, 'typeId', 100)
+          && optString(d, 'levelId', 100)
+          && optString(d, 'spawnedNext', 100)
+          && optString(d, 'spawnedFrom', 100)
+          && optString(d, 'nodeId', 100)
+          && optString(d, 'ownerName', 200)
+          && optString(d, 'ownerEmail', 320)
+          && optString(d, 'assigneeName', 200)
+          && optString(d, 'assigneeEmail', 320)
+          && okSnap(d, 'typeSnap')
+          && okSnap(d, 'levelSnap')
+          && isDateKey(d.get('due', null))
+          && isTimeKey(d.get('time', null))
+          && (!('repeat' in d) || d.repeat in ['none', 'daily', 'weekdays', 'weekly', 'monthly'])
+          && (!('subtasks' in d) || (d.subtasks is list && d.subtasks.size() <= 200))
+          && (!('sample' in d) || d.sample is bool)
+          && (!('createdAt' in d) || d.createdAt is number)
+          && (!('updatedAt' in d) || d.updatedAt is number)
+          && (!('doneAt' in d) || d.doneAt == null || d.doneAt is number)
+          // membership always mirrors owner + assignee
+          && d.ownerId is string
+          && d.members is list && d.members.size() >= 1 && d.members[0] == d.ownerId
+          && (d.get('assigneeId', null) == null
+                ? d.members.size() == 1
+                : (d.assigneeId is string && d.assigneeId != d.ownerId
+                   && d.members.size() == 2 && d.members[1] == d.assigneeId));
+    }
+
+    function validSettings(d) {
+      return d.keys().hasOnly(['kind', 'types', 'levels', 'defaultLevel', 'defaultType'])
+          && d.kind == 'settings'
+          && d.types is list && d.types.size() <= 50
+          && d.levels is list && d.levels.size() >= 1 && d.levels.size() <= 20
+          && optString(d, 'defaultLevel', 100)
+          && optString(d, 'defaultType', 100);
+    }
+
+    function validMap(d) {
+      return d.keys().hasOnly(['kind', 'nodes', 'edges', 'updatedAt'])
+          && d.kind == 'map'
+          && d.nodes is list && d.nodes.size() <= 5000
+          && d.edges is list && d.edges.size() <= 10000
+          && (!('updatedAt' in d) || d.updatedAt is number);
+    }
+
+    function isAssignee() {
+      return resource.data.get('assigneeId', null) == request.auth.uid;
+    }
+
+    function changed() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
+    // The next occurrence of a repeating task, created by its assignee on completion.
+    // It must point at a task this person is assigned, and keep that task's owner.
+    function spawnedByAssignee(d) {
+      return d.get('assigneeId', null) == request.auth.uid
+          && d.get('spawnedFrom', null) is string
+          && exists(/databases/$(database)/documents/tasks/$(d.spawnedFrom))
+          && get(/databases/$(database)/documents/tasks/$(d.spawnedFrom)).data.ownerId == d.ownerId
+          && get(/databases/$(database)/documents/tasks/$(d.spawnedFrom)).data.get('assigneeId', null) == request.auth.uid;
+    }
+
+    match /tasks/{taskId} {
+      allow read: if signedIn() && request.auth.uid in resource.data.members;
+
+      allow create: if signedIn()
+        && validTask(request.resource.data, taskId)
+        && (request.resource.data.ownerId == request.auth.uid
+            || spawnedByAssignee(request.resource.data));
+
+      allow update: if signedIn()
+        && validTask(request.resource.data, taskId)
+        && (
+          // owner: anything except ownership
+          (resource.data.ownerId == request.auth.uid
+             && request.resource.data.ownerId == resource.data.ownerId)
+          // assignee: do the work and move the date
+          || (isAssignee()
+             && changed().hasOnly(['done', 'doneAt', 'due', 'time', 'subtasks',
+                                   'notes', 'updatedAt', 'spawnedNext']))
+          // assignee: hand it back to the owner
+          || (isAssignee()
+             && request.resource.data.get('assigneeId', null) == null
+             && changed().hasOnly(['assigneeId', 'assigneeName', 'assigneeEmail',
+                                   'members', 'updatedAt']))
+        );
+
+      allow delete: if signedIn()
+        // deleting a task that never reached the server is a no-op
+        && (resource == null
+            || resource.data.ownerId == request.auth.uid
+            // undoing a completion removes the occurrence it spawned
+            || (isAssignee()
+                && resource.data.get('spawnedFrom', null) != null
+                && resource.data.done == false));
+    }
+
+    match /people/{email} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create, update: if signedIn()
+        && request.auth.token.email_verified == true
+        && request.auth.token.email is string
+        && email == request.auth.token.email.lower()
+        && request.resource.data.keys().hasOnly(['uid', 'name'])
+        && request.resource.data.uid == request.auth.uid
+        && optString(request.resource.data, 'name', 200);
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    // Private settings and the map. Tasks stored here by app version 7 and earlier can be
+    // read and deleted (the app moves them to /tasks), but no longer written,
+    // so an outdated tab can't re-upload stale copies.
+    match /users/{uid}/items/{itemId} {
+      allow read, delete: if isOwner(uid);
+      allow create, update: if isOwner(uid)
+        && ((itemId == 'settings' && validSettings(request.resource.data))
+            || (itemId == 'map' && validMap(request.resource.data)));
+    }
+
+    // Default deny for every other path.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

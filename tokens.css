@@ -1,0 +1,98 @@
+/* Cadence — design tokens
+   Layout concept: a quiet sidebar "rail" + a wide working canvas; on phones the rail
+   becomes a bottom tab bar with a floating add button. One bold move: the big
+   Bricolage date headline. Everything else stays calm and cool. */
+:root {
+  /* color — cool porcelain neutrals biased toward the ultramarine accent */
+  --bg: #F3F5F9;
+  --surface: #FFFFFF;
+  --surface-2: #EBEEF5;
+  --surface-3: #E1E5EF;
+  --line: #DCE1EC;
+  --line-strong: #C6CDDC;
+  --ink: #121726;
+  --ink-2: #485168;
+  --ink-3: #7A8399;
+  --accent: #3446E6;
+  --accent-ink: #FFFFFF;
+  --accent-soft: #E2E6FF;
+  --danger: #D13438;
+  --ok: #178A5E;
+  --warn: #B87800;
+  --shadow-1: 0 1px 2px rgb(18 23 38 / .06), 0 1px 1px rgb(18 23 38 / .04);
+  --shadow-2: 0 10px 30px -12px rgb(18 23 38 / .22), 0 2px 6px rgb(18 23 38 / .06);
+  --shadow-3: 0 30px 80px -20px rgb(18 23 38 / .35), 0 6px 18px rgb(18 23 38 / .10);
+  --scrim: rgb(14 18 30 / .38);
+  --dot-grid: rgb(52 70 230 / .10);
+
+  /* type */
+  --font-display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --fs-xs: .75rem;
+  --fs-sm: .8125rem;
+  --fs-md: .9375rem;
+  --fs-lg: 1.125rem;
+  --fs-xl: 1.5rem;
+  --fs-display: clamp(2.4rem, 1.6rem + 3.6vw, 4.25rem);
+
+  /* shape & motion */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 18px;
+  --r-xl: 26px;
+  --ease: cubic-bezier(.2, .8, .2, 1);
+  --spring: cubic-bezier(.34, 1.56, .64, 1);
+  --rail: 252px;
+  --tabbar-h: 64px;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0C0F17;
+    --surface: #141925;
+    --surface-2: #1A2030;
+    --surface-3: #222A3D;
+    --line: #262E42;
+    --line-strong: #353F58;
+    --ink: #E8EBF4;
+    --ink-2: #A6AEC3;
+    --ink-3: #6F7891;
+    --accent: #7E8CFF;
+    --accent-ink: #0C0F17;
+    --accent-soft: #222A5A;
+    --danger: #FF6B6E;
+    --ok: #3FCF95;
+    --warn: #F0B341;
+    --shadow-1: 0 1px 2px rgb(0 0 0 / .4);
+    --shadow-2: 0 12px 30px -12px rgb(0 0 0 / .7), 0 2px 6px rgb(0 0 0 / .35);
+    --shadow-3: 0 30px 80px -20px rgb(0 0 0 / .8), 0 6px 18px rgb(0 0 0 / .4);
+    --scrim: rgb(0 0 0 / .55);
+    --dot-grid: rgb(126 140 255 / .10);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0C0F17;
+  --surface: #141925;
+  --surface-2: #1A2030;
+  --surface-3: #222A3D;
+  --line: #262E42;
+  --line-strong: #353F58;
+  --ink: #E8EBF4;
+  --ink-2: #A6AEC3;
+  --ink-3: #6F7891;
+  --accent: #7E8CFF;
+  --accent-ink: #0C0F17;
+  --accent-soft: #222A5A;
+  --danger: #FF6B6E;
+  --ok: #3FCF95;
+  --warn: #F0B341;
+  --shadow-1: 0 1px 2px rgb(0 0 0 / .4);
+  --shadow-2: 0 12px 30px -12px rgb(0 0 0 / .7), 0 2px 6px rgb(0 0 0 / .35);
+  --shadow-3: 0 30px 80px -20px rgb(0 0 0 / .8), 0 6px 18px rgb(0 0 0 / .4);
+  --scrim: rgb(0 0 0 / .55);
+  --dot-grid: rgb(126 140 255 / .10);
+  color-scheme: dark;
+}
