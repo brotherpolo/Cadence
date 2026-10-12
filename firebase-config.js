@@ -21,3 +21,4 @@ window.CADENCE_AUTH_PROVIDERS = { google: true, emailPassword: true };
    (corporate proxies, VPNs, some antivirus or privacy tools). */
 window.CADENCE_FORCE_LONG_POLLING = false;
 window.CADENCE_VAPID_KEY = 'BC-4Xf0AIwacpvBeuWTto7B4UA2ftxwPrPKfwRTEEQ7LAq_ED9XZ4qoWgWBn3uLIG0kfn1xc_oAlvXxO4wkUzdw';
+window.CADENCE_FORMS_URL = 'https://cadence-forms.web.app/';
