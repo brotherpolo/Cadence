@@ -1155,3 +1155,12 @@ button.mix-key:hover { color: var(--ink); }
 .bd-ask .input-wrap { height: 38px; }
 .bd-ask-btns { display: flex; justify-content: flex-end; gap: 6px; }
 .bd-menu .menu-item > .menu-l:first-child { padding-left: 26px; }
+
+/* Settings → Preferences: "New tasks are" uses the task editor's pills (v18) */
+.pref-stack { flex-direction: column; flex-wrap: nowrap; align-items: stretch; justify-content: flex-start; gap: 12px; }
+.pref-def { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.pref-def .seg { align-self: flex-start; max-width: 100%; }
+@media (max-width: 480px) {
+  .pref-def .seg { align-self: stretch; display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); }
+  .pref-def .seg-btn { justify-content: center; }
+}

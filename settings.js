@@ -46,9 +46,14 @@
       section('Preferences', 'Saved on this device.',
         prefRow('Appearance', seg('theme', [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']], p.theme)) +
         prefRow('Week starts on', seg('weekStart', [['0', 'Sunday'], ['1', 'Monday']], String(p.weekStart))) +
-        prefRow('New tasks are', '<div class="row2">' +
-          '<label class="select-wrap"><span class="sr">Default importance</span><select id="st-deflevel" data-pref="defaultLevel">' + levels.map((l) => '<option value="' + l.id + '"' + (p.defaultLevel === l.id ? ' selected' : '') + '>' + esc(l.name) + '</option>').join('') + '</select></label>' +
-          '<label class="select-wrap"><span class="sr">Default type</span><select id="st-deftype" data-pref="defaultType"><option value="">No type</option>' + types.map((t) => '<option value="' + t.id + '"' + (p.defaultType === t.id ? ' selected' : '') + '>' + esc(t.name) + '</option>').join('') + '</select></label></div>')) +
+        // same pills as the task editor, so the default looks like what you'll get
+        '<div class="pref pref-stack"><span class="pref-l">New tasks are</span>' +
+          '<div class="pref-def"><span class="field-label" id="st-deflevel-l">Importance</span><div class="seg" role="radiogroup" aria-labelledby="st-deflevel-l">' +
+          levels.map((l) => { const on = p.defaultLevel === l.id || (!levels.some((x) => x.id === p.defaultLevel) && l === levels[0]); return '<button type="button" role="radio" class="seg-btn' + (on ? ' on' : '') + '" data-defpref="defaultLevel" data-val="' + l.id + '" aria-checked="' + on + '" style="--c:' + l.color + '"><i class="dot"></i>' + esc(l.name) + '</button>'; }).join('') + '</div></div>' +
+          '<div class="pref-def"><span class="field-label" id="st-deftype-l">Type</span><div class="chips" role="radiogroup" aria-labelledby="st-deftype-l">' +
+          '<button type="button" role="radio" class="chip' + (!p.defaultType ? ' on' : '') + '" data-defpref="defaultType" data-val="" aria-checked="' + !p.defaultType + '">None</button>' +
+          types.map((t) => '<button type="button" role="radio" class="chip' + (p.defaultType === t.id ? ' on' : '') + '" data-defpref="defaultType" data-val="' + t.id + '" aria-checked="' + (p.defaultType === t.id) + '" style="--c:' + t.color + '">' + icon(t.glyph) + esc(t.name) + '</button>').join('') + '</div></div>' +
+        '</div>') +
 
       section('Your data', '',
         syncCard(st) +
@@ -219,6 +224,7 @@
       const inp = el.querySelector('#st-name-' + it.id); if (inp) { inp.focus(); inp.select(); }
       return;
     }
+    if (d.defpref) { ui.force = true; return S().setPrefs({ [d.defpref]: d.val || null }); }
     if (d.seg) {
       const v = d.seg === 'weekStart' ? Number(d.val) : d.val;
       S().setPrefs({ [d.seg]: v });
