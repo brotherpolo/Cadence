@@ -85,7 +85,7 @@
 
 /* ---------- popovers, menus, pickers ---------- */
 .popover {
-  position: fixed; z-index: 75; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md);
+  position: fixed; z-index: 85; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md);
   box-shadow: var(--shadow-3); opacity: 0; transform: translateY(-4px) scale(.98); transform-origin: top left; transition: opacity .14s, transform .14s var(--ease);
 }
 .popover.in { opacity: 1; transform: none; }
@@ -107,7 +107,7 @@
 .swatch-grid { display: grid; grid-template-columns: repeat(5, 28px); gap: 9px; }
 .picker { width: 310px; max-width: calc(100vw - 16px); padding: 8px; display: flex; flex-direction: column; gap: 6px; }
 .input-wrap.sm { height: 36px; }
-.pk-list { max-height: 290px; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
+.pk-list { position: relative; max-height: 290px; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
 .pk-item { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 36px; padding: 0 10px; border-radius: 9px; font-size: var(--fs-sm); text-align: left; }
 .pk-item:hover, .pk-item.on { background: var(--surface-2); }
 .pk-item.current { font-weight: 650; }

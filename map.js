@@ -502,21 +502,33 @@
     p.el.remove();
     window.removeEventListener('pointerdown', p.out, true);
     window.removeEventListener('keydown', p.key, true);
-    window.removeEventListener('resize', closePop);
+    window.removeEventListener('resize', p.relayout);
+    if (window.visualViewport) { visualViewport.removeEventListener('resize', p.relayout); visualViewport.removeEventListener('scroll', p.relayout); }
     if (p.onClose) p.onClose();
   }
+  /* Position next to the anchor, inside the part of the screen that's visible.
+     On phones the on-screen keyboard shrinks that area, so the popover moves
+     (and a list inside it gets shorter) instead of closing. */
   function place(el, o) {
-    let left = o.x || 0, top = o.y || 0;
+    const vv = window.visualViewport;
+    const vTop = vv ? vv.offsetTop : 0, vH = vv ? vv.height : innerHeight, vW = vv ? vv.width : innerWidth, vLeft = vv ? vv.offsetLeft : 0;
+    const list = el.querySelector('.pk-list');
+    let left = o.x || 0, top = o.y || 0, ar = null;
     if (o.anchor) {
-      const r = o.anchor.getBoundingClientRect();
-      left = r.left; top = r.bottom + 6;
-      if (o.matchWidth && el.offsetWidth < r.width) el.style.width = r.width + 'px';
+      ar = o.anchor.getBoundingClientRect();
+      left = ar.left; top = ar.bottom + 6;
+      if (o.matchWidth) el.style.width = Math.min(Math.max(ar.width, 310), vW - 16) + 'px';
+    }
+    if (list && ar) {
+      const below = vTop + vH - ar.bottom - 14, above = ar.top - vTop - 14;
+      const room = Math.max(below, above) - (el.offsetHeight - list.offsetHeight);
+      list.style.maxHeight = Math.max(120, Math.min(290, room)) + 'px';
     }
     const w = el.offsetWidth, h = el.offsetHeight;
-    if (left + w > innerWidth - 8) left = innerWidth - w - 8;
-    if (top + h > innerHeight - 8) top = Math.max(8, o.anchor ? o.anchor.getBoundingClientRect().top - h - 6 : innerHeight - h - 8);
-    el.style.left = Math.max(8, left) + 'px';
-    el.style.top = Math.max(8, top) + 'px';
+    if (left + w > vLeft + vW - 8) left = vLeft + vW - w - 8;
+    if (top + h > vTop + vH - 8) top = ar && ar.top - h - 6 >= vTop + 8 ? ar.top - h - 6 : vTop + vH - h - 8;
+    el.style.left = Math.max(vLeft + 8, left) + 'px';
+    el.style.top = Math.max(vTop + 8, top) + 'px';
   }
   function openPop(html, o) {
     closePop();
@@ -534,8 +546,14 @@
     };
     setTimeout(() => window.addEventListener('pointerdown', out, true), 0);
     window.addEventListener('keydown', key, true);
-    window.addEventListener('resize', closePop);
-    pop = { el, out, key, onClose: o.onClose };
+    let raf = 0;
+    const relayout = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => { if (!pop || pop.el !== el) return; if (o.anchor && !o.anchor.isConnected) return closePop(); place(el, o); });
+    };
+    window.addEventListener('resize', relayout);
+    if (window.visualViewport) { visualViewport.addEventListener('resize', relayout); visualViewport.addEventListener('scroll', relayout); }
+    pop = { el, out, key, relayout, onClose: o.onClose };
     return el;
   }
   /** items: { label, ic, kbd, run, danger, dot, checked, sub } | 'sep' | { head } */
@@ -602,13 +620,16 @@
         (it.id === null ? '<i class="dot none"></i>' : '<i class="dot" style="--c:' + it.hex + '"></i>') +
         '<span class="pk-t">' + esc(it.t) + '</span>' + (it.meta ? '<span class="pk-m">' + esc(it.meta) + '</span>' : '') +
         (it.id === o.current ? icon('check') : '') + '</button>').join('') : '<p class="pk-empty">' + (nodes().length ? 'No matching nodes' : 'Your map is empty. Add nodes on the Canvas.') + '</p>';
-      const on = list.querySelector('.on'); if (on) on.scrollIntoView({ block: 'nearest' });
+      const on = list.querySelector('.on');
+      if (on) { const lt = list.scrollTop, lb = lt + list.clientHeight; if (on.offsetTop < lt) list.scrollTop = on.offsetTop; else if (on.offsetTop + on.offsetHeight > lb) list.scrollTop = on.offsetTop + on.offsetHeight - list.clientHeight; }
     }
     function choose(i) { const it = st.items[i]; if (!it) return; closePop(); o.onPick(it.id); }
     q.addEventListener('input', () => { st.idx = 0; draw(); });
     list.addEventListener('click', (e) => { const b = e.target.closest('[data-i]'); if (b) choose(+b.dataset.i); });
     draw();
-    q.focus();
+    place(el, o);
+    // on touch screens, don't pop the keyboard open over the list; tap the search box to type
+    if (!matchMedia('(pointer: coarse)').matches) q.focus();
   }
 
   /* ----------------------------------------------------------- import, start */
