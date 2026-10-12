@@ -110,6 +110,8 @@
     ['area', 'Area', '<path d="M3.5 19.5V15L9 10l4 3 7.5-6.5v13z" fill="currentColor" fill-opacity=".3"/><path d="M3.5 15 9 10l4 3 7.5-6.5"/>'],
     ['pie', 'Pie', '<circle cx="12" cy="12" r="8"/><path d="M12 4v8l6.5 4.6"/>'],
     ['donut', 'Donut', '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.5"/><path d="M12 4v4.5"/>'],
+    ['burnup', 'Burn-up', '<path d="M3.5 19 9 14l4 2 7.5-9"/><path d="M3.5 19 9 16.5l4 .5 7.5-4" stroke-dasharray="2 2.5"/>'],
+    ['cfd', 'Flow', '<path d="M3.5 20.5V14c4-1 6-3 9-3s5 1 8-2v11.5z" fill="currentColor" fill-opacity=".18"/><path d="M3.5 20.5V17c4-.5 6-1.5 9-1.5s5 .5 8-1.5v6.5z" fill="currentColor" fill-opacity=".38"/>'],
     ['sunburst', 'Sunburst', '<circle cx="12" cy="12" r="3"/><path d="M12 4.5a7.5 7.5 0 0 1 7.5 7.5M19.5 12a7.5 7.5 0 0 1-11 6.6M8.5 18.6A7.5 7.5 0 0 1 12 4.5"/><path d="M12 1.5v3M22.5 12h-3"/>'],
     ['kpi', 'KPI', '<rect x="3.5" y="5" width="17" height="14" rx="3"/><path d="M7 15l3-3 2.5 2L17 9.5"/>'],
     ['scatter', 'Scatter', '<circle cx="7" cy="16" r="1.6"/><circle cx="10" cy="10" r="1.6"/><circle cx="14.5" cy="13" r="1.6"/><circle cx="17" cy="7" r="1.6"/><circle cx="18.5" cy="15.5" r="1.6"/><path d="M3.5 3.5v17h17"/>']
@@ -126,9 +128,20 @@
     { name: 'Overdue by map branch', map: true, cfg: { type: 'bar', x: 'branch', y: 'late', agg: 'avg', series: null, status: 'open' } },
     { name: 'Done this week vs. goal', cfg: { type: 'kpi', x: 'completed', y: 'count', series: null, status: 'done', goal: 10, goalDir: 'atLeast', kpiPeriod: 'week' } },
     { name: 'Overdue right now', cfg: { type: 'kpi', x: null, y: 'count', series: null, status: 'overdue', goal: 0, goalDir: 'atMost', kpiPeriod: 'all' } },
+    { name: 'Is my list growing?', cfg: { type: 'burnup', x: null, y: 'count', series: null, range: '12w' } },
+    { name: 'Open vs. overdue over time', cfg: { type: 'cfd', x: null, y: 'count', series: null, range: '12w' } },
+    { name: 'This month vs. last', cfg: { type: 'column', x: 'type', y: 'count', series: null, status: 'done', range: '4w', compare: true } },
     { name: 'Weekly completions vs. goal', cfg: { type: 'column', x: 'completed', y: 'count', series: null, status: 'done', range: '12w', goal: 5, goalDir: 'atLeast' } }
   ];
-  const BLANK = { type: 'column', x: null, y: 'count', agg: 'count', series: null, stack: true, status: 'all', range: 'all', grain: 'auto', title: '', goal: null, goalDir: 'atLeast', kpiPeriod: 'all' };
+  const BLANK = { type: 'column', x: null, y: 'count', agg: 'count', series: null, stack: true, status: 'all', range: 'all', grain: 'auto', title: '', goal: null, goalDir: 'atLeast', kpiPeriod: 'all', compare: false, trend: 'none', f: null };
+  const FLOW_TYPES = ['burnup', 'cfd'];
+  const RANGE_DAYS = { '4w': 28, '12w': 84, '6m': 183, '1y': 365 };
+  const RANGE_WORDS = { '4w': '4 weeks', '12w': '12 weeks', '6m': '6 months', '1y': 'year' };
+  let rangeOverride = null; // the Board's "same dates for every chart"
+  const curRange = () => rangeOverride || cfg.range;
+  const flt = () => cfg.f || {};
+  const canCompare = () => ['column', 'bar', 'line', 'area'].includes(cfg.type) && !!RANGE_DAYS[curRange()] && !cfg.series;
+  const canTrend = () => ['column', 'line', 'area'].includes(cfg.type) && cfg.x && DIMS[cfg.x] && DIMS[cfg.x].time && !cfg.series;
   const GOAL_TYPES = ['column', 'bar', 'line', 'area', 'kpi'];
   const LOWER_IS_BETTER = ['late', 'age', 'toDone'];
   const hasGoal = () => GOAL_TYPES.includes(cfg.type) && cfg.goal != null && cfg.goal !== '' && isFinite(cfg.goal);
@@ -177,17 +190,27 @@
   }
 
   /* ---------- data ---------- */
-  function rows() {
+  function rows(opts) {
     const tk = D.todayKey(), now = Date.now();
     const ctx = { tk, now, map: mapCtx() };
     let list = S().state.tasks.filter((t) => !t.sample);
+    const f = flt();
+    if (f.type) list = list.filter((t) => (S().typeOf(t) || {}).name === f.type);
+    if (f.level) list = list.filter((t) => (S().levelOf(t) || {}).name === f.level);
+    if (f.cluster) list = list.filter((t) => DIMS.cluster.get(t, ctx) === f.cluster);
+    if (f.branch) list = list.filter((t) => DIMS.branch.get(t, ctx) === f.branch);
+    if (f.who) list = list.filter((t) => doer(t) === f.who);
+    if (opts && opts.all) return { list, ctx };
     if (cfg.status === 'open') list = list.filter((t) => !t.done);
     else if (cfg.status === 'done') list = list.filter((t) => t.done);
     else if (cfg.status === 'overdue') list = list.filter((t) => !t.done && t.due && t.due < tk);
-    if (cfg.range !== 'all') {
-      const days = { '4w': 28, '12w': 84, '6m': 183, '1y': 365 }[cfg.range] || 0;
-      const from = now - days * DAY;
-      list = list.filter((t) => (t.doneAt && t.doneAt >= from) || (t.createdAt && t.createdAt >= from) || (t.due && t.due >= D.key(new Date(from)) && t.due <= tk));
+    const days = RANGE_DAYS[curRange()];
+    if (days) {
+      // the previous period is the same length, just before this one
+      const to = opts && opts.prev ? now - days * DAY : now + DAY, from = (opts && opts.prev ? now - 2 * days * DAY : now - days * DAY);
+      const fk = D.key(new Date(from)), tkk = D.key(new Date(to));
+      list = list.filter((t) => (t.doneAt && t.doneAt >= from && t.doneAt < to) || (t.createdAt && t.createdAt >= from && t.createdAt < to) || (t.due && t.due >= fk && t.due < tkk && t.due <= tk));
+      ctx.shift = opts && opts.prev ? days : 0;
     }
     return { list, ctx };
   }
@@ -211,6 +234,7 @@
 
   /** returns { cats:[{key,label,color}], series:[{key,label,color,values:[]}] } or { points } for scatter */
   function build() {
+    if (FLOW_TYPES.includes(cfg.type)) return flowBuild();
     const { list, ctx } = rows();
     if (cfg.type === 'scatter') {
       const X = NUMS[cfg.x], Y = NUMS[cfg.y];
@@ -229,12 +253,19 @@
     const Y = NUMS[cfg.y] || NUMS.count;
     let grain = cfg.grain;
     const raw = list.map((t) => ({ t, x: xd.get(t, ctx), s: sd ? sd.get(t, ctx) : '_', v: Y.get(t, ctx) })).filter((r) => r.x != null && r.s != null && r.v != null);
+    let praw = null;
+    if (cfg.compare && canCompare()) {
+      const pr = rows({ prev: true });
+      praw = pr.list.map((t) => ({ t, x: xd.get(t, pr.ctx), v: Y.get(t, pr.ctx) })).filter((r) => r.x != null && r.v != null);
+      if (xd.time) praw.forEach((r) => (r.x = D.addKey(r.x, pr.ctx.shift))); // line last period up with this one
+    }
     if (xd.time) {
       if (grain === 'auto') {
         const ks = raw.map((r) => r.x).sort();
         grain = ks.length && D.diff(ks[ks.length - 1], ks[0]) > 120 ? 'month' : 'week';
       }
       raw.forEach((r) => (r.x = timeBucket(r.x, grain)));
+      if (praw) praw.forEach((r) => (r.x = timeBucket(r.x, grain)));
     }
     let xKeys = [...new Set(raw.map((r) => r.x))];
     if (xd.time) {
@@ -256,7 +287,59 @@
       key: sk, label: sd ? sk : Y.label, color: sd ? colorFor(sd, sk, i) : 'var(--accent)',
       values: xKeys.map((xk) => aggregate(raw.filter((r) => r.x === xk && r.s === sk).map((r) => r.v), cfg.agg))
     }));
-    return { cats, series, grain, n: list.length, colorByCat: !sd && !xd.time && !!xd.color, raw };
+    const prev = praw ? { values: xKeys.map((xk) => aggregate(praw.filter((r) => r.x === xk).map((r) => r.v), cfg.agg)), total: aggregate(praw.map((r) => r.v), cfg.agg), n: praw.length } : null;
+    const trend = cfg.trend !== 'none' && canTrend() ? trendLine(series[0].values, cfg.trend) : null;
+    return { cats, series, grain, n: list.length, colorByCat: !sd && !xd.time && !!xd.color, raw, prev, trend, total: aggregate(raw.map((r) => r.v), cfg.agg) };
+  }
+  /** rolling 3-period average, or a least-squares straight line */
+  function trendLine(vals, mode) {
+    const idx = vals.map((v, i) => (v == null ? null : i)).filter((i) => i != null);
+    if (idx.length < 2) return null;
+    if (mode === 'avg') return vals.map((v, i) => { const w = [vals[i - 2], vals[i - 1], v].filter((x) => x != null); return v == null || !w.length ? null : w.reduce((a, b) => a + b, 0) / w.length; });
+    const n = idx.length, mx = idx.reduce((a, b) => a + b, 0) / n, my = idx.reduce((a, i) => a + vals[i], 0) / n;
+    const sxx = idx.reduce((a, i) => a + (i - mx) * (i - mx), 0) || 1, sxy = idx.reduce((a, i) => a + (i - mx) * (vals[i] - my), 0);
+    const k = sxy / sxx;
+    return vals.map((_, i) => my + k * (i - mx));
+  }
+
+  /* ---------- burn-up and cumulative flow: what was open at the end of each period ---------- */
+  function flowBuild() {
+    const { list, ctx } = rows({ all: true });
+    const now = ctx.now, days = RANGE_DAYS[curRange()];
+    let start;
+    if (days) start = now - days * DAY;
+    else { const c = list.map((t) => t.createdAt || now).sort((a, b) => a - b); start = Math.max(c.length ? c[0] : now - 84 * DAY, now - 365 * DAY); }
+    const grain = (now - start) / DAY <= 35 ? 'day' : 'week';
+    const step = grain === 'day' ? DAY : 7 * DAY;
+    const ends = [];
+    const t0 = grain === 'day' ? D.add(new Date(start), 1).getTime() : D.add(D.startOfWeek(new Date(start), S().state.prefs.weekStart), 7).getTime();
+    for (let e = t0; e < now + step && ends.length < 60; e += step) ends.push(Math.min(e, now));
+    if (!ends.length || ends[ends.length - 1] < now) ends.push(now);
+    const label = (e) => C.F.short.format(new Date(e - (e === now ? 0 : 1)));
+    const cats = ends.map((e, i) => ({ key: 'f' + i, label: e === now && grain !== 'day' ? 'Now' : label(e) }));
+    const raw = [];
+    const sers = cfg.type === 'burnup'
+      ? [{ key: 'added', label: 'Added (total)', color: 'var(--ink-3)' }, { key: 'done', label: 'Done (total)', color: 'var(--ok)' }, { key: 'open', label: 'Open', color: 'var(--accent)' }]
+      : [{ key: 'done', label: 'Done', color: 'var(--ok)' }, { key: 'open', label: 'Open, on time', color: 'var(--accent)' }, { key: 'over', label: 'Overdue', color: 'var(--danger)' }];
+    const values = sers.map(() => []);
+    ends.forEach((e, i) => {
+      const ek = D.key(new Date(e));
+      const counts = { added: 0, done: 0, open: 0, over: 0 };
+      list.forEach((t) => {
+        if (!t.createdAt || t.createdAt > e) return;
+        counts.added++;
+        const isDone = t.done && t.doneAt && t.doneAt <= e;
+        let k;
+        if (isDone) { counts.done++; k = 'done'; }
+        else if (t.due && t.due < ek) { counts.over++; counts.open++; k = 'over'; }
+        else { counts.open++; k = 'open'; }
+        if (cfg.type === 'burnup') { raw.push({ t, x: 'f' + i, s: 'added' }); if (isDone) raw.push({ t, x: 'f' + i, s: 'done' }); else raw.push({ t, x: 'f' + i, s: 'open' }); }
+        else raw.push({ t, x: 'f' + i, s: k });
+      });
+      sers.forEach((sr, j) => values[j].push(sr.key === 'open' && cfg.type === 'cfd' ? counts.open - counts.over : counts[sr.key]));
+    });
+    const series = sers.map((sr, j) => Object.assign({}, sr, { values: values[j] }));
+    return { cats, series, grain, n: list.length, raw, flow: true, colorByCat: false };
   }
   function orderKeys(d, keys) {
     if (!d.order) return keys.sort((a, b) => String(a).localeCompare(String(b)));
@@ -272,6 +355,7 @@
       if (!cfg.y) return 'Drag a number field onto Values. Tasks counts them.';
       return null;
     }
+    if (FLOW_TYPES.includes(cfg.type)) return null;
     if (cfg.type === 'kpi') {
       if (!cfg.y) return 'Drag a number field onto Values. Tasks counts them.';
       if (cfg.x && !(DIMS[cfg.x] && DIMS[cfg.x].time)) return 'A KPI tile’s trend runs over time. Put a date field (Due date, Created or Completed) on Trend over, or leave it empty.';
@@ -294,6 +378,8 @@
     const y = NUMS[cfg.y];
     const yl = cfg.y === 'count' ? 'Tasks' : cfg.y === 'onTime' ? 'On-time rate' : AGG_WORD[cfg.agg] + ' ' + y.label.toLowerCase();
     const st = { open: 'Open ', overdue: 'Overdue ', done: 'Done ' }[cfg.status] || '';
+    if (cfg.type === 'burnup') return 'Tasks added vs. done over time';
+    if (cfg.type === 'cfd') return 'Done, open and overdue over time';
     if (cfg.type === 'sunburst') return (cfg.y === 'count' ? (st ? st + 'tasks' : 'Tasks') : yl) + ' across the map';
     if (cfg.type === 'kpi') return (cfg.y === 'count' ? (st ? st + 'tasks' : 'All tasks') : yl) + (cfg.kpiPeriod === 'week' ? ' this week' : '');
     const pie = cfg.type === 'pie' || cfg.type === 'donut';
@@ -314,10 +400,10 @@
       // left: fields + zones
       '<aside class="cb-side">' +
       '<div class="st-sec cb-zones">' +
-      zone('x', cfg.type === 'scatter' ? 'X axis (number)' : pie ? 'Slices' : cfg.type === 'sunburst' ? 'X axis · rings follow the map' : cfg.type === 'kpi' ? 'Trend over (a date)' : 'X axis', cfg.type === 'sunburst') +
-      zone('y', cfg.type === 'scatter' ? 'Y axis (number)' : 'Values') +
+      zone('x', cfg.type === 'scatter' ? 'X axis (number)' : pie ? 'Slices' : cfg.type === 'sunburst' ? 'X axis · rings follow the map' : cfg.type === 'kpi' ? 'Trend over (a date)' : FLOW_TYPES.includes(cfg.type) ? 'X axis · time' : 'X axis', cfg.type === 'sunburst' || FLOW_TYPES.includes(cfg.type)) +
+      zone('y', cfg.type === 'scatter' ? 'Y axis (number)' : FLOW_TYPES.includes(cfg.type) ? 'Values · tasks' : 'Values', FLOW_TYPES.includes(cfg.type)) +
       (y && y.aggs.length > 1 && cfg.type !== 'scatter' ? '<div class="cb-agg"><span class="muted">Summarize as</span><div class="seg mini">' + y.aggs.map((a) => '<button type="button" class="seg-btn' + (cfg.agg === a ? ' on' : '') + '" data-agg="' + a + '">' + (a === 'sum' ? 'Total' : 'Average') + '</button>').join('') + '</div></div>' : '') +
-      zone('series', cfg.type === 'scatter' ? 'Color by' : 'Split by', pie || cfg.type === 'sunburst' || cfg.type === 'kpi') +
+      zone('series', cfg.type === 'scatter' ? 'Color by' : 'Split by', pie || cfg.type === 'sunburst' || cfg.type === 'kpi' || FLOW_TYPES.includes(cfg.type)) +
       '</div>' +
       '<div class="st-sec cb-fields"><header><h2>Fields</h2><p class="muted">Categories</p></header><div class="cb-tray">' +
       Object.keys(DIMS).filter((id) => !DIMS[id].map).map((id) => chip(id, 'tray')).join('') + '</div>' +
@@ -330,7 +416,7 @@
       '<section class="st-sec cb-canvas' + (ui.picked ? ' picking' : '') + '">' +
       '<div class="cb-head"><textarea class="cb-title" id="cb-title" rows="' + (matchMedia('(max-width: 640px)').matches && (cfg.title || autoTitle()).length > 24 ? 2 : 1) + '" placeholder="' + esc(autoTitle()) + '" aria-label="Chart title" spellcheck="false">' + esc(cfg.title) + '</textarea></div>' +
       '<div class="cb-filters">' +
-      sel('status', [['all', 'All tasks'], ['open', 'Open only'], ['overdue', 'Overdue only'], ['done', 'Done only']]) +
+      (FLOW_TYPES.includes(cfg.type) ? '' : sel('status', [['all', 'All tasks'], ['open', 'Open only'], ['overdue', 'Overdue only'], ['done', 'Done only']])) +
       sel('range', [['all', 'All time'], ['4w', 'Last 4 weeks'], ['12w', 'Last 12 weeks'], ['6m', 'Last 6 months'], ['1y', 'Last year']]) +
       (cfg.x && DIMS[cfg.x] && DIMS[cfg.x].time && cfg.type !== 'scatter' ? sel('grain', [['auto', 'Auto'], ['week', 'By week'], ['month', 'By month']]) : '') +
       (cfg.series && !pie && !['scatter', 'line', 'sunburst', 'kpi'].includes(cfg.type) ? '<label class="cb-check"><input type="checkbox" data-stack' + (cfg.stack ? ' checked' : '') + '> Stacked</label>' : '') +
@@ -338,8 +424,10 @@
       (GOAL_TYPES.includes(cfg.type) ? '<span class="cb-goal-ctl"><label class="cb-select"><span class="sr">Goal direction</span><select data-cfg="goalDir"><option value="atLeast"' + (cfg.goalDir !== 'atMost' ? ' selected' : '') + '>Goal: at least</option><option value="atMost"' + (cfg.goalDir === 'atMost' ? ' selected' : '') + '>Goal: at most</option></select>' + icon('chevD') + '</label>' +
         '<input type="number" class="cb-goal-in" data-goal inputmode="decimal" step="any" min="0" placeholder="none" aria-label="Goal value" value="' + (cfg.goal == null ? '' : esc(cfg.goal)) + '">' + (NUMS[cfg.y] && NUMS[cfg.y].unit ? '<span class="muted cb-goal-unit">' + (NUMS[cfg.y].unit === 'd' ? 'days' : '%') + '</span>' : '') + '</span>' : '') +
       '</div>' +
+      extrasHtml() +
       '<div class="cb-plot">' + plot(false) + '</div>' +
       '<div class="ins-legend cb-legend">' + legendHtml() + '<span class="ins-cap" aria-live="polite"></span></div>' +
+      summaryHtml() +
       '<div class="cb-actions">' +
       '<button type="button" class="btn primary sm" data-save' + (problem() ? ' disabled' : '') + '>' + icon(editing ? 'check' : 'plus') + '<span>' + (editing ? 'Update chart' : 'Save to board') + '</span></button>' +
       (editing ? '<button type="button" class="btn sm" data-save-new' + (problem() ? ' disabled' : '') + '>Save as new</button>' : '') +
@@ -351,6 +439,104 @@
       '<a href="#board" class="cb-boardlink st-sec">' + icon('board') + '<span><b>Your board</b><span class="muted">' + (board.length ? board.length + ' saved chart' + (board.length === 1 ? '' : 's') + ' · tap a bar or slice there to see its tasks' : 'Charts you save show up on your board.') + '</span></span>' + icon('chevR') + '</a>';
     if (ui.flash) { const z = root.querySelector('[data-zone="' + ui.flashZone + '"]'); if (z) z.classList.add('nope'); }
   }
+
+  /* compare, trend and the extra filters, under the main filter row */
+  const FILTERS = [
+    { key: 'type', label: 'Type', opts: () => S().state.types.map((x) => x.name) },
+    { key: 'level', label: 'Importance', opts: () => S().state.levels.map((x) => x.name) },
+    { key: 'cluster', label: 'Cluster', map: true, opts: () => { const c = mapCtx(); return c ? c.order.cluster : []; } },
+    { key: 'branch', label: 'Branch', map: true, opts: () => { const c = mapCtx(); return c ? c.order.branch : []; } },
+    { key: 'who', label: 'Person', opts: () => { const set = new Set(['Me']); S().state.tasks.forEach((t) => set.add(doer(t))); return [...set]; } }
+  ];
+  function extrasHtml() {
+    const f = flt(), n = Object.keys(f).filter((k) => f[k]).length;
+    const hasMap = C.map && C.map.nodes().length;
+    let h = '<div class="cb-extras">';
+    if (canCompare()) h += '<label class="cb-check"><input type="checkbox" data-compare' + (cfg.compare ? ' checked' : '') + '> Compare with the previous ' + RANGE_WORDS[curRange()] + '</label>';
+    if (canTrend()) h += sel('trend', [['none', 'No trend line'], ['avg', 'Trend: rolling average'], ['linear', 'Trend: straight line']]);
+    h += '<button type="button" class="toggle sm' + (ui.filters || n ? ' on' : '') + '" data-filters aria-expanded="' + !!ui.filters + '">' + icon('settings') + '<span>Filters' + (n ? ' · ' + n : '') + '</span></button>';
+    h += '</div>';
+    if (ui.filters || n) {
+      h += '<div class="cb-fbar">' + FILTERS.filter((x) => !x.map || hasMap).map((x) => {
+        const o = x.opts(), cur = f[x.key] || '';
+        return '<label class="cb-select"><span class="sr">' + x.label + '</span><select data-filter="' + x.key + '"><option value="">Any ' + x.label.toLowerCase() + '</option>' +
+          (cur && !o.includes(cur) ? '<option selected>' + esc(cur) + '</option>' : '') + o.map((v) => '<option' + (v === cur ? ' selected' : '') + '>' + esc(v) + '</option>').join('') + '</select>' + icon('chevD') + '</label>';
+      }).join('') + (n ? '<button type="button" class="btn sm ghost" data-filters-clear>Clear filters</button>' : '') + '</div>';
+    }
+    return h;
+  }
+
+  /* ---------- the one-sentence summary under each chart ---------- */
+  const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+  function summaryText() {
+    if (problem()) return '';
+    const unit = (NUMS[cfg.y] || NUMS.count).unit, isCount = cfg.y === 'count';
+    const amt = (v) => fmt(v, unit) + (isCount ? (Math.round(v) === 1 ? ' task' : ' tasks') : '');
+    if (cfg.type === 'kpi') {
+      const k = kpiData(); if (k.value == null) return '';
+      return autoTitle() + ': ' + amt(k.value) + '.' + (hasGoal() ? (meets(k.value) ? ' That meets your goal.' : ' That misses your goal of ' + (cfg.goalDir === 'atMost' ? 'at most ' : 'at least ') + fmt(+cfg.goal, unit) + '.') : '');
+    }
+    if (cfg.type === 'sunburst') {
+      const sb = sunData(); if (!sb || !sb.center.all.length) return '';
+      const big = sb.center.kids.slice().sort((a, b) => b.all.length - a.all.length)[0];
+      return big ? big.title + ' holds the most: ' + big.all.length + ' of ' + sb.center.all.length + ' tasks (' + pct(big.all.length, sb.center.all.length) + '%)' + (sb.off ? '. ' + sb.off + ' more aren’t on the map.' : '.') : '';
+    }
+    const b = build();
+    if (!b.n) return '';
+    if (cfg.type === 'scatter') {
+      const ps = b.points; if (ps.length < 3) return '';
+      const mx = ps.reduce((a, p) => a + p.x, 0) / ps.length, my = ps.reduce((a, p) => a + p.y, 0) / ps.length;
+      const sxy = ps.reduce((a, p) => a + (p.x - mx) * (p.y - my), 0), sxx = ps.reduce((a, p) => a + (p.x - mx) ** 2, 0), syy = ps.reduce((a, p) => a + (p.y - my) ** 2, 0);
+      const r = sxx && syy ? sxy / Math.sqrt(sxx * syy) : 0;
+      const X = NUMS[cfg.x].label.toLowerCase(), Y = NUMS[cfg.y].label.toLowerCase();
+      return Math.abs(r) < 0.2 ? 'No clear link between ' + X + ' and ' + Y + ' across ' + ps.length + ' tasks.' : 'Tasks with more ' + X + ' tend to have ' + (r > 0 ? 'more' : 'fewer') + ' ' + Y + ' (' + (Math.abs(r) > 0.6 ? 'strong' : 'moderate') + ' pattern, ' + ps.length + ' tasks).';
+    }
+    if (b.flow) {
+      const v = (key) => (b.series.find((x) => x.key === key) || { values: [] }).values;
+      const last = b.cats.length - 1;
+      if (cfg.type === 'burnup') {
+        const open = v('open'), added = v('added')[last] - v('added')[0], done = v('done')[last] - v('done')[0];
+        const d = open[last] - open[0];
+        return 'Over this period you added ' + added + ' and finished ' + done + '. Your open list ' + (d > 0 ? 'grew by ' + d : d < 0 ? 'shrank by ' + -d : 'held steady') + ', to ' + open[last] + '.';
+      }
+      const over = v('over'), o0 = over[0], o1 = over[last];
+      return o1 + ' task' + (o1 === 1 ? ' is' : 's are') + ' overdue now' + (o1 === o0 ? ', the same as at the start.' : ', ' + (o1 > o0 ? 'up' : 'down') + ' from ' + o0 + ' at the start.');
+    }
+    if (!b.cats.length) return '';
+    const parts = [];
+    const xd = DIMS[cfg.x];
+    const tot = b.cats.map((c, i) => b.series.reduce((a, sr) => a + (sr.values[i] || 0), 0));
+    if (xd.time && b.cats.length > 1 && b.series.length === 1) {
+      const vals = b.series[0].values, idx = vals.map((x, i) => (x == null ? -1 : i)).filter((i) => i >= 0);
+      if (idx.length > 1) {
+        const peak = idx.reduce((a, i) => (vals[i] > vals[a] ? i : a), idx[0]);
+        const half = Math.floor(idx.length / 2), avg = (arr) => arr.reduce((a, i) => a + vals[i], 0) / arr.length;
+        const a1 = avg(idx.slice(0, half)), a2 = avg(idx.slice(half));
+        parts.push('Peak: ' + b.cats[peak].label + ' (' + amt(vals[peak]) + ').');
+        if (a1 || a2) parts.push('The recent half averages ' + fmt(a2, unit) + ' vs ' + fmt(a1, unit) + ' before' + (Math.abs(a2 - a1) < 0.05 * Math.max(a1, a2, 1) ? ', about the same.' : a2 > a1 ? ', higher.' : ', lower.'));
+      }
+    } else {
+      const order = tot.map((v, i) => i).sort((a, c) => tot[c] - tot[a]);
+      const top = order[0], all = tot.reduce((a, c) => a + c, 0);
+      if (tot[top] != null) {
+        parts.push(b.cats[top].label + ' leads with ' + amt(tot[top]) + (isCount && all && b.cats.length > 1 ? ' (' + pct(tot[top], all) + '% of ' + all + ')' : '') + '.');
+        if (b.series.length > 1) {
+          const j = b.series.reduce((a, sr, k) => ((sr.values[top] || 0) > (b.series[a].values[top] || 0) ? k : a), 0);
+          parts.push('Most of it is ' + b.series[j].label + '.');
+        } else if (b.cats.length > 2 && tot[order[order.length - 1]] != null) parts.push('Lowest: ' + b.cats[order[order.length - 1]].label + ' (' + fmt(tot[order[order.length - 1]], unit) + ').');
+      }
+    }
+    if (b.prev && b.prev.total != null && b.total != null) {
+      const d = b.total - b.prev.total;
+      parts.push((isCount ? 'In total ' : 'Overall ') + fmt(b.total, unit) + ' vs ' + fmt(b.prev.total, unit) + ' in the previous ' + RANGE_WORDS[curRange()] + (b.prev.total >= 5 ? ' (' + (d >= 0 ? '+' : '') + Math.round((d / b.prev.total) * 100) + '%).' : '.'));
+    }
+    if (hasGoal()) {
+      const vals = b.cats.map((c, i) => (b.series.length === 1 ? b.series[0].values[i] : cfg.stack ? tot[i] : null)).filter((x) => x != null);
+      if (vals.length) parts.push('Goal met in ' + vals.filter(meets).length + ' of ' + vals.length + '.');
+    }
+    return parts.join(' ');
+  }
+  function summaryHtml() { const t = summaryText(); return t ? '<p class="cb-summary">' + icon('sparkle') + '<span>' + esc(t) + '</span></p>' : ''; }
 
   function chip(id, where) {
     const f = field(id);
@@ -381,7 +567,9 @@
     const b = build();
     if (cfg.type === 'scatter') return cfg.series ? b.keys.map((k) => '<span><i class="lg-bar" style="--c:' + b.colors[k] + '"></i>' + esc(k) + '</span>').join('') : '';
     if (cfg.type === 'pie' || cfg.type === 'donut' || b.colorByCat) return b.cats.slice(0, 12).map((c) => '<span><i class="lg-bar" style="--c:' + c.color + '"></i>' + esc(c.label) + '</span>').join('');
-    return (b.series.length > 1 ? b.series.map((s) => '<span><i class="lg-bar" style="--c:' + s.color + '"></i>' + esc(s.label) + '</span>').join('') : '') + goalNote(b);
+    return (b.series.length > 1 ? b.series.map((s) => '<span><i class="lg-bar" style="--c:' + s.color + '"></i>' + esc(s.label) + '</span>').join('') : '') +
+      (b.prev ? '<span><i class="lg-ghost"></i>Previous ' + RANGE_WORDS[curRange()] + '</span>' : '') +
+      (b.trend ? '<span><i class="lg-trend"></i>' + (cfg.trend === 'avg' ? 'Rolling average' : 'Trend') + '</span>' : '') + goalNote(b);
   }
   /* ---------- drawing ---------- */
   const tip = (s) => ' data-tip="' + esc(s) + '"';
@@ -393,13 +581,16 @@
     if (cfg.type === 'kpi') return kpi(size && size.kpi);
     if (cfg.type === 'sunburst') return sunburst(W, H);
     const b = build();
-    if (!b.n) return '<div class="cb-empty"><p>No tasks match these filters.</p></div>';
+    if (!b.n) return '<div class="cb-empty"><p>' + noneMsg() + '</p></div>';
+    if (cfg.type === 'burnup') return xy(b, W, H, mini, { as: 'line', stacked: false });
+    if (cfg.type === 'cfd') return xy(b, W, H, mini, { as: 'area', stacked: true });
     if (cfg.type === 'scatter') return scatter(b, W, H, mini);
     if (!b.cats.length) return '<div class="cb-empty"><p>No values to show with these fields and filters.</p></div>';
     if (cfg.type === 'pie' || cfg.type === 'donut') return pie(b, W, H, mini);
     if (cfg.type === 'bar') return barH(b, W, H, mini);
     return xy(b, W, H, mini);
   }
+  const noneMsg = () => (S().state.tasks.length && S().state.tasks.every((t) => t.sample) ? 'Charts leave out the example tasks. Add your own tasks, or choose “Keep them” on the Tasks page to count the examples.' : 'No tasks match these filters.');
   const svgOpen = (W, H, label) => '<svg viewBox="0 0 ' + W + ' ' + H + '" class="chart" role="img" aria-label="' + esc(label) + '">';
   function niceMax(v) {
     if (v <= 0) return 1;
@@ -413,8 +604,11 @@
       else b.series.forEach((s) => { const v = s.values[i]; if (v != null) { hi = Math.max(hi, v); lo = Math.min(lo, v); } });
     });
     if (cfg.y === 'onTime') hi = 100;
+    if (b.prev) b.prev.values.forEach((v) => { if (v != null) hi = Math.max(hi, v); });
+    if (b.trend) b.trend.forEach((v) => { if (v != null) { hi = Math.max(hi, v); lo = Math.min(lo, v); } });
     if (hasGoal()) hi = Math.max(hi, +cfg.goal * 1.08);
-    return { lo: lo < 0 ? -niceMax(-lo) : 0, hi: cfg.y === 'onTime' ? Math.max(100, niceMax(hi)) : niceMax(hi) };
+    const counts = cfg.y === 'count' || FLOW_TYPES.includes(cfg.type);
+    return { lo: lo < 0 ? -niceMax(-lo) : 0, hi: cfg.y === 'onTime' ? Math.max(100, niceMax(hi)) : counts && hi <= 4 ? 4 : niceMax(hi) };
   }
   function gridY(L, R, W, y, lo, hi, unit, steps) {
     let g = '';
@@ -424,14 +618,15 @@
     }
     return g;
   }
-  const valTip = (cat, s, v, multi) => cat + (multi ? ' · ' + s : '') + ': ' + fmt(v, NUMS[cfg.y].unit) + (cfg.y === 'count' ? (v === 1 ? ' task' : ' tasks') : '');
+  const valTip = (cat, s, v, multi) => { const y = FLOW_TYPES.includes(cfg.type) ? 'count' : cfg.y; return cat + (multi ? ' · ' + s : '') + ': ' + fmt(v, NUMS[y].unit) + (y === 'count' ? (v === 1 ? ' task' : ' tasks') : ''); };
 
   // a full-height hit area per category, so thin bars are still easy to tap (opens every task in that category)
   const catTotal = (b, i) => { const n = b.raw.filter((r) => r.x === b.cats[i].key).length; return b.cats[i].label + ': ' + n + (n === 1 ? ' task' : ' tasks'); };
   /* columns, lines, areas */
-  function xy(b, W, H, mini) {
-    const unit = NUMS[cfg.y].unit, multi = b.series.length > 1;
-    const stacked = multi && cfg.stack && cfg.type !== 'line';
+  function xy(b, W, H, mini, o) {
+    const as = (o && o.as) || cfg.type;
+    const unit = b.flow ? '' : NUMS[cfg.y].unit, multi = b.series.length > 1;
+    const stacked = o ? !!o.stacked : multi && cfg.stack && cfg.type !== 'line';
     const L = 40, R = 8, T = 12, B = 30;
     const { lo, hi } = yRange(b, stacked);
     const y = (v) => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
@@ -447,11 +642,12 @@
     });
     const goalOn = hasGoal(), catTot = (i) => b.series.reduce((a, s2) => a + (s2.values[i] || 0), 0);
     const missCls = (v, i) => (!goalOn ? '' : (stacked ? meets(catTot(i)) : meets(v)) ? ' hit-goal' : ' miss');
-    if (cfg.type === 'column') {
+    if (as === 'column') {
       const groupW = Math.min(cw * 0.78, multi && !stacked ? 18 * b.series.length + 10 : 48);
       b.cats.forEach((c, i) => {
         const x0 = L + cw * i + (cw - groupW) / 2;
         s += '<rect class="hit" x="' + (L + cw * i).toFixed(1) + '" y="' + T + '" width="' + cw.toFixed(1) + '" height="' + (H - T - B) + '" data-seg="' + i + ':*"' + tip(catTotal(b, i)) + '/>';
+        if (b.prev && b.prev.values[i] != null && b.prev.values[i] > 0) { const pv = b.prev.values[i], gw = Math.min(cw * 0.9, groupW + 12); s += '<rect class="cb-ghost" x="' + (L + cw * i + (cw - gw) / 2).toFixed(1) + '" y="' + y(pv).toFixed(1) + '" width="' + gw.toFixed(1) + '" height="' + Math.max(1, y(0) - y(pv)).toFixed(1) + '" rx="4"/>'; }
         let pos = 0, neg = 0;
         b.series.forEach((ser, j) => {
           const v = ser.values[i]; if (v == null || v === 0) return;
@@ -473,13 +669,14 @@
         });
         return { ser, pts };
       });
-      (cfg.type === 'area' ? layers.slice().reverse() : layers).forEach(({ ser, pts }) => {
+      if (b.prev) { const gp = b.prev.values.map((v, i) => (v == null ? null : (L + cw * i + cw / 2).toFixed(1) + ',' + y(v).toFixed(1))).filter(Boolean); if (gp.length > 1) s += '<polyline class="cb-ghost-line" points="' + gp.join(' ') + '"/>'; }
+      (as === 'area' ? layers.slice().reverse() : layers).forEach(({ ser, pts }) => {
         const segs = []; let cur = [];
         pts.forEach((p) => { if (p) cur.push(p); else if (cur.length) { segs.push(cur); cur = []; } });
         if (cur.length) segs.push(cur);
         segs.forEach((sg) => {
           const line = sg.map((p) => p.x.toFixed(1) + ',' + p.y.toFixed(1)).join(' ');
-          if (cfg.type === 'area') {
+          if (as === 'area') {
             const back = sg.slice().reverse().map((p) => p.x.toFixed(1) + ',' + (stacked ? p.y0 : y(Math.max(lo, 0))).toFixed(1)).join(' ');
             s += '<polygon points="' + line + ' ' + back + '" class="cb-area" style="--c:' + ser.color + '"/>';
           }
@@ -491,6 +688,7 @@
         s += '<circle cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1) + '" r="' + (n > 30 ? 2.5 : 4) + '" class="cb-dot' + missCls(ser.values[p.i], p.i) + '" style="--c:' + ser.color + '" tabindex="0" data-seg="' + p.i + ':' + j + '"' + tip(valTip(b.cats[p.i].label, ser.label, ser.values[p.i], multi)) + '/>';
       }));
     }
+    if (b.trend) { const tp = b.trend.map((v, i) => (v == null ? null : (L + cw * i + cw / 2).toFixed(1) + ',' + y(v).toFixed(1))).filter(Boolean); if (tp.length > 1) s += '<polyline class="cb-trendline" points="' + tp.join(' ') + '"/>'; }
     if (goalOn) { const gy = y(+cfg.goal); s += '<line class="cb-goal" x1="' + L + '" x2="' + (W - R) + '" y1="' + gy.toFixed(1) + '" y2="' + gy.toFixed(1) + '"/><text class="cb-goal-lab" x="' + (W - R - 2) + '" y="' + (gy - 5).toFixed(1) + '" text-anchor="end">Goal ' + fmt(+cfg.goal, unit) + '</text>'; }
     return s + '</svg>';
   }
@@ -512,6 +710,7 @@
       s += '<rect class="hit" x="0" y="' + y0.toFixed(1) + '" width="' + W + '" height="' + rh.toFixed(1) + '" data-seg="' + i + ':*"' + tip(catTotal(b, i)) + '/>';
       const lab = c.label.length > 16 ? c.label.slice(0, 15) + '…' : c.label;
       s += '<text x="' + (L - 8) + '" y="' + (y0 + rh / 2 + 4) + '" class="ax lab" text-anchor="end">' + esc(lab) + '</text>';
+      if (b.prev && b.prev.values[i] != null && b.prev.values[i] > 0) s += '<rect class="cb-ghost" y="' + (yy - 3).toFixed(1) + '" x="' + x(0).toFixed(1) + '" height="' + (bh + 6).toFixed(1) + '" width="' + Math.max(1, x(b.prev.values[i]) - x(0)).toFixed(1) + '" rx="4"/>';
       let pos = 0, neg = 0, total = 0;
       b.series.forEach((ser, j) => {
         const v = ser.values[i]; if (v == null || v === 0) return;
@@ -609,7 +808,7 @@
   }
   function sunburst(W, H) {
     const sb = sunData();
-    if (!sb || !sb.center.all.length) return '<div class="cb-empty"><p>' + (sb && sb.off ? 'None of these tasks are linked to map nodes yet. Link a task to a node in the task editor, or type @node in quick add.' : 'No tasks match these filters.') + '</p></div>';
+    if (!sb || !sb.center.all.length) return '<div class="cb-empty"><p>' + (!sb || (!sb.off && S().state.tasks.every((t) => t.sample)) ? noneMsg() : sb && sb.off ? 'None of these tasks are linked to map nodes yet. Link a task to a node in the task editor, or type @node in quick add.' : 'No tasks match these filters.') + '</p></div>';
     const unit = NUMS[cfg.y].unit;
     const R = Math.min(W, H) / 2 - 8, cx = W / 2, cy = H / 2, r0 = R * 0.26, ring = (R - r0) / sb.rings;
     const pt = (a, r) => (cx + r * Math.cos(a)).toFixed(2) + ' ' + (cy + r * Math.sin(a)).toFixed(2);
@@ -721,6 +920,8 @@
     if (z === 'x' && !isNum(fid) && cfg.type === 'scatter') patch.type = 'column';
     if (z === 'y' && NUMS[fid]) { patch.agg = NUMS[fid].aggs[0]; if (cfg.goal == null) patch.goalDir = LOWER_IS_BETTER.includes(fid) ? 'atMost' : 'atLeast'; }
     if (z === 'x' && cfg.type === 'kpi' && !(DIMS[fid] && DIMS[fid].time)) return nope(z, 'A KPI trend needs a date field, like Completed or Created.');
+    if (FLOW_TYPES.includes(cfg.type) && z !== 'y') return nope(z, 'This chart always runs over time and splits tasks by status, so it doesn’t use this.');
+    if (FLOW_TYPES.includes(cfg.type) && z === 'y') return nope(z, 'This chart counts tasks.');
     if (z === 'x' && cfg.type === 'sunburst') return nope(z, 'A sunburst follows your map, so it doesn’t use the X axis.');
     ui.picked = null;
     setCfg(patch);
@@ -799,10 +1000,13 @@
       if (type === 'scatter' && (!isNum(cfg.x) || cfg.x === 'count')) { patch.x = 'age'; patch.y = cfg.y && cfg.y !== 'count' ? cfg.y : 'late'; patch.series = cfg.series || (cfg.x && !isNum(cfg.x) ? cfg.x : null); }
       if (type !== 'scatter' && cfg.type === 'scatter') { patch.x = cfg.series || 'type'; patch.series = null; if (type === 'kpi' || type === 'sunburst') patch.x = null; if (NUMS[cfg.y] && cfg.y !== 'count' && type !== 'scatter') patch.y = cfg.y; }
       if (type === 'kpi' && cfg.x && !(DIMS[cfg.x] && DIMS[cfg.x].time)) patch.x = null;
-      if ((cfg.type === 'kpi' || cfg.type === 'sunburst') && type !== 'kpi' && type !== 'sunburst' && type !== 'scatter' && !cfg.x) patch.x = 'type';
+      if (FLOW_TYPES.includes(type)) patch.y = 'count';
+      if ((cfg.type === 'kpi' || cfg.type === 'sunburst' || FLOW_TYPES.includes(cfg.type)) && type !== 'kpi' && type !== 'sunburst' && !FLOW_TYPES.includes(type) && type !== 'scatter' && !cfg.x) patch.x = 'type';
       return C.withTransition(() => setCfg(patch));
     }
     const ag = t.closest('[data-agg]'); if (ag) return setCfg({ agg: ag.dataset.agg });
+    if (t.closest('[data-filters-clear]')) { ui.filters = false; return setCfg({ f: null }); }
+    if (t.closest('[data-filters]')) { ui.filters = !ui.filters; return render(); }
     if (t.closest('[data-heat]')) {
       const metric = { late: 'late', age: 'age', onTime: 'onTime' }[cfg.y] || (cfg.status === 'done' ? 'recent' : cfg.status === 'open' && cfg.y === 'count' ? 'open' : 'open');
       C.map.ui.heat = { metric, rollup: true }; C.map.saveUi();
@@ -827,7 +1031,9 @@
   }
   /* ================= Board page ================= */
   let elB = null;
-  const withCfg = (item, fn) => { const saved = cfg; cfg = Object.assign({}, BLANK, item); try { return fn(); } finally { cfg = saved; } };
+  const withCfg = (item, fn) => { const saved = cfg, ro = rangeOverride; cfg = Object.assign({}, BLANK, item); rangeOverride = boardRange(); try { return fn(); } finally { cfg = saved; rangeOverride = ro; } };
+  const BOARD_RANGE = 'cadence.board.range';
+  const boardRange = () => { const v = load(BOARD_RANGE, ''); return v && v !== 'own' ? v : null; };
 
   const boardView = C.views.board = {
     title: 'Board',
@@ -835,9 +1041,12 @@
       elB = root;
       syncBoard();
       root.innerHTML = '<section class="page bd-page"><header class="page-head"><p class="eyebrow"><a href="#insights" class="cb-back">' + icon('chevL') + 'Insights</a></p>' +
-        '<div class="bd-title"><h1 class="display">Board</h1><a href="#charts" class="btn primary sm">' + icon('plus') + '<span>New chart</span></a></div>' +
+        '<div class="bd-title"><h1 class="display">Board</h1><div class="bd-acts"><label class="cb-select"><span class="sr">Dates for every chart</span><select id="bd-range">' +
+        [['own', 'Dates: each chart’s own'], ['4w', 'Every chart: last 4 weeks'], ['12w', 'Every chart: last 12 weeks'], ['6m', 'Every chart: last 6 months'], ['1y', 'Every chart: last year'], ['all', 'Every chart: all time']].map(([v, l]) => '<option value="' + v + '"' + ((boardRange() || 'own') === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>' + icon('chevD') + '</label>' +
+        '<a href="#charts" class="btn primary sm">' + icon('plus') + '<span>New chart</span></a></div></div>' +
         '<p class="muted cb-lede">Tap any bar, slice, point or dot to see the tasks behind it.</p></header><div id="bd-root"></div></section>';
       root.addEventListener('click', onBoardClick);
+      root.addEventListener('change', (e) => { if (e.target.id === 'bd-range') { keep(BOARD_RANGE, e.target.value); renderBoard(); } });
       root.addEventListener('pointerover', (e) => { if (e.pointerType === 'mouse') boardTip(e.target); });
       root.addEventListener('focusin', (e) => boardTip(e.target));
       root.addEventListener('keydown', (e) => { const n = e.target.closest('[data-seg]'); if (n && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); n.dispatchEvent(new MouseEvent('click', { bubbles: true })); } });
@@ -870,12 +1079,14 @@
       '<p class="bd-filters muted">' + esc(filterText()) + '</p>' +
       '<div class="cb-plot bd-plot">' + plot(false, size) + '</div>' +
       '<div class="ins-legend cb-legend">' + legendHtml() + '<span class="ins-cap" aria-live="polite"></span></div>' +
+      summaryHtml() +
       '</article>')).join('') + '</div>' : '');
   }
   function filterText() {
     const st = { all: 'All tasks', open: 'Open tasks', overdue: 'Overdue tasks', done: 'Done tasks' }[cfg.status] || 'All tasks';
-    const rg = { all: 'all time', '4w': 'last 4 weeks', '12w': 'last 12 weeks', '6m': 'last 6 months', '1y': 'last year' }[cfg.range] || 'all time';
-    return st + ' · ' + rg;
+    const rg = { all: 'all time', '4w': 'last 4 weeks', '12w': 'last 12 weeks', '6m': 'last 6 months', '1y': 'last year' }[curRange()] || 'all time';
+    const f = flt(), extra = FILTERS.filter((x) => f[x.key]).map((x) => x.label + ': ' + f[x.key]);
+    return (FLOW_TYPES.includes(cfg.type) ? 'All tasks' : st) + ' · ' + rg + (extra.length ? ' · ' + extra.join(', ') : '');
   }
   function boardTip(t) {
     const node = t && t.closest && t.closest('[data-tip]');
@@ -1006,6 +1217,8 @@
   function onChange(e) {
     const t = e.target;
     if (t.dataset.cfg) return setCfg({ [t.dataset.cfg]: t.value });
+    if (t.hasAttribute('data-compare')) return setCfg({ compare: t.checked });
+    if (t.dataset.filter) { const f = Object.assign({}, flt(), { [t.dataset.filter]: t.value || null }); Object.keys(f).forEach((k) => { if (!f[k]) delete f[k]; }); return setCfg({ f: Object.keys(f).length ? f : null }); }
     if (t.hasAttribute('data-goal')) { const v = t.value.trim(); return setCfg({ goal: v === '' || !isFinite(+v) ? null : +v }); }
     if (t.hasAttribute('data-stack')) return setCfg({ stack: t.checked });
     if (t.id === 'cb-title') { cfg.title = t.value.trim(); keep(LS_DRAFT, cfg); }

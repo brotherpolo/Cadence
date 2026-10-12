@@ -1075,3 +1075,20 @@ button.mix-key:hover { color: var(--ink); }
 .bd-kpi .cb-card-head h2 { font-size: 1rem; }
 .bd-kpi .kpi:hover .kpi-num { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 6px; text-decoration-color: var(--line-strong); }
 .chart .cb-sun-num, .chart .cb-sun-lab, .chart .cb-sun-num + .ax { pointer-events: none; }
+
+/* ---------- Chart builder: flows, comparison, trends, summaries, filters (v16) ---------- */
+.cb-extras { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: -4px; }
+.toggle.sm { height: 32px; padding: 0 10px; border-radius: 10px; }
+.cb-fbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px; border-radius: var(--r-md); background: var(--surface-2); }
+.cb-fbar .cb-select select { background: var(--surface); }
+.chart .cb-ghost { fill: var(--ink-3); fill-opacity: .16; pointer-events: none; }
+.chart .cb-ghost-line { fill: none; stroke: var(--ink-3); stroke-width: 2; stroke-dasharray: 4 4; stroke-opacity: .7; pointer-events: none; }
+.chart .cb-trendline { fill: none; stroke: var(--ink); stroke-width: 2; stroke-dasharray: 2 5; stroke-linecap: round; stroke-opacity: .75; pointer-events: none; }
+.lg-ghost { width: 12px; height: 10px; border-radius: 3px; background: color-mix(in oklab, var(--ink-3) 30%, transparent); }
+.lg-trend { width: 18px; height: 0; border-top: 2px dotted var(--ink); }
+.cb-summary { display: flex; gap: 8px; align-items: flex-start; margin: 2px 0 0; padding: 10px 12px; border-radius: var(--r-md); background: var(--accent-soft); color: var(--ink); font-size: var(--fs-sm); line-height: 1.45; }
+.cb-summary .ic { width: 16px; height: 16px; color: var(--accent); flex: none; margin-top: 2px; }
+.bd-card .cb-summary { font-size: var(--fs-xs); padding: 8px 10px; }
+.bd-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: .6em; }
+.bd-acts .cb-select select { background: var(--surface); }
+.bd-title .bd-acts .btn { margin-bottom: 0; }

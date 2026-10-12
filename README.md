@@ -8,6 +8,9 @@ A build-free task app: plain HTML, CSS and JavaScript files. No bundler, no npm 
 - **Insights**: completed vs. added per week, on-time rate, streak, a daily activity heatmap, and breakdowns by type, importance, overdue age and shared tasks
 - **Chart builder**: drag fields (type, importance, status, dates, assignee…) onto X axis, Values and Split by to make column, bar, line, area, pie, donut and scatter charts; save favorites to a board
 - **Chart builder extras**: map fields (cluster, branch, node, depth), a sunburst that follows the map's tree, KPI tiles (one number with an 8-week trend and change vs last week), and goal lines that fade the bars that miss
+- **Over time**: Burn-up (added vs. done, and whether your open list is growing) and Flow (done / open / overdue stacked over time)
+- **Reading charts**: compare with the previous period (faint bars or a dashed line), rolling-average or straight-line trends, and a one-sentence summary under every chart
+- **Filters**: narrow any chart by type, importance, map cluster, map branch or person; on the Board, one date range can apply to every chart
 - **Canvas heat overlay**: color every node by open tasks, overdue tasks, days late, age, % on time or recent completions, optionally rolled up through each branch
 - **Board**: your saved charts on their own page, synced to your account (private to you); tap any bar, slice or point to open a list of the tasks behind it, complete them, or open one to edit
 - **Map: Canvas, Outline, Table**: one mind map shown three ways. The canvas has nodes in eight shapes, colors and fills, connections and dotted flows, fold/focus/tidy for branches, box select, a minimap, a node inspector, undo/redo, and PNG export. The outline is a keyboard-driven indented list with PDF export. The table lets you sort, filter, edit cells inline and change many nodes at once
@@ -89,6 +92,7 @@ In the task editor, **Assigned to** shows "Me", the people you've worked with re
 - The assignee sees the owner's type and importance names and colors, even if their own settings differ.
 - Completing a repeating task as the assignee creates the next occurrence for the same owner and assignee.
 - The app shows a notice when someone assigns you a task, and when an assignee completes or hands back one of yours. Use the **Assigned to me** / **Assigned to others** filters on the Tasks page to see just those.
+- **Version 16** adds burn-up and flow charts, period comparison, trend lines, chart summaries, chart filters and a Board-wide date range. No rules change.
 - **Version 15** adds the sunburst, KPI tiles, goals and the canvas heat overlay. No rules change.
 - **Version 14 syncs the Board.** Saved charts used to live in one browser. Now they're saved to your account, private to you, and follow you to every device. The first time each browser opens version 14, its saved charts are added to your account's board (duplicates are skipped). Deploy the new `firestore.rules` first, or the board can't be saved.
 - **Version 13 adds the map. Deploy the new `firestore.rules` before uploading the new files**: the old rules reject the map document and any task with a `nodeId`.
@@ -136,4 +140,4 @@ Scripts load in the order listed in `index.html`; keep that order if you add fil
 
 **Don't overwrite your `firebase-config.js`.** Update zips from here leave it out, so your filled-in copy on GitHub stays as it is.
 
-`index.html` loads every file with a version tag (`app.js?v=15`). When you change any file, bump the number in `index.html` (and `C.VERSION` in `utils.js`) so browsers fetch the new copies instead of cached ones. Settings → Your data shows the version each device is running.
+`index.html` loads every file with a version tag (`app.js?v=16`). When you change any file, bump the number in `index.html` (and `C.VERSION` in `utils.js`) so browsers fetch the new copies instead of cached ones. Settings → Your data shows the version each device is running.
