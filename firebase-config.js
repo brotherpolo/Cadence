@@ -20,3 +20,4 @@ window.CADENCE_AUTH_PROVIDERS = { google: true, emailPassword: true };
 /* Set to true if sync stays on "Connecting…" or times out on some networks
    (corporate proxies, VPNs, some antivirus or privacy tools). */
 window.CADENCE_FORCE_LONG_POLLING = false;
+window.CADENCE_VAPID_KEY = 'BC-4Xf0AIwacpvBeuWTto7B4UA2ftxwPrPKfwRTEEQ7LAq_ED9XZ4qoWgWBn3uLIG0kfn1xc_oAlvXxO4wkUzdw';
