@@ -55,6 +55,8 @@
           types.map((t) => '<button type="button" role="radio" class="chip' + (p.defaultType === t.id ? ' on' : '') + '" data-defpref="defaultType" data-val="' + t.id + '" aria-checked="' + (p.defaultType === t.id) + '" style="--c:' + t.color + '">' + icon(t.glyph) + esc(t.name) + '</button>').join('') + '</div></div>' +
         '</div>') +
 
+      (C.push ? section('Notifications', 'Reminders and updates as push notifications, on any device you turn them on for.', notifyCard()) : '') +
+
       section('Your data', '',
         syncCard(st) +
         '<div class="btn-row">' +
@@ -136,6 +138,40 @@
       (err ? '<div class="sync-err" role="alert"><b>' + esc(err.title) + '</b><p>' + esc(err.hint) + '</p>' +
         '<p class="mono sync-raw">' + esc(err.code) + (err.doc ? ' · ' + esc(err.doc) : '') + (err.raw && err.raw !== err.hint ? ' · ' + esc(err.raw) : '') + '</p></div>' : '') +
       '<dl class="sync-facts">' + rows.map(([k, v]) => '<div><dt>' + k + '</dt><dd>' + v + '</dd></div>').join('') + '</dl>' +
+      '</div>';
+  }
+
+  /* ---------- push notifications (push.js does the work) ---------- */
+  function notifyCard() {
+    const P = C.push, st = P.status(), pr = P.prefs;
+    const msg = {
+      'no-sync': ['Needs sign-in', 'Notifications come from your Firebase account, so turn on sign-in and sync first (README → Turn on sign-in and sync).'],
+      'signed-out': ['Needs sign-in', 'Sign in to turn on notifications.'],
+      'ios-install': ['Add Cadence to your Home Screen first', 'On iPhone and iPad, web notifications only work in an installed app (iOS 16.4 or later). Tap the Share button, choose “Add to Home Screen”, open Cadence from the new icon, and come back here.'],
+      unsupported: ['Not available in this browser', 'This browser can’t receive web push notifications. Chrome, Edge, Firefox and Safari 16 or later can.'],
+      'no-vapid': ['One setup step left', 'Add your Web Push key to firebase-config.js as window.CADENCE_VAPID_KEY. README → Push notifications shows where to find it.'],
+      blocked: ['Blocked for this site', 'Notifications were turned down in this browser. Allow them in the site settings (the icon left of the address bar), then reload.'],
+      off: ['Off on this device', 'Turn them on here, and on every phone or computer you want them on.'],
+      on: ['On for this device', P.device ? P.device.label : '']
+    }[st];
+    const toggle = (key, label, sub) => '<label class="nt-opt"><input type="checkbox" data-np="' + key + '"' + (pr && pr[key] ? ' checked' : '') + (pr ? '' : ' disabled') + '><span><b>' + label + '</b><span class="muted">' + sub + '</span></span></label>';
+    const leads = [[0, 'at the due time'], [5, '5 minutes before'], [10, '10 minutes before'], [15, '15 minutes before'], [30, '30 minutes before'], [60, '1 hour before']];
+    const signedIn = st !== 'no-sync' && st !== 'signed-out';
+    return '<div class="nt-card s-' + st + '">' +
+      '<div class="nt-top"><span class="nt-ic">' + icon(st === 'on' ? 'check' : st === 'blocked' || st === 'unsupported' ? 'x' : 'bolt') + '</span><div><b>' + esc(msg[0]) + '</b><p class="muted">' + esc(msg[1]) + '</p></div></div>' +
+      (P.error ? '<p class="nt-err" role="alert">' + esc(P.error) + '</p>' : '') +
+      '<div class="btn-row">' +
+      (st === 'off' ? '<button type="button" class="btn primary sm" data-act="pushOn"' + (P.busy ? ' disabled' : '') + '>' + icon('bolt') + '<span>' + (P.busy ? 'Turning on…' : 'Turn on for this device') + '</span></button>' : '') +
+      (st === 'on' ? '<button type="button" class="btn sm" data-act="pushTest">' + icon('sparkle') + '<span>Send a test</span></button><button type="button" class="btn sm ghost" data-act="pushOff"' + (P.busy ? ' disabled' : '') + '>Turn off on this device</button>' : '') +
+      '</div>' +
+      (signedIn ? '<div class="nt-opts">' +
+        toggle('due', 'Due-time reminders', 'For a task with a time: ' + '<select data-np-lead' + (pr ? '' : ' disabled') + '>' + leads.map(([v, l]) => '<option value="' + v + '"' + (pr && +pr.lead === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>. Tasks due that day with no time are listed in the morning summary.') +
+        toggle('digest', 'Overdue in the morning summary', 'Adds anything overdue to the morning summary.') +
+        '<label class="nt-time"><span>Morning summary at</span><span class="input-wrap sm">' + icon('clock') + '<input type="time" data-np-morning value="' + esc((pr && pr.morning) || '08:00') + '"' + (pr ? '' : ' disabled') + '></span><span class="muted">' + esc((pr && pr.tz) || Intl.DateTimeFormat().resolvedOptions().timeZone || '') + '</span></label>' +
+        toggle('assigned', 'Assigned to me', 'When someone gives you a task.') +
+        toggle('finished', 'My shared task is done', 'When someone finishes a task you gave them.') +
+        '</div>' +
+        '<p class="fine">These choices apply to every device you turn notifications on for. Reminders can arrive up to 5 minutes after their time. Task names appear in notifications, including on a locked screen.</p>' : '') +
       '</div>';
   }
 
@@ -234,6 +270,9 @@
     const act = d.act;
     if (act === 'signout') return C.firebaseSync.signOut();
     if (act === 'retry') { const ok = await S().retrySync(); ui.force = true; render(); return C.toast(ok ? 'Reconnected. Sending your changes now.' : 'Still can’t connect. See the details under Your data.'); }
+    if (act === 'pushOn') return C.push.enable();
+    if (act === 'pushOff') return C.push.disable();
+    if (act === 'pushTest') return C.push.test();
     if (act === 'export') return exportData();
     if (act === 'xlsxExport') return exportXlsx();
     if (act === 'copy') return copyData();
@@ -252,6 +291,9 @@
 
   function onChange(e) {
     const t = e.target;
+    if (t.dataset.np) return C.push.save({ [t.dataset.np]: t.checked });
+    if (t.hasAttribute('data-np-lead')) return C.push.save({ lead: +t.value });
+    if (t.hasAttribute('data-np-morning')) { if (/^\d{2}:\d{2}$/.test(t.value)) C.push.save({ morning: t.value }); return; }
     if (t.dataset.rename) {
       const [kind, id] = split(t.dataset.rename);
       const v = t.value.trim();

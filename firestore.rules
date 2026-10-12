@@ -1,6 +1,6 @@
 rules_version = '2';
 
-// Cadence — Cloud Firestore security rules (app version 19)
+// Cadence — Cloud Firestore security rules (app version 21)
 //
 // Data layout written by firebase-sync.js:
 //   tasks/{taskId}               every task. members = [ownerId] or [ownerId, assigneeId]
@@ -8,6 +8,8 @@ rules_version = '2';
 //   users/{uid}/items/map        the mind map: nodes + edges (private)
 //   users/{uid}/items/board      charts saved to the Board page, with their sections and sizes (private)
 //   people/{email}               { uid, name }, so tasks can be assigned by email
+//   notify/{uid}                 push notification choices, time zone (private)
+//   notify/{uid}/devices/{id}    one push token per browser or phone (private)
 //
 // Privacy policy these rules enforce:
 //   - Settings, the map and the board are private: only their owner can read or
@@ -24,6 +26,9 @@ rules_version = '2';
 //     can't change the title, type, importance, repeat or the linked map node.
 //   - The people directory can be looked up one exact email at a time but
 //     never listed, and only a verified email can claim its own entry.
+//   - Notification settings and push tokens are private to their owner. Only
+//     the Cloud Functions (which use admin access) read them to send pushes.
+//   - "Finished by" on a task can only ever be set to the person writing it.
 //   - Everything else is denied. Writes are shape- and size-checked.
 
 service cloud.firestore {
@@ -81,7 +86,7 @@ service cloud.firestore {
                'repeat', 'sample', 'spawnedNext', 'spawnedFrom',
                'ownerId', 'ownerName', 'ownerEmail',
                'assigneeId', 'assigneeName', 'assigneeEmail', 'members',
-               'typeSnap', 'levelSnap', 'nodeId', 'moved', 'pushed'
+               'typeSnap', 'levelSnap', 'nodeId', 'moved', 'pushed', 'doneBy'
              ])
           && d.keys().hasAll(['id', 'title', 'done', 'ownerId', 'members'])
           && d.id == taskId
@@ -110,6 +115,9 @@ service cloud.firestore {
           // reschedule counts: how many times the due date moved, and days moved later
           && (!('moved' in d) || (d.moved is int && d.moved >= 0 && d.moved <= 100000))
           && (!('pushed' in d) || (d.pushed is int && d.pushed >= 0 && d.pushed <= 10000000))
+          // who completed it: yourself, or left as it was
+          && (d.get('doneBy', null) == null || d.doneBy == request.auth.uid
+              || (resource != null && resource.data.get('doneBy', null) == d.doneBy))
           // membership always mirrors owner + assignee
           && d.ownerId is string
           && d.members is list && d.members.size() >= 1 && d.members[0] == d.ownerId
@@ -190,7 +198,7 @@ service cloud.firestore {
           // assignee: do the work and move the date
           || (isAssignee()
              && changed().hasOnly(['done', 'doneAt', 'due', 'time', 'subtasks',
-                                   'notes', 'updatedAt', 'spawnedNext', 'moved', 'pushed']))
+                                   'notes', 'updatedAt', 'spawnedNext', 'moved', 'pushed', 'doneBy']))
           // assignee: hand it back to the owner
           || (isAssignee()
              && request.resource.data.get('assigneeId', null) == null
@@ -220,6 +228,34 @@ service cloud.firestore {
         && request.resource.data.uid == request.auth.uid
         && optString(request.resource.data, 'name', 200);
       allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    // Push notifications: what to be told about, and each device's push token.
+    function validNotify(d) {
+      return d.keys().hasOnly(['kind', 'due', 'assigned', 'finished', 'digest', 'morning', 'lead',
+                               'tz', 'origin', 'updatedAt', 'testAt'])
+          && d.kind == 'notify'
+          && (!('due' in d) || d.due is bool)
+          && (!('assigned' in d) || d.assigned is bool)
+          && (!('finished' in d) || d.finished is bool)
+          && (!('digest' in d) || d.digest is bool)
+          && (!('morning' in d) || isTimeKey(d.morning))
+          && (!('lead' in d) || (d.lead is int && d.lead >= 0 && d.lead <= 1440))
+          && optString(d, 'tz', 64)
+          && (!('origin' in d) || (d.origin is string && d.origin.size() <= 300 && d.origin.matches('^https?://.*')))
+          && (!('updatedAt' in d) || d.updatedAt is number)
+          && (!('testAt' in d) || d.testAt is number);
+    }
+    match /notify/{uid} {
+      allow read, delete: if isOwner(uid);
+      allow create, update: if isOwner(uid) && validNotify(request.resource.data);
+      match /devices/{deviceId} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isOwner(uid)
+          && request.resource.data.keys().hasOnly(['token', 'label', 'createdAt', 'updatedAt'])
+          && request.resource.data.token is string && request.resource.data.token.size() <= 4096
+          && optString(request.resource.data, 'label', 120);
+      }
     }
 
     // Private settings, map and board: only the owner, never anyone else.

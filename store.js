@@ -486,12 +486,13 @@
       const t = S.get(id); if (!t) return {};
       const done = !t.done;
       let spawned = null;
-      S.updateTask(id, { done, doneAt: done ? Date.now() : null });
+      // doneBy lets the owner be told when the person they assigned finishes it
+      S.updateTask(id, { done, doneAt: done ? Date.now() : null, doneBy: done && state.owner ? state.owner : null });
       if (done && t.repeat && t.repeat !== 'none' && !t.spawnedNext) {
         const next = C.clone(t);
         Object.assign(next, { id: C.uid('t'), done: false, doneAt: null, createdAt: Date.now(), due: C.nextDue(t.due, t.repeat), spawnedFrom: t.id });
         next.subtasks = (next.subtasks || []).map((s) => ({ ...s, done: false }));
-        delete next.spawnedNext; delete next.moved; delete next.pushed; // each occurrence starts fresh
+        delete next.spawnedNext; delete next.moved; delete next.pushed; delete next.doneBy; // each occurrence starts fresh
         spawned = S.addTask(next);
         S.updateTask(id, { spawnedNext: spawned.id });
       } else if (!done && t.spawnedNext) {

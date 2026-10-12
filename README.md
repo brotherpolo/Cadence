@@ -88,6 +88,47 @@ Canvas, Outline and Table show the same map. It's saved in one private document 
 - **Moving from Workmap.** In Workmap choose **Export → Download backup (.json)**, then in Cadence open **Settings → Map → Import a Workmap backup** (or use the button on the empty canvas). That replaces the map, and Workmap's tasks become Cadence tasks linked to the same nodes, with their due dates, completion and notes. Importing the same file again won't duplicate tasks. If both apps run on the same domain, Cadence also offers to bring the board in straight from the browser.
 - The Workmap board was one board shared by everyone who signed in to it. In Cadence each account has its own map.
 
+## Push notifications
+
+Cadence can send reminders and updates as push notifications to any browser or phone you turn them on for:
+
+- **Due-time reminders**: at a task's time (or 5–60 minutes before), for tasks you're doing
+- **Morning summary**: at a time you pick, tasks due today with no time and anything overdue
+- **Assigned to me**: when someone gives you a task
+- **My shared task is done**: when the person you gave a task to finishes it
+
+How it fits together: the app asks for permission and saves this device's push token to `notify/{uid}/devices/…`; Cloud Functions in `functions/` watch tasks and run every 5 minutes, then send through Firebase Cloud Messaging; `firebase-messaging-sw.js` shows the notification and opens the task when it's tapped.
+
+### One-time setup
+
+1. **Switch the project to the Blaze plan.** Firebase console → ⚙ → *Usage and billing* → *Details & settings* → *Modify plan*. Cloud Functions need it. A personal setup stays well inside the free allowance (reminders run 288 times a day). Set a budget alert (for example $1) on the same page so nothing surprises you.
+2. **Create the Web Push key.** ⚙ *Project settings* → *Cloud Messaging* → *Web configuration* → *Web Push certificates* → **Generate key pair**. Copy the key and add one line to your `firebase-config.js`:
+   ```js
+   window.CADENCE_VAPID_KEY = 'BEl62…the key you copied…';
+   ```
+3. **Match the functions to your database's region.** Firebase console → *Firestore Database* shows the location next to the database. Put the matching region in `functions/.env` (`nam5` → `us-central1`, `northamerica-northeast1` → `northamerica-northeast1`, and so on).
+4. **Deploy** from this folder:
+   ```sh
+   firebase deploy --only firestore:rules,firestore:indexes,functions
+   ```
+   The first functions deploy turns on several Google Cloud APIs and can take a few minutes. If it stops with a permissions or "service agent" error, wait two or three minutes and run it again. The new index (`tasks`: members + due) also takes a few minutes to build; reminders start once it's ready.
+5. **Upload the app files** wherever you host it (Firebase Hosting, GitHub Pages…). It must be served over **https**, and `firebase-messaging-sw.js`, `push.js`, `manifest.webmanifest` and the icon PNGs must sit in the same folder as `index.html`.
+
+### Turning it on, on each device
+
+Open **Settings → Notifications → Turn on for this device**, allow notifications, then press **Send a test**. Do this on every computer and phone you want notifications on.
+
+- **iPhone and iPad** (iOS 16.4 or later): web notifications only work from an installed app. In Safari, tap **Share → Add to Home Screen**, open Cadence from the new icon, sign in, and turn notifications on there.
+- **Android**: works in Chrome. Installing it (menu → *Add to Home screen*) gives it its own icon, but isn't required.
+- If you turned notifications down by mistake, allow them again in the browser's site settings and reload.
+
+### If something doesn't arrive
+
+- `firebase functions:log` shows what the functions did, including failed sends.
+- "Firestore refused to save this device" means the rules from this version aren't deployed yet.
+- Reminders can arrive up to 5 minutes late (that's how often the check runs). Times use the time zone of the device you last turned notifications on from, shown in Settings.
+- Notifications include task names, which can show on a locked screen.
+
 ## Assigning tasks
 
 In the task editor, **Assigned to** shows "Me", the people you've worked with recently, and an email box. Type someone's email and press **Assign**.
@@ -110,7 +151,7 @@ If a user had tasks in the browser before signing in for the first time, they ar
 
 ## Files
 
-All files sit in one folder (no subdirectories), so it uploads to GitHub as-is.
+The app's files sit in one folder, so it uploads to GitHub as-is. The only subfolder, `functions/`, is the push notification server code; it's deployed with the Firebase CLI and doesn't need uploading to your web host.
 
 ```
 index.html
@@ -121,6 +162,10 @@ utils.js              dates, formatting, quick-add parser, recurrence
 store.js              state, local cache, sync engine
 firebase-config.js    your Firebase config (empty = local only)
 firebase-sync.js      sign-in screen + Firestore connection
+push.js               push notifications: permission, device token, Settings → Notifications
+firebase-messaging-sw.js  service worker: shows pushes, opens the task when tapped
+manifest.webmanifest  install as an app (needed for notifications on iPhone)
+*.png                 app icons
 toast.js              notifications with Undo
 drag.js               drag & drop for mouse and touch
 editor.js             task editor
@@ -137,7 +182,9 @@ charts.js             Chart builder and Board pages
 settings.js           Settings page
 app.js                app shell, routing, shortcuts
 firestore.rules       Firestore security rules
-firebase.json         Firebase CLI config (rules + hosting)
+firestore.indexes.json  the one index reminders need
+firebase.json         Firebase CLI config (rules, indexes, functions, hosting)
+functions/            Cloud Functions that send the notifications (index.js, package.json, .env)
 ```
 
 Scripts load in the order listed in `index.html`; keep that order if you add files.

@@ -69,6 +69,7 @@
       });
     });
     const uid = user.uid;
+    FB.app = app; FB.db = app.firestore(); FB.load = load; FB.SDK = SDK; FB.config = cfg; // push.js builds on these
     const me = { uid, name: user.displayName || '', email: (user.email || '').toLowerCase(), verified: !!user.emailVerified };
     FB.user = { uid, email: user.email, name: user.displayName, method: ((user.providerData || [])[0] || {}).providerId || 'unknown', verified: me.verified };
     FB.me = me;
