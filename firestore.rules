@@ -1,16 +1,17 @@
 rules_version = '2';
 
-// Cadence — Cloud Firestore security rules (app version 13)
+// Cadence — Cloud Firestore security rules (app version 14)
 //
 // Data layout written by firebase-sync.js:
 //   tasks/{taskId}               every task. members = [ownerId] or [ownerId, assigneeId]
 //   users/{uid}/items/settings   task types, importance levels, defaults (private)
 //   users/{uid}/items/map        the mind map: nodes + edges (private)
+//   users/{uid}/items/board      charts saved to the Board page (private)
 //   people/{email}               { uid, name }, so tasks can be assigned by email
 //
 // Privacy policy these rules enforce:
-//   - Settings and the map are private: only their owner can read or write them.
-//     Nobody else can see your map, not even people you share tasks with.
+//   - Settings, the map and the board are private: only their owner can read or
+//     write them. Nobody else can see them, not even people you share tasks with.
 //   - A task is visible only to its owner and its assignee.
 //   - The owner can change anything except who owns it, and can delete it.
 //     The owner's email on a task must be the owner's real sign-in email.
@@ -132,6 +133,14 @@ service cloud.firestore {
           && (!('updatedAt' in d) || d.updatedAt is number);
     }
 
+    // Saved charts: a list of chart settings, no task data.
+    function validBoard(d) {
+      return d.keys().hasOnly(['kind', 'charts', 'updatedAt'])
+          && d.kind == 'board'
+          && d.charts is list && d.charts.size() <= 200
+          && (!('updatedAt' in d) || d.updatedAt is number);
+    }
+
     function isAssignee() {
       return resource.data.get('assigneeId', null) == request.auth.uid;
     }
@@ -209,7 +218,7 @@ service cloud.firestore {
       allow delete: if signedIn() && resource.data.uid == request.auth.uid;
     }
 
-    // Private settings and the map: only the owner, never anyone else.
+    // Private settings, map and board: only the owner, never anyone else.
     // Tasks stored here by app version 7 and earlier can be read and deleted
     // (the app moves them to /tasks) but no longer written, so an outdated tab
     // can't re-upload stale copies.
@@ -217,7 +226,8 @@ service cloud.firestore {
       allow read, delete: if isOwner(uid);
       allow create, update: if isOwner(uid)
         && ((itemId == 'settings' && validSettings(request.resource.data))
-            || (itemId == 'map' && validMap(request.resource.data)));
+            || (itemId == 'map' && validMap(request.resource.data))
+            || (itemId == 'board' && validBoard(request.resource.data)));
     }
 
     // Default deny for every other path.
