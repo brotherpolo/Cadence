@@ -324,9 +324,10 @@ describe('list views', () => {
 
 describe('bulk record changes', () => {
   test('a batch of deletes goes through only when every record may be deleted', async () => {
-    const ok = writeBatch(db('olivia'));
-    ok.delete(doc(db('olivia'), 'records', 'r_alice'));
-    ok.delete(doc(db('olivia'), 'records', 'r_bob'));
+    const d = db('olivia');
+    const ok = writeBatch(d);
+    ok.delete(doc(d, 'records', 'r_alice'));
+    ok.delete(doc(d, 'records', 'r_bob'));
     await assertSucceeds(ok.commit());
   });
 
@@ -347,5 +348,63 @@ describe('bulk record changes', () => {
     await assertSucceeds(b.commit());
     const v = db('vera');
     await assertFails(updateDoc(doc(v, 'records', 'r_alice'), { 'values.stage': 'Open', updatedAt: 6, updatedBy: 'vera' }));
+  });
+});
+
+describe('saved reports and dashboards', () => {
+  const rdef = (owner, extra = {}) => ({ name: 'Spend by client', ownerId: owner, shared: false, groups: [], def: { form: 'f_jobs', type: 'bar', measure: { fn: 'count' } }, createdAt: 1, updatedAt: 1, ...extra });
+  const dash = (owner, extra = {}) => ({ name: 'Operations', ownerId: owner, shared: false, groups: [], tiles: [{ id: 't1', report: 'r1', cols: 6, rows: 2 }], filters: { period: 'all', fields: [] }, createdAt: 1, updatedAt: 1, ...extra });
+  beforeEach(async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const d = ctx.firestore();
+      await setDoc(doc(d, 'reportDefs', 'rd_alice'), rdef('alice'));
+      await setDoc(doc(d, 'reportDefs', 'rd_team'), rdef('admin', { shared: true }));
+      await setDoc(doc(d, 'dashboards', 'db_alice'), dash('alice'));
+      await setDoc(doc(d, 'dashboards', 'db_team'), dash('admin', { shared: true, groups: ['g_office'] }));
+    });
+  });
+
+  test('members build their own reports and dashboards', async () => {
+    await assertSucceeds(setDoc(doc(db('bob'), 'reportDefs', 'rd_new'), rdef('bob')));
+    await assertSucceeds(updateDoc(doc(db('bob'), 'reportDefs', 'rd_new'), { name: 'Renamed', updatedAt: 2 }));
+    await assertSucceeds(setDoc(doc(db('bob'), 'dashboards', 'db_new'), dash('bob')));
+    await assertSucceeds(updateDoc(doc(db('bob'), 'dashboards', 'db_new'), { tiles: [], updatedAt: 2 }));
+    await assertSucceeds(getDocs(query(collection(db('bob'), 'dashboards'), where('ownerId', '==', 'bob'))));
+    await assertSucceeds(deleteDoc(doc(db('bob'), 'reportDefs', 'rd_new')));
+    await assertSucceeds(deleteDoc(doc(db('bob'), 'dashboards', 'db_new')));
+  });
+
+  test('only admins share; members can’t read or change others’ private ones', async () => {
+    await assertFails(setDoc(doc(db('bob'), 'reportDefs', 'rd_s'), rdef('bob', { shared: true })));
+    await assertFails(updateDoc(doc(db('alice'), 'dashboards', 'db_alice'), { shared: true }));
+    await assertFails(getDoc(doc(db('bob'), 'reportDefs', 'rd_alice')));
+    await assertFails(getDoc(doc(db('bob'), 'dashboards', 'db_alice')));
+    await assertFails(setDoc(doc(db('bob'), 'dashboards', 'db_fake'), dash('alice')));
+    await assertFails(updateDoc(doc(db('alice'), 'reportDefs', 'rd_alice'), { ownerId: 'bob' }));
+  });
+
+  test('shared ones are readable by members, managed by admins', async () => {
+    await assertSucceeds(getDoc(doc(db('ned'), 'dashboards', 'db_team')));
+    await assertSucceeds(getDocs(query(collection(db('vera'), 'reportDefs'), where('shared', '==', true))));
+    await assertFails(updateDoc(doc(db('bob'), 'reportDefs', 'rd_team'), { name: 'Mine', updatedAt: 2 }));
+    await assertFails(deleteDoc(doc(db('bob'), 'dashboards', 'db_team')));
+    await assertSucceeds(setDoc(doc(db('admin'), 'dashboards', 'db_adm'), dash('admin', { shared: true })));
+    await assertSucceeds(updateDoc(doc(db('admin'), 'dashboards', 'db_team'), { groups: [], updatedAt: 3 }));
+    await assertSucceeds(deleteDoc(doc(db('admin'), 'reportDefs', 'rd_alice')));
+    await assertFails(getDoc(doc(db('stranger'), 'dashboards', 'db_team')));
+  });
+
+  test('shape checks', async () => {
+    await assertFails(setDoc(doc(db('bob'), 'reportDefs', 'b1'), rdef('bob', { def: 'bar' })));
+    await assertFails(setDoc(doc(db('bob'), 'reportDefs', 'b2'), rdef('bob', { extra: 1 })));
+    await assertFails(setDoc(doc(db('bob'), 'dashboards', 'b3'), dash('bob', { tiles: 'x' })));
+    await assertFails(setDoc(doc(db('bob'), 'dashboards', 'b4'), dash('bob', { name: '' })));
+  });
+
+  test('home dashboard is kept on your own profile', async () => {
+    await assertSucceeds(setDoc(doc(db('bob'), 'profiles', 'bob'), { displayName: 'Bob', homeDashboard: 'db_team' }));
+    await assertSucceeds(setDoc(doc(db('bob'), 'profiles', 'bob'), { homeDashboard: '' }, { merge: true }));
+    await assertFails(setDoc(doc(db('bob'), 'profiles', 'alice'), { displayName: 'A', homeDashboard: 'x' }));
+    await assertFails(setDoc(doc(db('bob'), 'profiles', 'bob'), { displayName: 'Bob', homeDashboard: 'x'.repeat(101) }));
   });
 });
