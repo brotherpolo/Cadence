@@ -22,7 +22,8 @@
   ];
   const DEFAULT_PREFS = {
     theme: 'system', weekStart: 1, group: 'due', sort: 'smart', showDone: false,
-    listMode: 'agenda', calMode: 'month', defaultLevel: 'lv-normal', defaultType: null
+    listMode: 'agenda', calMode: 'month', defaultLevel: 'lv-normal', defaultType: null,
+    showStorage: true // the storage meter in the sidebar (per device)
   };
 
   const state = {
@@ -150,6 +151,7 @@
     refreshStatus();
   }
   const pending = (id) => queues[id] && (queues[id].busy || queues[id].dirty);
+  let storageCache = null;
 
   /* Fill in ownership, and give the assignee a copy of the owner's type and importance
      names/colors, since their own settings won't have the owner's ids. */
@@ -522,6 +524,21 @@
       commit('board');
     },
     mapTooBig() { try { return JSON.stringify(mapBody()).length > 900000; } catch (e) { return false; } },
+    /** How full the two single-record items are. A Firestore record holds at most 1 MiB;
+        tasks are one record each, so they have no such limit. Cached until the map or board changes. */
+    storageUse() {
+      if (storageCache && storageCache.m === state.mapRev && storageCache.b === state.board.updatedAt && storageCache.bn === state.board.charts.length) return storageCache.v;
+      const size = (o) => { try { return new TextEncoder().encode(JSON.stringify(o)).length; } catch (e) { return 0; } };
+      const LIMIT = 1048576, usable = LIMIT - 4096; // leave room for the record's own overhead
+      const mb = size(mapBody()), bb = size(boardBody()), n = state.map.nodes.length;
+      const v = {
+        limit: LIMIT,
+        map: { bytes: mb, pct: Math.min(100, (mb / LIMIT) * 100), nodes: n, more: n ? Math.max(0, Math.floor((usable - mb) / (mb / n))) : null },
+        board: { bytes: bb, pct: Math.min(100, (bb / LIMIT) * 100), charts: state.board.charts.length }
+      };
+      storageCache = { m: state.mapRev, b: state.board.updatedAt, bn: state.board.charts.length, v };
+      return v;
+    },
 
     setTypes(types) { state.types = types; commit('settings'); },
     setLevels(levels) { state.levels = levels; commit('settings'); },

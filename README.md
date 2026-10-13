@@ -251,6 +251,14 @@ tests/                rules tests (development only; run with npm test inside te
 
 Scripts load in the order listed in `index.html`; keep that order if you add files.
 
+## Storage meter
+
+A Firestore record holds at most 1 MB. Tasks are saved one per record, so they have no such limit, but the map and the Board are each saved as **one** record.
+
+- **Sidebar meter:** shows how full the map is and roughly how many more nodes fit at your current average node size. It adds a Board line once the Board passes 50%. It turns amber at 70% and red at 90%, with words as well as colour.
+- **Hiding it:** **×** hides it on this device. **Settings → Map → Storage** shows the full picture and has **Show in sidebar / Hide from sidebar**.
+- **When it shows:** only when you're signed in, since the limit applies to synced data.
+
 ## Hosting
 
 Cadence is served from Firebase Hosting at its own site (for example `https://cadence-tasks.web.app/`), in the same project as Formwright.

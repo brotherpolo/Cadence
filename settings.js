@@ -93,6 +93,7 @@
     const linked = st.tasks.filter((t) => t.nodeId && m.getNode(t.nodeId)).length;
     const legacy = m.legacyLocal();
     return section('Map', 'The Canvas, Outline and Table pages share one map. It syncs with your account, privately. Tasks can link to any node.',
+      storageCard(st) +
       '<dl class="sync-facts map-facts"><div><dt>Nodes</dt><dd class="mono">' + n + '</dd></div><div><dt>Clusters</dt><dd class="mono">' + cl + '</dd></div><div><dt>Linked tasks</dt><dd class="mono">' + linked + '</dd></div></dl>' +
       '<div class="btn-row">' +
       '<label class="btn" for="st-workmap">' + icon('upload') + '<span>Import a Workmap backup</span></label><input id="st-workmap" type="file" accept="application/json,.json" class="sr">' +
@@ -101,6 +102,25 @@
       (n ? '<button type="button" class="btn ghost danger" data-act="clearMap">' + icon('trash') + '<span>Clear the map</span></button>' : '') +
       '</div>' +
       '<p class="fine">In Workmap, choose <b>Export → Download backup (.json)</b>, then import that file here. It replaces this map, and its tasks are added to your list, linked to their nodes. Importing the same file twice won’t duplicate tasks. The JSON backup above includes the map.</p>');
+  }
+
+  /* How full the map and board records are (each holds at most 1 MB). */
+  function storageCard(st) {
+    if (st.sync.provider !== 'firebase' || !S().storageUse) return '';
+    const u = S().storageUse();
+    const bar = (label, pct) => '<span class="sm-bar" role="progressbar" aria-label="' + label + '" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + Math.round(pct) + '"><i style="width:' + Math.max(1, pct).toFixed(1) + '%"></i></span>';
+    const row = (name, pct, text) => '<div class="sc-row lvl-' + C.storageLevel(pct) + '"><div class="sc-top"><b>' + name + '</b><span class="mono">' + esc(C.storageWord(pct)) + '</span></div>' + bar(name + ' storage used', pct) + '<p class="fine">' + text + '</p></div>';
+    const kb = (b) => (b < 1024 ? b + ' bytes' : b < 1048576 ? Math.round(b / 1024).toLocaleString() + ' KB' : (b / 1048576).toFixed(2) + ' MB');
+    const m = u.map;
+    const shown = st.prefs.showStorage !== false;
+    return '<div class="storage-card" id="st-storage">' +
+      '<div class="sc-head"><b>Storage</b><button type="button" class="btn sm" data-act="storageMeter">' + (shown ? 'Hide from sidebar' : 'Show in sidebar') + '</button></div>' +
+      row('Map', m.pct, m.nodes
+        ? m.nodes.toLocaleString() + ' node' + (m.nodes === 1 ? '' : 's') + ' using ' + kb(m.bytes) + ' of 1 MB. At their current average size there’s room for about ' + C.fmtCount(m.more) + ' more.'
+        : 'Your map is empty. It can hold about 3,000 nodes, fewer if they have long labels or notes.') +
+      row('Board', u.board.pct, u.board.charts + ' saved chart' + (u.board.charts === 1 ? '' : 's') + ' using ' + kb(u.board.bytes) + ' of 1 MB.') +
+      '<p class="fine">Tasks don’t count toward these limits: each task is saved separately. The map and the board are each saved as one record, which holds at most 1 MB.</p>' +
+      '</div>';
   }
 
   function syncCard(st) {
@@ -269,6 +289,7 @@
     }
     const act = d.act;
     if (act === 'signout') return C.firebaseSync.signOut();
+    if (act === 'storageMeter') { S().setPrefs({ showStorage: S().state.prefs.showStorage === false }); return render(); }
     if (act === 'retry') { const ok = await S().retrySync(); ui.force = true; render(); return C.toast(ok ? 'Reconnected. Sending your changes now.' : 'Still can’t connect. See the details under Your data.'); }
     if (act === 'pushOn') return C.push.enable();
     if (act === 'pushOff') return C.push.disable();

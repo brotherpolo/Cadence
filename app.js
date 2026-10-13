@@ -144,6 +144,7 @@
           (n.id === 'canvas' && C.map && C.map.nodes().length ? '<span class="count mono quiet" title="Nodes on the map">' + C.map.nodes().length + '</span>' : '') + '</a>').join('') + '</div>').join('') + '</nav>' +
       (onMap ? sideClusters() : sideTypes(st) + sideLevels(st)) +
       '</div>' +
+      storageMeter(st) +
       '<div class="side-foot">' +
       C.syncPill() +
       '<button type="button" class="icon-btn" data-theme-toggle aria-label="Toggle dark mode">' + icon(isDark() ? 'sun' : 'moon') + '</button></div>';
@@ -204,6 +205,29 @@
       }).join('') + '</ul></div>';
   }
   C.refreshChrome = () => renderChrome();
+
+  /* ---------- storage meter (sidebar) ---------- */
+  // The map and the board are each saved as one record, which holds at most 1 MB.
+  C.storageLevel = (pct) => (pct >= 90 ? 'danger' : pct >= 70 ? 'warn' : 'ok');
+  C.storageWord = (pct) => (pct >= 90 ? Math.round(pct) + '% · almost full' : pct >= 70 ? Math.round(pct) + '% · getting full' : pct < 1 ? 'Under 1% used' : Math.round(pct) + '% used');
+  function storageMeter(st) {
+    if (!st.prefs.showStorage || st.sync.provider !== 'firebase' || !S.storageUse) return '';
+    const u = S.storageUse(), m = u.map;
+    const lvl = C.storageLevel(Math.max(m.pct, u.board.pct));
+    const pctText = m.pct < 1 ? '<1%' : Math.round(m.pct) + '%';
+    const sub = m.pct >= 90 ? 'Sync may stop soon. See Settings → Map.'
+      : m.nodes ? 'Room for about ' + C.fmtCount(m.more) + ' more nodes' : 'Your map is empty';
+    return '<div class="store-meter lvl-' + lvl + '">' +
+      '<button type="button" class="sm-link" data-storage-open title="Open storage details in Settings">' +
+      '<span class="sm-top"><span class="sm-l">Map storage</span><span class="sm-v mono">' + pctText + '</span></span>' +
+      '<span class="sm-bar" role="progressbar" aria-label="Map storage used" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + Math.round(m.pct) + '"><i style="width:' + Math.max(1, m.pct).toFixed(1) + '%"></i></span>' +
+      '<span class="sm-sub">' + sub + '</span>' +
+      (u.board.pct >= 50 ? '<span class="sm-sub">Board: ' + Math.round(u.board.pct) + '% used</span>' : '') +
+      '</button>' +
+      '<button type="button" class="icon-btn sm sm-x" data-storage-hide aria-label="Hide the storage meter" title="Hide. Bring it back in Settings → Map.">' + icon('x') + '</button>' +
+      '</div>';
+  }
+  C.fmtCount = (n) => (n == null ? '–' : n >= 10000 ? Math.round(n / 1000).toLocaleString() + 'k' : n.toLocaleString());
 
   /* ---------- sync status pill ---------- */
   const SYNC = {
@@ -283,6 +307,11 @@
     }
     else if (e.target.closest('[data-side-clear-level]')) { C.views.list.clearLevels(); if (current !== 'list') C.go('list'); }
     else if (e.target.closest('[data-theme-toggle]')) C.cycleTheme();
+    else if (e.target.closest('[data-storage-hide]')) { S.setPrefs({ showStorage: false }); C.toast('Storage meter hidden. Bring it back in Settings → Map.'); }
+    else if (e.target.closest('[data-storage-open]')) {
+      const reveal = () => { const c = document.getElementById('st-storage'); if (c) { c.scrollIntoView({ behavior: 'smooth', block: 'center' }); c.classList.add('flash-card'); setTimeout(() => c.classList.remove('flash-card'), 1600); } };
+      if (current !== 'settings') { C.go('settings'); setTimeout(reveal, 350); } else reveal();
+    }
   });
 
   document.addEventListener('contextmenu', (e) => {
