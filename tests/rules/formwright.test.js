@@ -59,7 +59,8 @@ beforeEach(async () => {
   await env.withSecurityRulesDisabled(async (ctx) => {
     const d = ctx.firestore();
     for (const [uid, p] of Object.entries(people)) {
-      await setDoc(doc(d, 'users', uid), { email: `${uid}@example.com`, displayName: uid, groups: [], createdAt: 1, ...p });
+      // everyone except ned (a brand-new account) is in a group
+      await setDoc(doc(d, 'users', uid), { email: `${uid}@example.com`, displayName: uid, groups: uid === 'ned' || uid === 'admin' ? [] : ['g_staff'], createdAt: 1, ...p });
     }
     await setDoc(doc(d, 'forms', 'f_jobs'), { name: 'Jobs', fields: [] });
     await setDoc(doc(d, 'forms', 'f_other'), { name: 'Other', fields: [] });
@@ -306,7 +307,8 @@ describe('list views', () => {
 
   test('shared views are readable by every member; admins manage them', async () => {
     await assertSucceeds(getDoc(doc(db('vera'), 'listViews', 'v_team')));
-    await assertSucceeds(getDocs(query(collection(db('ned'), 'listViews'), where('shared', '==', true))));
+    await assertSucceeds(getDocs(query(collection(db('vera'), 'listViews'), where('shared', '==', true))));
+    await assertFails(getDocs(query(collection(db('ned'), 'listViews'), where('shared', '==', true))));
     await assertSucceeds(setDoc(doc(db('admin'), 'listViews', 'dflt-f_jobs'), lv('admin', { shared: true, name: 'All' })));
     await assertSucceeds(updateDoc(doc(db('admin'), 'listViews', 'v_team'), { cols: [], updatedAt: 3 }));
     await assertSucceeds(deleteDoc(doc(db('admin'), 'listViews', 'v_alice')));
@@ -384,7 +386,8 @@ describe('saved reports and dashboards', () => {
   });
 
   test('shared ones are readable by members, managed by admins', async () => {
-    await assertSucceeds(getDoc(doc(db('ned'), 'dashboards', 'db_team')));
+    await assertSucceeds(getDoc(doc(db('vera'), 'dashboards', 'db_team')));
+    await assertFails(getDoc(doc(db('ned'), 'dashboards', 'db_team')));
     await assertSucceeds(getDocs(query(collection(db('vera'), 'reportDefs'), where('shared', '==', true))));
     await assertFails(updateDoc(doc(db('bob'), 'reportDefs', 'rd_team'), { name: 'Mine', updatedAt: 2 }));
     await assertFails(deleteDoc(doc(db('bob'), 'dashboards', 'db_team')));
@@ -406,5 +409,42 @@ describe('saved reports and dashboards', () => {
     await assertSucceeds(setDoc(doc(db('bob'), 'profiles', 'bob'), { homeDashboard: '' }, { merge: true }));
     await assertFails(setDoc(doc(db('bob'), 'profiles', 'alice'), { displayName: 'A', homeDashboard: 'x' }));
     await assertFails(setDoc(doc(db('bob'), 'profiles', 'bob'), { displayName: 'Bob', homeDashboard: 'x'.repeat(101) }));
+  });
+});
+
+
+describe('brand-new accounts', () => {
+  test('see nothing until an admin adds them to a group', async () => {
+    await assertFails(getDoc(doc(db('ned'), 'forms', 'f_jobs')));
+    await assertFails(getDocs(collection(db('ned'), 'forms')));
+    await assertFails(getDocs(collection(db('ned'), 'profiles')));
+    await assertFails(getDocs(query(collection(db('ned'), 'reports'), where('shared', '==', true))));
+    await assertFails(getDocs(query(collection(db('ned'), 'reportDefs'), where('shared', '==', true))));
+    await assertFails(getDocs(query(collection(db('ned'), 'dashboards'), where('shared', '==', true))));
+  });
+
+  test('can still set up their own profile and see their own things', async () => {
+    await assertSucceeds(setDoc(doc(db('ned'), 'profiles', 'ned'), { displayName: 'Ned' }));
+    await assertSucceeds(getDoc(doc(db('ned'), 'profiles', 'ned')));
+    await assertSucceeds(getDoc(doc(db('ned'), 'users', 'ned')));
+    await assertSucceeds(getDocs(query(collection(db('ned'), 'dashboards'), where('ownerId', '==', 'ned'))));
+  });
+
+  test('members and admins read forms and names', async () => {
+    await assertSucceeds(getDocs(collection(db('vera'), 'forms')));
+    await assertSucceeds(getDocs(collection(db('alice'), 'profiles')));
+    await assertSucceeds(getDocs(collection(db('admin'), 'forms')));
+  });
+});
+
+describe('upload file types', () => {
+  const path = (formId, uid, name) => `uploads/${formId}/${uid}/${name}`;
+  test('documents and photos are fine; web pages and scripts are refused', async () => {
+    const st = as('alice').storage();
+    await assertSucceeds(uploadString(ref(st, path('f_jobs', 'alice', 'a.pdf')), 'pdf', 'raw', { contentType: 'application/pdf' }));
+    await assertSucceeds(uploadString(ref(st, path('f_jobs', 'alice', 'a.jpg')), 'jpg', 'raw', { contentType: 'image/jpeg' }));
+    await assertFails(uploadString(ref(st, path('f_jobs', 'alice', 'a.html')), '<p>x</p>', 'raw', { contentType: 'text/html' }));
+    await assertFails(uploadString(ref(st, path('f_jobs', 'alice', 'a.svg')), '<svg/>', 'raw', { contentType: 'image/svg+xml' }));
+    await assertFails(uploadString(ref(st, path('f_jobs', 'alice', 'a.js')), 'x', 'raw', { contentType: 'text/javascript; charset=utf-8' }));
   });
 });
