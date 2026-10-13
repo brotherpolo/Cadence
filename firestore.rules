@@ -24,6 +24,8 @@ rules_version = '2';
 //   profiles/{uid}               display names for "Created by"
 //   reports/{id}                 saved reports: owner writes; shared ones readable by members
 //   listViews/{id}               saved list views: yours are private; admins share them
+//   reportDefs/{id}              saved reports (one chart, table, pivot or KPI each)
+//   dashboards/{id}              dashboards: saved reports and text blocks laid out together
 //
 // Record links (v22): a task can point at one Formwright record through
 //   recordId, formId and recordSnap (the record's title, the form's name and color,
@@ -417,9 +419,10 @@ service cloud.firestore {
     match /profiles/{userId} {
       allow read: if signedIn();
       allow create, update: if signedIn() && userId == request.auth.uid
-        && request.resource.data.keys().hasOnly(['displayName', 'photoURL'])
+        && request.resource.data.keys().hasOnly(['displayName', 'photoURL', 'homeDashboard'])
         && request.resource.data.displayName is string
-        && request.resource.data.displayName.size() <= 120;
+        && request.resource.data.displayName.size() <= 120
+        && optString(request.resource.data, 'homeDashboard', 100);
       allow delete: if isAdmin() || (signedIn() && userId == request.auth.uid);
     }
 
@@ -507,6 +510,61 @@ service cloud.firestore {
             || (resource.data.ownerId == request.auth.uid
                 && resource.data.shared == false
                 && request.resource.data.shared == false));
+      allow delete: if hasAccount() && (resource.data.ownerId == request.auth.uid || isAdmin());
+    }
+
+    // Saved reports and dashboards (Formwright). Yours are private until an admin shares
+    // them. A shared one is readable by anyone with an account: "groups" only decides whose
+    // lists it appears in. Neither holds record data: every number is worked out in the
+    // reader's browser from the records the reader is allowed to see.
+    function sharedOk(d) {
+      return d.shared == false || isAdmin();
+    }
+    function audience(d) {
+      return (!('groups' in d) || (d.groups is list && d.groups.size() <= 30));
+    }
+    function validReportDef(d) {
+      return d.keys().hasOnly(['name', 'ownerId', 'shared', 'groups', 'def', 'createdAt', 'updatedAt'])
+        && d.keys().hasAll(['name', 'ownerId', 'shared', 'def'])
+        && d.name is string && d.name.size() > 0 && d.name.size() <= 120
+        && d.ownerId is string && d.shared is bool && audience(d)
+        && d.def is map && d.def.form is string
+        && (!('createdAt' in d) || d.createdAt is number)
+        && (!('updatedAt' in d) || d.updatedAt is number);
+    }
+    function validDashboard(d) {
+      return d.keys().hasOnly(['name', 'ownerId', 'shared', 'groups', 'tiles', 'filters', 'createdAt', 'updatedAt'])
+        && d.keys().hasAll(['name', 'ownerId', 'shared', 'tiles'])
+        && d.name is string && d.name.size() > 0 && d.name.size() <= 120
+        && d.ownerId is string && d.shared is bool && audience(d)
+        && d.tiles is list && d.tiles.size() <= 60
+        && (!('filters' in d) || d.filters is map)
+        && (!('createdAt' in d) || d.createdAt is number)
+        && (!('updatedAt' in d) || d.updatedAt is number);
+    }
+
+    match /reportDefs/{id} {
+      allow read: if hasAccount()
+        && (resource.data.ownerId == request.auth.uid || resource.data.shared == true || isAdmin());
+      allow create: if hasAccount() && validReportDef(request.resource.data)
+        && request.resource.data.ownerId == request.auth.uid && sharedOk(request.resource.data);
+      // Owners edit their own (sharing needs an admin); admins also edit shared ones.
+      allow update: if hasAccount() && validReportDef(request.resource.data)
+        && request.resource.data.ownerId == resource.data.ownerId
+        && ((resource.data.ownerId == request.auth.uid && sharedOk(request.resource.data))
+            || (isAdmin() && resource.data.shared == true));
+      allow delete: if hasAccount() && (resource.data.ownerId == request.auth.uid || isAdmin());
+    }
+
+    match /dashboards/{id} {
+      allow read: if hasAccount()
+        && (resource.data.ownerId == request.auth.uid || resource.data.shared == true || isAdmin());
+      allow create: if hasAccount() && validDashboard(request.resource.data)
+        && request.resource.data.ownerId == request.auth.uid && sharedOk(request.resource.data);
+      allow update: if hasAccount() && validDashboard(request.resource.data)
+        && request.resource.data.ownerId == resource.data.ownerId
+        && ((resource.data.ownerId == request.auth.uid && sharedOk(request.resource.data))
+            || (isAdmin() && resource.data.shared == true));
       allow delete: if hasAccount() && (resource.data.ownerId == request.auth.uid || isAdmin());
     }
 
