@@ -2,6 +2,14 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<script>
+  // Cadence lives at its Firebase Hosting address. The old GitHub Pages address forwards
+  // there, keeping links to a task (?task=), a record (?record=, ?addTaskFor=) and the page.
+  (function () {
+    var home = 'https://cadence-tasks.web.app/';
+    if (/\.github\.io$/.test(location.hostname)) location.replace(home + location.search + location.hash);
+  })();
+</script>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Cadence</title>
 <meta name="theme-color" content="#F4F6FA">

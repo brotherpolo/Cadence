@@ -7,19 +7,48 @@
     "rules": "storage.rules"
   },
   "hosting": {
+    "target": "cadence",
     "public": ".",
     "ignore": [
-      "firebase.json",
-      "firestore.rules",
-      "README.md",
+      "**/*.zip",
       "**/.*",
       "**/node_modules/**",
+      "README.md",
+      "firebase.json",
       "firestore.indexes.json",
+      "firestore.rules",
       "functions/**",
       "storage.rules",
       "tests/**"
     ],
     "headers": [
+      {
+        "source": "/manifest.webmanifest",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ]
+      },
+      {
+        "source": "/index.html",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ]
+      },
+      {
+        "source": "/",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ]
+      },
       {
         "source": "**/*.@(js|css)",
         "headers": [

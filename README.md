@@ -91,6 +91,7 @@ records/{id}                 form entries, checked against users/{uid}.access
 groups/{id}                  security groups (admins only)
 users/{uid}                  Formwright account: role, groups, effective access
 profiles/{uid}               display names for "Created by"
+reports/{id}                 saved reports: the owner writes; shared ones readable by members
 uploads/... (Storage)        files attached to records
 ```
 
@@ -249,6 +250,15 @@ tests/                rules tests (development only; run with npm test inside te
 ```
 
 Scripts load in the order listed in `index.html`; keep that order if you add files.
+
+## Hosting
+
+Cadence is served from Firebase Hosting at its own site (for example `https://cadence-tasks.web.app/`), in the same project as Formwright.
+
+- `.github/workflows/deploy.yml` publishes the web pages on every push to `main`. It needs a `FIREBASE_SERVICE_ACCOUNT` secret (a `tasks-2ae9d` service account key with **Firebase Hosting Admin**) and a `FIREBASE_HOSTING_SITE` variable (the site name, without `.web.app`).
+- `firebase.json` names the site `cadence` as a hosting target, and leaves rules, tests, functions and this README off the site.
+- `index.html` sends visitors on the old GitHub Pages address to the Firebase address, keeping `?task=`, `?record=` and `?addTaskFor=` links. If you change the site name, change it in that script too.
+- Pages and the manifest are served with `no-cache`, so an upload shows up on the next reload.
 
 ## Updating the app
 
