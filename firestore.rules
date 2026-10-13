@@ -22,6 +22,8 @@ rules_version = '2';
 //                                (Cadence's private items sit under it, in
 //                                users/{uid}/items, with their own rules below.)
 //   profiles/{uid}               display names for "Created by"
+//   reports/{id}                 saved reports: owner writes; shared ones readable by members
+//   listViews/{id}               saved list views: yours are private; admins share them
 //
 // Record links (v22): a task can point at one Formwright record through
 //   recordId, formId and recordSnap (the record's title, the form's name and color,
@@ -438,6 +440,74 @@ service cloud.firestore {
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName']));
 
       allow delete: if isAdmin();
+    }
+
+    // Reports (Formwright's report builder): saved by their owner. A shared report can be
+    // read by anyone with a Formwright account; its numbers are always worked out in the
+    // reader's own browser from the records the reader is allowed to see.
+    function validReport(d) {
+      return d.keys().hasOnly(['name', 'ownerId', 'shared', 'widgets', 'createdAt', 'updatedAt'])
+        && d.keys().hasAll(['name', 'ownerId', 'shared', 'widgets'])
+        && d.name is string && d.name.size() > 0 && d.name.size() <= 120
+        && d.ownerId is string
+        && d.shared is bool
+        && d.widgets is list && d.widgets.size() <= 60
+        && (!('createdAt' in d) || d.createdAt is number)
+        && (!('updatedAt' in d) || d.updatedAt is number);
+    }
+
+    match /reports/{reportId} {
+      allow read: if hasAccount()
+        && (resource.data.ownerId == request.auth.uid || resource.data.shared == true || isAdmin());
+      allow create: if hasAccount()
+        && validReport(request.resource.data)
+        && request.resource.data.ownerId == request.auth.uid;
+      allow update: if hasAccount()
+        && resource.data.ownerId == request.auth.uid
+        && validReport(request.resource.data)
+        && request.resource.data.ownerId == resource.data.ownerId;
+      allow delete: if hasAccount() && (resource.data.ownerId == request.auth.uid || isAdmin());
+    }
+
+    // Saved list views (Formwright's records lists): which columns, sort, filters and row
+    // height a form's list shows. Your own views are private; shared views are made by
+    // admins and seen by everyone with an account. The view with ID "dflt-<formId>" is a
+    // form's default list, and only an admin can make it. A view never grants access to
+    // records: each list still shows only the records the reader may see.
+    function validListView(d) {
+      return d.keys().hasOnly(['formId', 'name', 'ownerId', 'shared', 'cols', 'sort', 'filters', 'density', 'createdAt', 'updatedAt'])
+        && d.keys().hasAll(['formId', 'name', 'ownerId', 'shared', 'cols', 'sort'])
+        && d.formId is string && d.formId.size() > 0 && d.formId.size() <= 100
+        && d.name is string && d.name.size() > 0 && d.name.size() <= 80
+        && d.ownerId is string
+        && d.shared is bool
+        && d.cols is list && d.cols.size() <= 30
+        && d.sort is map && d.sort.keys().hasOnly(['key', 'dir'])
+        && (!('filters' in d) || (d.filters is map && d.filters.size() <= 40))
+        && (!('density' in d) || d.density in ['cozy', 'compact'])
+        && (!('createdAt' in d) || d.createdAt is number)
+        && (!('updatedAt' in d) || d.updatedAt is number);
+    }
+
+    match /listViews/{viewId} {
+      allow read: if hasAccount()
+        && (resource.data.ownerId == request.auth.uid || resource.data.shared == true || isAdmin());
+      allow create: if hasAccount()
+        && validListView(request.resource.data)
+        && request.resource.data.ownerId == request.auth.uid
+        && (request.resource.data.shared == false || isAdmin())
+        && (!viewId.matches('^dflt-.*') || isAdmin());
+      // Owners update their own private views; admins update shared ones (and may share or
+      // unshare). The owner and form never change.
+      allow update: if hasAccount()
+        && validListView(request.resource.data)
+        && request.resource.data.ownerId == resource.data.ownerId
+        && request.resource.data.formId == resource.data.formId
+        && (isAdmin()
+            || (resource.data.ownerId == request.auth.uid
+                && resource.data.shared == false
+                && request.resource.data.shared == false));
+      allow delete: if hasAccount() && (resource.data.ownerId == request.auth.uid || isAdmin());
     }
 
     // Default deny for every other path.
