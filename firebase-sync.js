@@ -46,6 +46,17 @@
     await load(SDK + 'firebase-app-compat.js');
     await Promise.all([load(SDK + 'firebase-auth-compat.js'), load(SDK + 'firebase-firestore-compat.js')]);
     const app = firebase.apps.length ? firebase.app() : firebase.initializeApp(cfg);
+    // App Check (optional): proves requests come from this site, not a script reusing the
+    // project's public settings. Turned on by CADENCE_APPCHECK_KEY in firebase-config.js.
+    const appCheckKey = String(window.CADENCE_APPCHECK_KEY || '').trim();
+    if (appCheckKey && !FB.appCheckOn) {
+      try {
+        if (/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) self.FIREBASE_APPCHECK_DEBUG_TOKEN = true;
+        await load(SDK + 'firebase-app-check-compat.js');
+        app.appCheck().activate(new firebase.appCheck.ReCaptchaEnterpriseProvider(appCheckKey), true);
+        FB.appCheckOn = true;
+      } catch (e) { console.warn('[cadence] App Check not started', e); }
+    }
     const auth = app.auth();
     const db = app.firestore();
     // Some networks, proxies, VPNs and privacy tools break Firestore's streaming

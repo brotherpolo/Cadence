@@ -28,7 +28,10 @@ service firebase.storage {
       allow create: if signedIn()
         && ownerId == request.auth.uid
         && (isAdmin() || level(formId).get('edit', 'none') in ['own', 'all'])
-        && request.resource.size < 25 * 1024 * 1024;
+        && request.resource.size < 25 * 1024 * 1024
+        // no web pages or scripts: they could run in a browser that opens the file's link
+        && (request.resource.contentType == null
+            || !request.resource.contentType.lower().matches('(text/html|application/xhtml\\+xml|image/svg\\+xml|text/javascript|application/(x-)?javascript|application/ecmascript|text/xml|application/xml).*'));
 
       allow delete: if signedIn() && (ownerId == request.auth.uid || isAdmin());
     }

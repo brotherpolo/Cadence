@@ -15,7 +15,7 @@ rules_version = '2';
 //   notify/{uid}/devices/{id}    one push token per browser or phone (private)
 //
 // Formwright data (see the Formwright README for the permission model):
-//   forms/{formId}               form designs. Everyone signed in reads; admins write.
+//   forms/{formId}               form designs. Members of any group read; admins write.
 //   records/{id}                 form entries, checked against users/{uid}.access
 //   groups/{id}                  security groups (admins only)
 //   users/{uid}                  Formwright account: role, groups, effective access.
@@ -109,6 +109,9 @@ service cloud.firestore {
     function hasAccount() { return signedIn() && exists(userPath()); }
     function me() { return get(userPath()).data; }
     function isAdmin() { return hasAccount() && me().get('role', 'member') == 'admin'; }
+    // Someone an admin has let in: an admin, or in at least one security group. A brand-new
+    // account sees nothing in Formwright (not even form designs or names) until then.
+    function isMember() { return hasAccount() && (me().get('role', 'member') == 'admin' || me().get('groups', []).size() > 0); }
 
     // Effective level for one form: the form's own entry, else the "*" default, else nothing.
     function level(formId) {
@@ -387,7 +390,7 @@ service cloud.firestore {
     // member's groups. Levels: "none", "own" (records they created) or "all".
 
     match /forms/{formId} {
-      allow read: if signedIn();
+      allow read: if isMember();
       allow write: if isAdmin();
     }
 
@@ -417,7 +420,7 @@ service cloud.firestore {
     }
 
     match /profiles/{userId} {
-      allow read: if signedIn();
+      allow read: if isMember() || (signedIn() && userId == request.auth.uid);
       allow create, update: if signedIn() && userId == request.auth.uid
         && request.resource.data.keys().hasOnly(['displayName', 'photoURL', 'homeDashboard'])
         && request.resource.data.displayName is string
@@ -461,7 +464,7 @@ service cloud.firestore {
 
     match /reports/{reportId} {
       allow read: if hasAccount()
-        && (resource.data.ownerId == request.auth.uid || resource.data.shared == true || isAdmin());
+        && (resource.data.ownerId == request.auth.uid || (resource.data.shared == true && isMember()) || isAdmin());
       allow create: if hasAccount()
         && validReport(request.resource.data)
         && request.resource.data.ownerId == request.auth.uid;
@@ -494,7 +497,7 @@ service cloud.firestore {
 
     match /listViews/{viewId} {
       allow read: if hasAccount()
-        && (resource.data.ownerId == request.auth.uid || resource.data.shared == true || isAdmin());
+        && (resource.data.ownerId == request.auth.uid || (resource.data.shared == true && isMember()) || isAdmin());
       allow create: if hasAccount()
         && validListView(request.resource.data)
         && request.resource.data.ownerId == request.auth.uid
@@ -545,7 +548,7 @@ service cloud.firestore {
 
     match /reportDefs/{id} {
       allow read: if hasAccount()
-        && (resource.data.ownerId == request.auth.uid || resource.data.shared == true || isAdmin());
+        && (resource.data.ownerId == request.auth.uid || (resource.data.shared == true && isMember()) || isAdmin());
       allow create: if hasAccount() && validReportDef(request.resource.data)
         && request.resource.data.ownerId == request.auth.uid && sharedOk(request.resource.data);
       // Owners edit their own (sharing needs an admin); admins also edit shared ones.
@@ -558,7 +561,7 @@ service cloud.firestore {
 
     match /dashboards/{id} {
       allow read: if hasAccount()
-        && (resource.data.ownerId == request.auth.uid || resource.data.shared == true || isAdmin());
+        && (resource.data.ownerId == request.auth.uid || (resource.data.shared == true && isMember()) || isAdmin());
       allow create: if hasAccount() && validDashboard(request.resource.data)
         && request.resource.data.ownerId == request.auth.uid && sharedOk(request.resource.data);
       allow update: if hasAccount() && validDashboard(request.resource.data)

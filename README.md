@@ -273,3 +273,9 @@ Cadence is served from Firebase Hosting at its own site (for example `https://ca
 **Don't overwrite your `firebase-config.js`.** Update zips from here leave it out, so your filled-in copy on GitHub stays as it is.
 
 `index.html` loads every file with a version tag (`app.js?v=20`). When you change any file, bump the number in `index.html` (and `C.VERSION` in `utils.js`) so browsers fetch the new copies instead of cached ones. Settings → Your data shows the version each device is running.
+
+### Security settings
+
+- **App Check** (optional, recommended): add `window.CADENCE_APPCHECK_KEY = '<reCAPTCHA Enterprise site key>';` to `firebase-config.js`. Cadence then proves to Firebase that requests come from this site. Nothing changes until the key is set.
+- **What gets published:** Hosting publishes this folder except tests, functions, rules, docs and any `.json`, `.md`, `.env`, `.pem`, `.key`, `.csv`, `.sql`, `.log` or service-account file, so a key file added by mistake is never served.
+- **Headers:** the site can't be framed by other sites, and sends no-sniff, strict referrer and permissions headers.
