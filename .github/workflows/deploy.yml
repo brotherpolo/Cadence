@@ -1,0 +1,34 @@
+name: Deploy Cadence
+
+# Publishes Cadence's web pages to its Firebase Hosting site on every push to main.
+# Security rules, indexes and Cloud Functions still deploy from Cloud Shell.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Write service account key
+        env:
+          SA_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: printf '%s' "$SA_JSON" > "$RUNNER_TEMP/sa.json"
+      - name: Deploy Hosting (web pages only)
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json
+          SITE: ${{ vars.FIREBASE_HOSTING_SITE }}
+        run: |
+          if [ -z "$SITE" ]; then echo "Set the FIREBASE_HOSTING_SITE variable to Cadence's Hosting site name (without .web.app)." >&2; exit 1; fi
+          if [ ! -f firebase-config.js ]; then echo "firebase-config.js is missing from the repository." >&2; exit 1; fi
+          npx --yes firebase-tools@13 target:apply hosting cadence "$SITE" --project tasks-2ae9d
+          npx --yes firebase-tools@13 deploy --only hosting:cadence --project tasks-2ae9d --non-interactive
