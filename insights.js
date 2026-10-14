@@ -13,7 +13,7 @@
     title: 'Insights',
     mount(root) {
       el = root;
-      root.innerHTML = '<section class="page ins-page"><header class="page-head"><p class="eyebrow">How it’s going</p><h1 class="display">Insights</h1><div class="ins-links"><a href="#charts" class="btn sm">' + icon('pie') + '<span>Build your own chart</span></a><a href="#board" class="btn sm">' + icon('board') + '<span>Your board</span></a></div></header><div id="ins-root"></div></section>';
+      root.innerHTML = '<section class="page ins-page"><header class="page-head"><p class="eyebrow">How it’s going</p><h1 class="display">Insights</h1><div class="ins-links"><a href="#charts" class="btn sm">' + icon('pie') + '<span>Build your own chart</span></a><a href="#board" class="btn sm">' + icon('board') + '<span>Your dashboards</span></a></div></header><div id="ins-root"></div></section>';
       root.addEventListener('click', onClick);
       root.addEventListener('pointerover', (e) => { if (e.pointerType === 'mouse') showTip(e.target); });
       root.addEventListener('focusin', (e) => showTip(e.target));

@@ -10,15 +10,15 @@ A build-free task app: plain HTML, CSS and JavaScript files. No bundler, no npm 
 - **Chart builder extras**: map fields (cluster, branch, node, depth), a sunburst that follows the map's tree, KPI tiles (one number with an 8-week trend and change vs last week), and goal lines that fade the bars that miss
 - **Over time**: Burn-up (added vs. done, and whether your open list is growing) and Flow (done / open / overdue stacked over time)
 - **Reading charts**: compare with the previous period (faint bars or a dashed line), rolling-average or straight-line trends, and a one-sentence summary under every chart
-- **Filters**: narrow any chart by type, importance, map cluster, map branch or person; on the Board, one date range can apply to every chart
+- **Filters**: narrow any chart by type, importance, map cluster, map branch or person; on Dashboards, one date range can apply to every chart
 - **Treemap and Handoffs**: a treemap sizes boxes by type (or any category) with smaller boxes inside for a second field; Handoffs draws bands from who assigned each task to who's doing it
 - **Exploring**: click a legend entry to show only that series (or highlight one slice), and drag across a time chart to zoom into a stretch of dates (swipe sideways on touch screens)
-- **Export**: download any chart as a PNG picture or its numbers as a CSV file, from the Chart builder or a Board card's ⋯ menu
-- **Table**: list the tasks themselves. Pick the columns (any field, plus time and notes), reorder them, sort by clicking a header, group rows by a category, and filter by status, dates, type, importance, map, person, when it's due (overdue, today, next 7 or 30 days, no date) or words in the title or notes. Tick tasks off or open them right from the table, on the Board too; export as CSV or PNG
+- **Export**: download any chart as a PNG picture or its numbers as a CSV file, from the Chart builder or a dashboard chart's ⋯ menu
+- **Table**: list the tasks themselves. Pick the columns (any field, plus time and notes), reorder them, sort by clicking a header, group rows by a category, and filter by status, dates, type, importance, map, person, when it's due (overdue, today, next 7 or 30 days, no date) or words in the title or notes. Tick tasks off or open them right from the table, on dashboards too; export as CSV or PNG
 - **Ask for a chart**: type what you want at the top of the Chart builder ("overdue tasks by branch this month", "average days late per month", "done per week with a goal of 5") and it sets the fields, chart type, filters, dates and goal for you
 - **Rescheduling**: from v19, every time a task's due date moves to another date it's counted, along with how many days it was pushed back. Chart it with Times rescheduled, Days pushed back or the Rescheduled field (never / once / 2–3 / 4+); the task editor shows the count, and the Excel export has a column for it. Only changes made from v19 on are counted
 - **Canvas heat overlay**: color every node by open tasks, overdue tasks, days late, age, % on time or recent completions, optionally rolled up through each branch
-- **Board**: your saved charts on their own page, synced to your account (private to you). Group charts into named sections, make each card small, medium or wide, and reorder them; tap any bar, slice or point to open a list of the tasks behind it, complete them, or open one to edit
+- **Dashboards**: as many as you like, private to you and synced to your account. Each lays out your saved charts and text blocks on a grid 24 squares across: **Edit dashboard**, then drag a chart by its handle to move it or by its corner to resize it (arrow keys work too). One chart can sit on several dashboards. **Set as home** picks the one that opens first. Tap any bar, slice or point to open the tasks behind it; on phones each chart is a small card (tap for its tasks, press and hold for the numbers)
 - **Map: Canvas, Outline, Table**: one mind map shown three ways. The canvas has nodes in eight shapes, colors and fills, connections and dotted flows, fold/focus/tidy for branches, box select, a minimap, a node inspector, undo/redo, and PNG export. The outline is a keyboard-driven indented list with PDF export. The table lets you sort, filter, edit cells inline and change many nodes at once
 - **Tasks on the map**: link any task to a node (in the editor, or with `@node` in quick add). Nodes show their open-task count, the inspector lists their tasks, and the Tasks page can filter by node or group by map cluster
 - **Settings**: task types (name, color, icon, order), importance levels (name, color, rank, default), theme, week start, backup and restore
@@ -73,7 +73,7 @@ Once configured, the app shows a sign-in screen. Data is stored like this:
 tasks/{taskId}               every task; members = [owner] or [owner, assignee]; optional nodeId
 users/{uid}/items/settings   your types, importance levels, defaults (private)
 users/{uid}/items/map        your map: nodes + edges (private)
-users/{uid}/items/board      charts saved to your Board (private)
+users/{uid}/items/board      saved charts and your dashboards (private)
 people/{email}               { uid, name }, so others can assign you tasks by email
 ```
 
@@ -92,6 +92,8 @@ groups/{id}                  security groups (admins only)
 users/{uid}                  Formwright account: role, groups, effective access
 profiles/{uid}               display names for "Created by"
 reports/{id}                 saved reports: the owner writes; shared ones readable by members
+imports/{id}                 spreadsheet imports, kept 7 days for undo (admins only)
+imports/{id}/before/{recId}  a record as it was before an import changed it (admins only)
 uploads/... (Storage)        files attached to records
 ```
 
@@ -129,6 +131,7 @@ From this folder, in Cloud Shell:
 
 ```sh
 (cd tests && npm install && npm test)     # rules tests against the emulators (needs Java, which Cloud Shell has)
+(cd tests && npm run test:unit)           # dashboard layout tests (no emulator needed)
 firebase deploy --only firestore:rules,firestore:indexes,storage --project tasks-2ae9d
 ```
 
@@ -197,6 +200,7 @@ In the task editor, **Assigned to** shows "Me", the people you've worked with re
 - The assignee sees the owner's type and importance names and colors, even if their own settings differ.
 - Completing a repeating task as the assignee creates the next occurrence for the same owner and assignee.
 - The app shows a notice when someone assigns you a task, and when an assignee completes or hands back one of yours. Use the **Assigned to me** / **Assigned to others** filters on the Tasks page to see just those.
+- **Version 24** turns the Board into **Dashboards**: several per person, each a grid you arrange by dragging and resizing. **Deploy the new `firestore.rules` before uploading the new files**: the old rules reject a board that holds dashboards. Your existing board opens as a dashboard called "My board" (sections become headings; small, medium and wide cards become 8, 12 and 24 squares across). Nothing is saved in the new shape until you change something, so nothing is lost if you go back. New charts from the Chart builder go on the dashboard you last opened.
 - **Version 22** links tasks to Formwright records (see "Linking tasks to records"). **Deploy the new `firestore.rules` before uploading the new files**: the old rules reject tasks with a record link.
 - **Version 16** adds burn-up and flow charts, period comparison, trend lines, chart summaries, chart filters and a Board-wide date range. No rules change.
 - **Version 15** adds the sunburst, KPI tiles, goals and the canvas heat overlay. No rules change.
@@ -238,7 +242,8 @@ canvas.js             Canvas page (the map as a board)
 outline.js            Outline page (the map as a list)
 maptable.js           Table page (the map as a table)
 insights.js           Insights page (charts)
-charts.js             Chart builder and Board pages
+dashgrid.js           dashboard layout: positions, moving, resizing, turning the old board into a dashboard
+charts.js             Chart builder and Dashboards pages
 settings.js           Settings page
 app.js                app shell, routing, shortcuts
 firestore.rules       Firestore security rules (Cadence and Formwright)

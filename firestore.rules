@@ -9,7 +9,7 @@ rules_version = '2';
 //   tasks/{taskId}               every task. members = [ownerId] or [ownerId, assigneeId]
 //   users/{uid}/items/settings   task types, importance levels, defaults (private)
 //   users/{uid}/items/map        the mind map: nodes + edges (private)
-//   users/{uid}/items/board      charts saved to the Board page, with their sections and sizes (private)
+//   users/{uid}/items/board      saved charts and the dashboards that lay them out (private)
 //   people/{email}               { uid, name }, so tasks can be assigned by email
 //   notify/{uid}                 push notification choices, time zone (private)
 //   notify/{uid}/devices/{id}    one push token per browser or phone (private)
@@ -26,6 +26,8 @@ rules_version = '2';
 //   listViews/{id}               saved list views: yours are private; admins share them
 //   reportDefs/{id}              saved reports (one chart, table, pivot or KPI each)
 //   dashboards/{id}              dashboards: saved reports and text blocks laid out together
+//   imports/{id}                 spreadsheet imports (admins only), kept so one can be undone
+//   imports/{id}/before/{recId}  a record as it was before an import changed it
 //
 // Record links (v22): a task can point at one Formwright record through
 //   recordId, formId and recordSnap (the record's title, the form's name and color,
@@ -255,11 +257,14 @@ service cloud.firestore {
           && (!('updatedAt' in d) || d.updatedAt is number);
     }
 
-    // Saved charts: a list of chart settings, no task data.
+    // Saved charts and the dashboards that lay them out: settings only, no task data.
+    // dashboards: [{ id, name, tiles: [{ id, chart | text, x, y, w, h }] }]; home: a dashboard id.
     function validBoard(d) {
-      return d.keys().hasOnly(['kind', 'charts', 'updatedAt'])
+      return d.keys().hasOnly(['kind', 'charts', 'updatedAt', 'dashboards', 'home'])
           && d.kind == 'board'
           && d.charts is list && d.charts.size() <= 200
+          && (!('dashboards' in d) || (d.dashboards is list && d.dashboards.size() <= 100))
+          && (!('home' in d) || (d.home is string && d.home.size() <= 100))
           && (!('updatedAt' in d) || d.updatedAt is number);
     }
 
@@ -569,6 +574,49 @@ service cloud.firestore {
         && ((resource.data.ownerId == request.auth.uid && sharedOk(request.resource.data))
             || (isAdmin() && resource.data.shared == true));
       allow delete: if hasAccount() && (resource.data.ownerId == request.auth.uid || isAdmin());
+    }
+
+    // Spreadsheet imports (Formwright, admins only). Each import lists the records it added
+    // and changed, so it can be undone for 7 days; the records it changed are kept as they
+    // were in imports/{id}/before/{recordId}. The imported records themselves go through
+    // the records rules above like any other save.
+    function validImport(d) {
+      return d.keys().hasOnly(['formId', 'formName', 'fileName', 'ownerId', 'createdAt', 'stamp', 'status',
+                               'added', 'updated', 'counts', 'finishedAt', 'undoneAt', 'undoneBy', 'undo'])
+        && d.keys().hasAll(['formId', 'ownerId', 'createdAt', 'status', 'added', 'updated'])
+        && d.formId is string && d.formId.size() > 0 && d.formId.size() <= 100
+        && d.ownerId is string
+        && d.createdAt is number
+        && d.status in ['running', 'done', 'failed', 'undone']
+        && d.added is list && d.added.size() <= 5000
+        && d.updated is list && d.updated.size() <= 5000
+        && optString(d, 'fileName', 200)
+        && optString(d, 'formName', 120)
+        && (!('counts' in d) || d.counts is map)
+        && (!('undo' in d) || d.undo is map);
+    }
+
+    match /imports/{importId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin()
+        && validImport(request.resource.data)
+        && request.resource.data.ownerId == request.auth.uid;
+      // Finishing or undoing an import. What it imported, who ran it and when never change.
+      allow update: if isAdmin()
+        && validImport(request.resource.data)
+        && request.resource.data.ownerId == resource.data.ownerId
+        && request.resource.data.formId == resource.data.formId
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.added == resource.data.added
+        && request.resource.data.updated == resource.data.updated;
+      allow delete: if isAdmin();
+
+      match /before/{recordId} {
+        allow read, delete: if isAdmin();
+        allow create, update: if isAdmin()
+          && request.resource.data.keys().hasOnly(['values', 'parentId', 'parentFormId', 'updatedAt', 'updatedBy'])
+          && request.resource.data.values is map;
+      }
     }
 
     // Default deny for every other path.

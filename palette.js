@@ -27,7 +27,7 @@
       { label: 'Go to Map table', hint: '5', ic: 'table', run: () => C.go('table') },
       { label: 'Go to Insights', hint: '6', ic: 'chart', run: () => C.go('insights') },
       { label: 'Open Chart builder', ic: 'pie', run: () => C.go('charts') },
-      { label: 'Go to Board', ic: 'board', run: () => C.go('board') },
+      { label: 'Go to Dashboards', ic: 'board', run: () => C.go('board') },
       { label: 'Go to Settings', ic: 'settings', run: () => C.go('settings') },
       { label: 'Add a node to the map', ic: 'node', run: () => C.map.newNode() },
       { label: 'New cluster on the map', ic: 'cluster', run: () => C.map.newCluster() },

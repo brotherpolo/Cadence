@@ -62,13 +62,17 @@
   const failed = new Set();
   const settingsBody = () => ({ kind: 'settings', types: state.types, levels: state.levels, defaultLevel: state.prefs.defaultLevel, defaultType: state.prefs.defaultType });
   const mapBody = () => ({ kind: 'map', nodes: state.map.nodes, edges: state.map.edges, updatedAt: state.map.updatedAt || Date.now() });
-  const boardBody = () => ({ kind: 'board', charts: state.board.charts, updatedAt: state.board.updatedAt || Date.now() });
+  /* dashboards and home are written only once there are dashboards, so an older board keeps its old shape */
+  const boardBody = () => Object.assign({ kind: 'board', charts: state.board.charts, updatedAt: state.board.updatedAt || Date.now() },
+    Array.isArray(state.board.dashboards) && state.board.dashboards.length ? { dashboards: state.board.dashboards, home: state.board.home || '' } : {});
+  const boardOf = (b) => Object.assign({ charts: Array.isArray(b && b.charts) ? C.clone(b.charts) : [], updatedAt: (b && b.updatedAt) || 0 },
+    b && Array.isArray(b.dashboards) && b.dashboards.length ? { dashboards: C.clone(b.dashboards), home: typeof b.home === 'string' ? b.home : '' } : {});
   const PRIVATE = { settings: settingsBody, map: mapBody, board: boardBody }; // private docs (users/{uid}/items/…), everything else is a task
   const LEGACY_BOARD = 'cadence.chart.board'; // before v14, saved charts lived in this browser only
   let boardSeen = false;
   function takeBoard(body) {
     if (!body || body.updatedAt === state.board.updatedAt) return false;
-    state.board = { charts: Array.isArray(body.charts) ? C.clone(body.charts) : [], updatedAt: body.updatedAt || 0 };
+    state.board = boardOf(body);
     return true;
   }
   const emptyMap = () => ({ nodes: [], edges: [], updatedAt: 0 });
@@ -360,7 +364,7 @@
         state.me = local.me || null;
         state.seen = local.seen || [];
         state.map = local.map && Array.isArray(local.map.nodes) ? local.map : emptyMap();
-        state.board = local.board && Array.isArray(local.board.charts) ? local.board : { charts: [], updatedAt: 0 };
+        state.board = local.board && Array.isArray(local.board.charts) ? boardOf(local.board) : { charts: [], updatedAt: 0 };
         state.mapRev++;
         state.ready = true;
         emit();
@@ -379,7 +383,7 @@
         if (!foreign && boardSeen && legacyBoard.length) {
           const have = new Set(state.board.charts.map((c) => c.id));
           const add = legacyBoard.filter((c) => c && !have.has(c.id));
-          if (add.length) { state.board = { charts: state.board.charts.concat(add), updatedAt: Date.now() }; queueWrite('board'); }
+          if (add.length) { state.board = Object.assign({}, state.board, { charts: state.board.charts.concat(add), updatedAt: Date.now() }); queueWrite('board'); }
         }
         try { localStorage.removeItem(LEGACY_BOARD); } catch (e) { /* blocked */ }
       }
@@ -519,8 +523,13 @@
       if (!mapBusy && mapDeferred) { const b = mapDeferred; mapDeferred = null; if (!pending('map') && takeMap(b)) { writeLocal(); emit(); } }
     },
     /* ---------- board (saved charts) ---------- */
-    setBoard(charts) {
-      state.board = { charts, updatedAt: Math.max(Date.now(), (state.board.updatedAt || 0) + 1) };
+    /** charts: the saved charts; extra: { dashboards, home } when those change (left out, they stay) */
+    setBoard(charts, extra) {
+      const cur = state.board;
+      const next = { charts: charts || cur.charts, updatedAt: Math.max(Date.now(), (cur.updatedAt || 0) + 1) };
+      const ds = extra && 'dashboards' in extra ? extra.dashboards : cur.dashboards;
+      if (Array.isArray(ds) && ds.length) { next.dashboards = ds; next.home = extra && 'home' in extra ? extra.home || '' : cur.home || ''; }
+      state.board = next;
       commit('board');
     },
     mapTooBig() { try { return JSON.stringify(mapBody()).length > 900000; } catch (e) { return false; } },
@@ -562,7 +571,7 @@
     loadSamples() { sampleTasks().forEach((t) => { state.tasks.push(t); commit(t.id, true); }); emit(); },
 
     exportJSON() {
-      return JSON.stringify({ app: 'cadence', version: 2, exportedAt: new Date().toISOString(), tasks: state.tasks, types: state.types, levels: state.levels, map: { nodes: state.map.nodes, edges: state.map.edges }, board: state.board.charts }, null, 2);
+      return JSON.stringify({ app: 'cadence', version: 2, exportedAt: new Date().toISOString(), tasks: state.tasks, types: state.types, levels: state.levels, map: { nodes: state.map.nodes, edges: state.map.edges }, board: state.board.charts, dashboards: state.board.dashboards || [], boardHome: state.board.home || '' }, null, 2);
     },
     importJSON(text) {
       const data = JSON.parse(text);
@@ -580,7 +589,7 @@
         state.map.updatedAt = Date.now(); state.mapRev++;
         commit('map', true);
       }
-      if (Array.isArray(data.board)) { state.board = { charts: C.clone(data.board), updatedAt: Date.now() }; commit('board', true); }
+      if (Array.isArray(data.board)) { state.board = boardOf({ charts: data.board, dashboards: data.dashboards, home: data.boardHome, updatedAt: Date.now() }); commit('board', true); }
       let added = 0;
       data.tasks.forEach((t) => {
         if (!t || !t.id || !t.title) return;

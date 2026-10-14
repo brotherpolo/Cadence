@@ -8,7 +8,7 @@
   const NAV = [
     { group: 'Plan', items: [{ id: 'list', label: 'Tasks', ic: 'list' }, { id: 'calendar', label: 'Calendar', ic: 'calendar' }] },
     { group: 'Map', items: [{ id: 'canvas', label: 'Canvas', ic: 'canvas' }, { id: 'outline', label: 'Outline', ic: 'outline' }, { id: 'table', label: 'Table', ic: 'table' }] },
-    { group: 'Review', items: [{ id: 'insights', label: 'Insights', ic: 'chart' }, { id: 'charts', label: 'Chart builder', ic: 'pie' }, { id: 'board', label: 'Board', ic: 'board' }] },
+    { group: 'Review', items: [{ id: 'insights', label: 'Insights', ic: 'chart' }, { id: 'charts', label: 'Chart builder', ic: 'pie' }, { id: 'board', label: 'Dashboards', ic: 'board' }] },
     { items: [{ id: 'settings', label: 'Settings', ic: 'settings' }] }
   ];
   const isMap = (r) => r === 'canvas' || r === 'outline' || r === 'table';
@@ -142,7 +142,7 @@
         g.items.map((n) => '<a href="#' + n.id + '" class="side-link' + (r === n.id ? ' on' : '') + '"' + (r === n.id ? ' aria-current="page"' : '') + ' title="' + n.label + '">' + icon(n.ic) + '<span>' + n.label + '</span>' +
           (n.id === 'list' && c.list ? '<span class="count mono" title="Due today or overdue">' + c.list + '</span>' : '') +
           (n.id === 'canvas' && C.map && C.map.nodes().length ? '<span class="count mono quiet" title="Nodes on the map">' + C.map.nodes().length + '</span>' : '') + '</a>').join('') + '</div>').join('') + '</nav>' +
-      (onMap ? sideClusters() : sideTypes(st) + sideLevels(st)) +
+      (onMap ? sideClusters() : (['insights', 'charts', 'board'].includes(r) ? sideDashes() : '') + sideTypes(st) + sideLevels(st)) +
       '</div>' +
       storageMeter(st) +
       '<div class="side-foot">' +
@@ -162,6 +162,14 @@
         : '<button type="button" class="fab" data-new aria-label="New task">' + icon('plus') + '</button>') +
       tab(C.map ? C.map.ui.lastRoute : 'canvas', 'Map', 'canvas') +
       tab('insights', 'Insights', 'chart');
+  }
+  C.renderChrome = () => { if (current) renderChrome(); };
+  /* on Insights pages the sidebar lists your dashboards */
+  function sideDashes() {
+    const b = C.views.board; if (!b || !b.list) return '';
+    const list = b.list();
+    return '<div class="side-sec"><div class="side-sec-head"><span class="eyebrow">Dashboards</span><span class="mono muted side-n">' + list.length + '</span></div>' +
+      '<ul class="side-types">' + list.map((d) => '<li><button type="button" class="side-type side-dash' + (d.on ? ' on' : '') + '" data-side-dash="' + esc(d.id) + '"' + (d.on ? ' aria-current="page"' : '') + '>' + icon(d.home ? 'star' : 'board') + '<span>' + esc(d.name) + '</span>' + (d.home ? '<span class="mono muted">home</span>' : '') + '</button></li>').join('') + '</ul></div>';
   }
   /* on map pages the sidebar lists clusters: click to select (Canvas) or filter (Outline, Table) */
   function sideClusters() {
@@ -292,6 +300,7 @@
     else if (e.target.closest('[data-side-cluster]')) C.map.clusterClick(e.target.closest('[data-side-cluster]').dataset.sideCluster);
     else if (e.target.closest('[data-side-cluster-clear]')) { C.map.ui.outlineFilter = ''; C.map.ui.table.cluster = ''; C.map.refresh(); }
     else if (e.target.closest('[data-pal]')) C.openPalette();
+    else if (e.target.closest('[data-side-dash]')) C.views.board.open(e.target.closest('[data-side-dash]').dataset.sideDash);
     else if (e.target.closest('[data-sync-pill]')) {
       const reveal = () => { const c = document.getElementById('st-sync'); if (c) { c.scrollIntoView({ behavior: 'smooth', block: 'center' }); c.classList.add('flash-card'); setTimeout(() => c.classList.remove('flash-card'), 1200); } };
       if (current !== 'settings') { C.go('settings'); setTimeout(reveal, 350); } else reveal();

@@ -1,6 +1,6 @@
 /* Cadence — Chart builder + Board: drag fields onto X axis / Values / Split by and pick a chart type.
    Works with mouse, pen and touch. On touch you can also tap a field, then tap where it goes.
-   Saved charts live on the board, which syncs with the account (state.board in the store).
+   Saved charts are laid out on dashboards, which sync with the account (state.board in the store).
    The chart you're building (the draft) stays in this browser. */
 (function () {
   const C = window.Cadence;
@@ -730,7 +730,7 @@
       (cfg.type === 'sunburst' && !problem() ? '<div class="cb-heatlink"><button type="button" class="btn sm" data-heat>' + icon('canvas') + '<span>Color the canvas by this</span></button><span class="muted">Tints each node on the canvas by the same numbers.</span></div>' : '') +
       '<div class="cb-presets"><span class="muted">Try one:</span>' + PRESETS.map((p, i) => p.map && !(C.map && C.map.nodes().length) ? '' : '<button type="button" class="chip" data-preset="' + i + '">' + esc(p.name) + '</button>').join('') + '</div>' +
       '</div></div>' +
-      '<a href="#board" class="cb-boardlink st-sec">' + icon('board') + '<span><b>Your board</b><span class="muted">' + (board.length ? board.length + ' saved chart' + (board.length === 1 ? '' : 's') + ' · tap a bar or slice there to see its tasks' : 'Charts you save show up on your board.') + '</span></span>' + icon('chevR') + '</a>';
+      '<a href="#board" class="cb-boardlink st-sec">' + icon('board') + '<span><b>Your dashboards</b><span class="muted">' + (board.length ? board.length + ' saved chart' + (board.length === 1 ? '' : 's') + ' · new ones go on the dashboard you last opened' : 'Charts you save show up on your dashboard.') + '</span></span>' + icon('chevR') + '</a>';
     if (ui.flash) { const z = root.querySelector('[data-zone="' + ui.flashZone + '"]'); if (z) z.classList.add('nope'); }
   }
 
@@ -1187,7 +1187,7 @@
   function table(board) {
     const tb = tableRows();
     if (!tb.n) return '<div class="cb-empty"><p>' + noneMsg() + '</p></div>';
-    const lim = LIMITS[cfg.limit] || 25;
+    const lim = typeof cfg.limit === 'number' ? cfg.limit : LIMITS[cfg.limit] || 25;
     const head = '<thead><tr><th class="cb-tchk"><span class="sr">Done</span></th>' + tb.cols.map((c) => {
       const on = tb.sort.k === c, f = c === 'title' ? { label: 'Task' } : colField(c);
       return '<th scope="col" class="' + (c === 'title' ? 'cb-ttitle' : '') + (NUMS[c] ? ' num' : '') + '" aria-sort="' + (on ? (tb.sort.d > 0 ? 'ascending' : 'descending') : 'none') + '"><button type="button" class="cb-tsort' + (on ? ' on' : '') + '" data-tsort="' + c + '">' + esc(f.label) + (on ? icon(tb.sort.d > 0 ? 'up' : 'down') : '') + '</button></th>';
@@ -1601,8 +1601,9 @@
       if (item.type === 'table' && !item.size && asNew) item.size = 'wide';
       if (asNew) { item.id = C.uid('ch'); board = board.concat([item]); } else board = board.map((b) => (b.id === item.id ? item : b));
       saveBoard();
+      const where = asNew ? placeNewChart(item) : null;
       setCfg({ id: item.id, title: item.title });
-      C.toast(asNew ? 'Saved to your board' : 'Chart updated', { action: 'View board', onAction: () => C.go('board') });
+      C.toast(asNew ? 'Saved to “' + where + '”' : 'Chart updated', { action: 'View', onAction: () => C.go('board') });
       return;
     }
     // tapping anywhere else cancels a picked field
@@ -1822,161 +1823,301 @@
   }
   const zoomKeys = (i0, i1) => { const b = build(); return b.cats[i0] && b.cats[i1] ? { a: b.cats[i0].key, b: b.cats[i1].key } : null; };
 
-  /* ================= Board page ================= */
+  /* ================= Dashboards (the Board page) =================
+     Saved charts are one list (state.board.charts). Dashboards lay them out on a grid
+     24 squares across (state.board.dashboards; positions decided by dashgrid.js). The same
+     chart can sit on several dashboards; editing it changes it everywhere.
+     Until the first change, the old board is shown as one dashboard, "My board". */
+  const G = () => C.dashgrid;
   let elB = null;
-  const withCfg = (item, fn) => {
+  const DB_CUR = 'cadence.board.cur';
+  const DB = { cur: load(DB_CUR, ''), edit: null, picker: false, confirm: null };
+  const withCfg = (item, fn, over) => {
     const saved = cfg, ro = rangeOverride, so = solo, zo = zoom, v = cardView(item.id);
-    cfg = Object.assign({}, BLANK, item); rangeOverride = boardRange(); solo = v.solo; zoom = v.zoom;
+    cfg = Object.assign({}, BLANK, item, over || null); rangeOverride = boardRange(); solo = v.solo; zoom = v.zoom;
     try { return fn(); } finally { cfg = saved; rangeOverride = ro; solo = so; zoom = zo; }
   };
   const BOARD_RANGE = 'cadence.board.range';
   const boardRange = () => { const v = load(BOARD_RANGE, ''); return v && v !== 'own' ? v : null; };
+  const phone = () => matchMedia('(max-width: 640px)').matches;
+
+  /** every dashboard, as saved (or the old board as one) */
+  const allDashes = () => G().dashboardsOf(S().state.board);
+  const homeId = () => { const h = S().state.board.home, ds = allDashes(); return ds.some((d) => d.id === h) ? h : ds[0].id; };
+  const curDash = () => { const ds = allDashes(); return ds.find((d) => d.id === DB.cur) || ds.find((d) => d.id === homeId()) || ds[0]; };
+  const chartById = (id) => board.find((b) => b.id === id);
+  /** write the dashboards (and the charts, when given) */
+  function saveDashes(dashes, charts, home) {
+    syncBoard();
+    S().setBoard(charts || board.slice(), { dashboards: dashes, home: home != null ? home : homeId() });
+    syncBoard();
+  }
+  /** the dashboard being shown: the working copy while editing */
+  const shown = () => (DB.edit || curDash());
 
   const boardView = C.views.board = {
-    title: 'Board',
+    title: 'Dashboards',
     mount(root) {
       elB = root;
       syncBoard();
-      root.innerHTML = '<section class="page bd-page"><header class="page-head"><p class="eyebrow"><a href="#insights" class="cb-back">' + icon('chevL') + 'Insights</a></p>' +
-        '<div class="bd-title"><h1 class="display">Board</h1><div class="bd-acts"><label class="cb-select"><span class="sr">Dates for every chart</span><select id="bd-range">' +
-        [['own', 'Dates: each chart’s own'], ['4w', 'Every chart: last 4 weeks'], ['12w', 'Every chart: last 12 weeks'], ['6m', 'Every chart: last 6 months'], ['1y', 'Every chart: last year'], ['all', 'Every chart: all time']].map(([v, l]) => '<option value="' + v + '"' + ((boardRange() || 'own') === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>' + icon('chevD') + '</label>' +
-        '<a href="#charts" class="btn primary sm">' + icon('plus') + '<span>New chart</span></a></div></div>' +
-        '<p class="muted cb-lede">Tap any bar, slice, point or dot to see the tasks behind it.</p></header><div id="bd-root"></div></section>';
+      root.innerHTML = '<section class="page bd-page" id="bd-page"></section>';
       root.addEventListener('click', onBoardClick);
-      root.addEventListener('change', (e) => { if (e.target.id === 'bd-range') { keep(BOARD_RANGE, e.target.value); Object.values(cardUi).forEach((v) => (v.zoom = null)); renderBoard(); } });
-      root.addEventListener('pointerdown', (e) => zoomDown(e, (i0, i1) => {
-        const card = e.target.closest('[data-card]'), item = card && board.find((b) => b.id === card.dataset.card);
-        if (!item) return;
-        const k = withCfg(item, () => zoomKeys(i0, i1)); if (k) { cardView(item.id).zoom = k; renderBoard(); }
-      }));
+      root.addEventListener('change', onBoardChange);
+      root.addEventListener('input', onBoardInput);
+      root.addEventListener('pointerdown', (e) => {
+        if (DB.edit) return;
+        zoomDown(e, (i0, i1) => {
+          const card = e.target.closest('[data-card]'), item = card && chartById(card.dataset.card);
+          if (!item) return;
+          const k = withCfg(item, () => zoomKeys(i0, i1)); if (k) { cardView(item.id).zoom = k; renderBoard(); }
+        });
+      });
       root.addEventListener('pointerover', (e) => { if (e.pointerType === 'mouse') boardTip(e.target); });
       root.addEventListener('focusin', (e) => boardTip(e.target));
-      root.addEventListener('keydown', (e) => { if (e.target.matches && e.target.matches('[data-trow]') && e.key === 'Enter') { e.preventDefault(); return C.openEditor(e.target.dataset.trow); } const n = e.target.closest('[data-seg]'); if (n && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); n.dispatchEvent(new MouseEvent('click', { bubbles: true })); } });
+      root.addEventListener('keydown', onBoardKey);
       renderBoard();
     },
-    update() { if (elB) renderBoard(); },
-    unmount() { elB = null; closeRecords(); }
+    update() { if (elB && !tileDrag && !typingInBoard()) renderBoard(); },
+    unmount() { elB = null; closeRecords(); endHold(); },
+    /** open one dashboard (from the sidebar) */
+    open(id) {
+      if (DB.edit && DB.edit.dirty && DB.edit.id !== id) { C.toast('Save or cancel your changes first'); return; }
+      if (DB.edit && DB.edit.id !== id) DB.edit = null;
+      DB.cur = id; keep(DB_CUR, id);
+      if (C.currentRoute && C.currentRoute() === 'board') { renderBoard(); window.scrollTo(0, 0); } else C.go('board');
+    },
+    list: () => { syncBoard(); return allDashes().map((d) => ({ id: d.id, name: d.name, home: d.id === homeId(), on: C.currentRoute && C.currentRoute() === 'board' && d.id === shown().id })); }
   };
+  const typingInBoard = () => { const a = document.activeElement; return !!(elB && a && elB.contains(a) && /^(INPUT|TEXTAREA)$/.test(a.tagName) && a.type !== 'checkbox'); };
 
-  const SIZES = [['sm', 'Small'], ['md', 'Medium'], ['wide', 'Wide']];
-  const PLOT_SIZE = { sm: { W: 400, H: 290 }, md: { W: 560, H: 320 }, wide: { W: 1000, H: 340 } };
-  /** sections in the order they first appear; charts with no section come first */
-  function sections() {
-    const out = [''];
-    board.forEach((it) => { const sct = it.section || ''; if (!out.includes(sct)) out.push(sct); });
-    return out;
-  }
   function renderBoard() {
-    const root = elB && elB.querySelector('#bd-root');
-    if (!root) return;
+    const page = elB && elB.querySelector('#bd-page');
+    if (!page) return;
     syncBoard();
-    if (!board.length) {
-      root.innerHTML = '<div class="st-sec bd-empty">' + icon('board') + '<h2>Your board is empty</h2><p class="muted">Build a chart in the Chart builder and choose <b>Save to board</b>. It will show up here.</p><a href="#charts" class="btn primary">' + icon('pie') + '<span>Open Chart builder</span></a></div>';
-      return;
+    const d = shown(), edit = !!DB.edit, ds = allDashes();
+    if (!edit) { DB.cur = d.id; }
+    const tiles = edit ? G().resolve(d.tiles, null, false) : G().liveTiles(d.tiles, board).map(G().clamp);
+    const isHome = d.id === homeId();
+    const rangeSel = '<label class="cb-select"><span class="sr">Dates for every chart</span><select id="bd-range">' +
+      [['own', 'Dates: each chart’s own'], ['4w', 'Every chart: last 4 weeks'], ['12w', 'Every chart: last 12 weeks'], ['6m', 'Every chart: last 6 months'], ['1y', 'Every chart: last year'], ['all', 'Every chart: all time']].map(([v, l]) => '<option value="' + v + '"' + ((boardRange() || 'own') === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>' + icon('chevD') + '</label>';
+    const acts = edit
+      ? '<button type="button" class="btn sm" data-bd="picker" aria-expanded="' + DB.picker + '">' + icon('plus') + '<span>Add chart</span></button>' +
+        '<button type="button" class="btn sm" data-bd="addtext">' + icon('note') + '<span>Text</span></button>' +
+        '<button type="button" class="btn sm" data-bd="float" title="Slide everything up to close gaps">' + icon('up') + '<span>Float items up</span></button>' +
+        (ds.length > 1 && !DB.edit.isNew ? (DB.confirm === 'del' ? '<button type="button" class="btn sm danger armed" data-bd="deldash">Tap again to delete</button>' : '<button type="button" class="btn sm ghost danger" data-bd="deldash">' + icon('trash') + '<span>Delete</span></button>') : '') +
+        '<button type="button" class="btn sm ghost" data-bd="cancel">Cancel</button>' +
+        '<button type="button" class="btn primary sm" data-bd="save">' + icon('check') + '<span>Save dashboard</span></button>'
+      : rangeSel +
+        (isHome ? '<span class="bd-homepill">' + icon('star') + 'Home</span>' : '<button type="button" class="btn sm ghost" data-bd="home" title="Open this dashboard first">' + icon('star') + '<span>Set as home</span></button>') +
+        '<button type="button" class="btn sm" data-bd="edit">' + icon('settings') + '<span>Edit dashboard</span></button>' +
+        '<a href="#charts" class="btn primary sm">' + icon('plus') + '<span>New chart</span></a>';
+    const tabs = '<nav class="bd-tabs" aria-label="Dashboards">' + ds.map((x) => '<button type="button" class="bd-tab' + (x.id === d.id ? ' on' : '') + '" data-bd="open" data-id="' + esc(x.id) + '"' + (x.id === d.id ? ' aria-current="page"' : '') + (edit && x.id !== d.id ? ' disabled' : '') + '>' + (x.id === homeId() ? icon('star') : '') + '<span>' + esc(x.name) + '</span></button>').join('') +
+      (edit && DB.edit.isNew ? '<span class="bd-tab on">' + esc(d.name) + '</span>' : '') +
+      (edit ? '' : '<button type="button" class="bd-tab bd-newtab" data-bd="new">' + icon('plus') + '<span>New dashboard</span></button>') + '</nav>';
+    const title = edit ? '<label class="bd-name"><span class="sr">Dashboard name</span><input id="bd-name" maxlength="60" value="' + esc(d.name) + '" autocomplete="off"></label>' : '<h1 class="display">' + esc(d.name) + '</h1>';
+    const rows = Math.max(1, G().height(tiles) + (edit ? 6 : 0));
+    const body = tiles.length
+      ? '<div class="bd-cv' + (edit ? ' edit' : ' can-drill') + '" id="bd-cv" style="--rows:' + rows + '"><div class="bd-ghost" id="bd-ghost" hidden></div>' + G().readingOrder(tiles).map((t) => tileHtml(t, edit)).join('') + '</div>'
+      : '<div class="st-sec bd-empty">' + icon('board') + '<h2>' + (board.length ? 'Nothing on this dashboard yet' : 'No saved charts yet') + '</h2><p class="muted">' +
+        (board.length ? (edit ? 'Use <b>Add chart</b> to place your saved charts, then drag them where you want them.' : 'Choose <b>Edit dashboard</b> to place your saved charts on it.') : 'Build a chart in the Chart builder and choose <b>Save to board</b>. It will show up here.') + '</p>' +
+        (board.length ? (edit ? '' : '<button type="button" class="btn primary" data-bd="edit">' + icon('settings') + '<span>Edit dashboard</span></button>') : '<a href="#charts" class="btn primary">' + icon('pie') + '<span>Open Chart builder</span></a>') + '</div>';
+    page.innerHTML = '<header class="page-head"><p class="eyebrow"><a href="#insights" class="cb-back">' + icon('chevL') + 'Insights</a> · Dashboards</p>' +
+      '<div class="bd-title">' + title + '<div class="bd-acts">' + acts + '</div></div>' + tabs +
+      (edit ? '<p class="muted cb-lede bd-help">Drag a chart by its handle to move it, or drag its bottom-right corner to resize it. Each dot is one square; 24 across. Charts in the way move down. With a handle focused, arrow keys move it and Shift + arrow keys resize it.</p>'
+        : '<p class="muted cb-lede">' + (phone() ? 'Tap a chart to see its tasks. Press and hold for the numbers.' : 'Click any bar, slice, point or dot to see the tasks behind it.') + '</p>') +
+      '</header>' + (edit && DB.picker ? pickerHtml(d) : '') + body;
+    fillPlots();
+    if (C.renderChrome) C.renderChrome();
+  }
+
+  function tileHtml(t, edit) {
+    const pos = 'style="--x:' + t.x + ';--y:' + t.y + ';--w:' + t.w + ';--h:' + t.h + '"';
+    const label = t.text ? (t.text.title || 'Text block') : ((chartById(t.chart) || {}).title || 'chart');
+    const grip = edit ? '<button type="button" class="bd-grip" data-cv="move" data-v="' + esc(t.id) + '" aria-label="Move ' + esc(label) + '. Arrow keys move it; Shift and arrow keys resize it." title="Drag to move">' + icon('grip') + '</button>' : '';
+    const del = edit ? '<button type="button" class="icon-btn sm" data-bd="tdel" data-v="' + esc(t.id) + '" aria-label="Remove ' + esc(label) + ' from this dashboard" title="Remove from this dashboard">' + icon('x') + '</button>' : '';
+    const rz = edit ? '<button type="button" class="bd-rz" data-cv="rz" data-v="' + esc(t.id) + '" aria-label="Resize ' + esc(label) + ', now ' + t.w + ' by ' + t.h + ' squares" title="Drag to resize"></button><span class="bd-badge" hidden></span>' : '';
+    if (t.text) {
+      const inner = edit
+        ? '<input class="bd-ttl" data-tt="title" data-v="' + esc(t.id) + '" value="' + esc(t.text.title || '') + '" placeholder="Heading" aria-label="Heading" maxlength="80"><textarea class="bd-tbody" data-tt="body" data-v="' + esc(t.id) + '" placeholder="Notes (optional)" aria-label="Text" rows="2" maxlength="600">' + esc(t.text.body || '') + '</textarea>'
+        : (t.text.title ? '<h2>' + esc(t.text.title) + '</h2>' : '') + (t.text.body ? '<p>' + esc(t.text.body) + '</p>' : '');
+      return '<article class="bd-tile bd-text' + (edit ? '' : ' plain') + '" data-tile="' + esc(t.id) + '" ' + pos + '>' + (edit ? '<header class="bd-th">' + grip + '<span class="bd-cap muted">Text</span>' + del + '</header>' : '') + '<div class="bd-tx">' + inner + '</div>' + rz + '</article>';
     }
-    const narrow = matchMedia('(max-width: 640px)').matches;
-    const btns = (item) => '<div class="cb-card-btns"><button type="button" class="icon-btn sm" data-edit="' + item.id + '" aria-label="Edit chart" title="Edit in Chart builder">' + icon('settings') + '</button>' +
-      '<button type="button" class="icon-btn sm" data-cmenu="' + item.id + '" aria-label="More for this chart" aria-haspopup="menu" title="Size, section, download">' + icon('more') + '</button></div>';
-    const kpiCard = (item) => withCfg(item, () =>
-      '<article class="st-sec bd-card bd-kpi" data-card="' + item.id + '"><header class="cb-card-head"><h2>' + esc(item.title || autoTitle()) + '</h2>' + btns(item) + '</header>' + plot(false, { W: 240, H: 120, kpi: true }) + '</article>');
-    const chartCard = (item) => withCfg(item, () => {
-      const sz = SIZES.some((x) => x[0] === item.size) ? item.size : 'md';
-      return '<article class="st-sec bd-card sz-' + sz + '" data-card="' + item.id + '">' +
-        '<header class="cb-card-head"><h2>' + esc(item.title || autoTitle()) + '</h2>' + btns(item) + '</header>' +
-        '<p class="bd-filters muted">' + esc(filterText()) + '</p>' +
-        '<div class="cb-plot bd-plot">' + plot(false, narrow ? { W: 360, H: 260 } : PLOT_SIZE[sz]) + '</div>' + zoomHtml(false) +
-        (item.type === 'table' ? '' : '<div class="ins-legend cb-legend">' + legendHtml() + '<span class="ins-cap" aria-live="polite"></span></div>') +
-        summaryHtml() + '</article>';
+    const item = chartById(t.chart);
+    if (!item) return '';
+    return withCfg(item, () => {
+      const kp = item.type === 'kpi';
+      const legend = kp || item.type === 'table' ? '' : legendHtml();
+      return '<article class="st-sec bd-tile bd-card' + (kp ? ' bd-kpi' : '') + (item.type === 'table' ? ' bd-tbl' : '') + '" data-tile="' + esc(t.id) + '" data-card="' + esc(item.id) + '" ' + pos + '>' +
+        '<header class="bd-th">' + grip + '<div class="bd-tt"><h2>' + esc(item.title || autoTitle()) + '</h2>' + (kp ? '' : '<p class="bd-filters muted">' + esc(filterText()) + '</p>') + '</div>' +
+        (edit ? del : '<div class="cb-card-btns"><button type="button" class="icon-btn sm" data-edit="' + item.id + '" aria-label="Edit chart" title="Edit in Chart builder">' + icon('settings') + '</button>' +
+          '<button type="button" class="icon-btn sm" data-cmenu="' + item.id + '" aria-label="More for this chart" aria-haspopup="menu" title="Download, remove">' + icon('more') + '</button></div>') + '</header>' +
+        '<div class="cb-plot bd-plot" data-fill="' + esc(item.id) + '"></div>' + (edit ? '' : zoomHtml(false)) +
+        (legend ? '<div class="ins-legend cb-legend bd-legend">' + legend + '<span class="ins-cap" aria-live="polite"></span></div>' : '') + rz + '</article>';
     });
-    const secs = sections();
-    root.innerHTML = secs.map((name, si) => {
-      const items = board.filter((it) => (it.section || '') === name);
-      if (!items.length) return '';
-      const kpis = items.filter((it) => it.type === 'kpi'), charts = items.filter((it) => it.type !== 'kpi');
-      return '<section class="bd-sec" data-sec="' + esc(name) + '">' +
-        (name ? '<header class="bd-sec-head"><h2>' + esc(name) + '</h2><span class="muted">' + items.length + ' chart' + (items.length === 1 ? '' : 's') + '</span>' +
-          '<button type="button" class="icon-btn sm" data-smenu="' + si + '" aria-label="Section options" aria-haspopup="menu">' + icon('more') + '</button></header>' : '') +
-        (kpis.length ? '<div class="bd-kpis">' + kpis.map(kpiCard).join('') + '</div>' : '') +
-        (charts.length ? '<div class="bd-grid">' + charts.map(chartCard).join('') + '</div>' : '') + '</section>';
-    }).join('');
   }
-  /* ---------- Board layout changes ---------- */
-  function patchItem(id, patch, moveToEnd) {
-    syncBoard();
-    const it = board.find((b) => b.id === id); if (!it) return;
-    const next = Object.assign({}, it, patch);
-    Object.keys(next).forEach((k) => { if (next[k] == null) delete next[k]; });
-    board = moveToEnd ? board.filter((b) => b.id !== id).concat([next]) : board.map((b) => (b.id === id ? next : b));
-    saveBoard(); renderBoard();
+
+  /** draw each chart at the size its tile has now (after the tiles are on the page) */
+  function fillPlots() {
+    if (!elB) return;
+    const ph = phone();
+    elB.querySelectorAll('[data-fill]').forEach((slot) => {
+      const item = chartById(slot.dataset.fill); if (!item) return;
+      const W = Math.max(160, Math.round(slot.clientWidth)), H = Math.max(90, Math.round(slot.clientHeight));
+      const size = ph ? { W, H: item.type === 'table' ? 0 : 200, kpi: true } : { W, H, kpi: true };
+      slot.innerHTML = withCfg(item, () => plot(ph, size), ph && item.type === 'table' ? { limit: 3 } : null);
+    });
   }
-  /** move a chart one place earlier or later among the charts drawn next to it */
-  function nudge(id, dir) {
-    syncBoard();
-    const it = board.find((b) => b.id === id); if (!it) return;
-    const peers = board.filter((b) => (b.section || '') === (it.section || '') && (b.type === 'kpi') === (it.type === 'kpi'));
-    const pi = peers.indexOf(it), other = peers[pi + dir]; if (!other) return;
-    const a = board.indexOf(it), b2 = board.indexOf(other);
-    board = board.slice(); board[a] = other; board[b2] = it;
-    saveBoard(); renderBoard();
-    const card = elB && elB.querySelector('[data-card="' + id + '"]'); if (card) card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  let fitT = null;
+  window.addEventListener('resize', () => { clearTimeout(fitT); fitT = setTimeout(() => { if (elB && !tileDrag) renderBoard(); }, 150); });
+
+  function pickerHtml(d) {
+    const on = new Set(d.tiles.filter((t) => t.chart).map((t) => t.chart));
+    const ds = allDashes();
+    return '<section class="st-sec bd-picker" aria-label="Your saved charts"><header class="bd-ph"><h2>Your saved charts</h2><span class="muted">' + board.length + '</span><a href="#charts" class="btn sm ghost">' + icon('plus') + '<span>New chart</span></a><button type="button" class="icon-btn sm" data-bd="picker" aria-label="Close">' + icon('x') + '</button></header>' +
+      (board.length ? '<ul class="bd-plist">' + board.map((c) => {
+        const elsewhere = ds.filter((x) => x.id !== d.id && (x.tiles || []).some((t) => t.chart === c.id)).map((x) => x.name);
+        const typeName = (TYPES.find((x) => x[0] === c.type) || [0, 'Chart'])[1];
+        return '<li><div class="bd-pt"><b>' + esc(c.title || withCfg(c, autoTitle)) + '</b><span class="muted">' + esc(typeName) + (on.has(c.id) ? ' · on this dashboard' : elsewhere.length ? ' · also on ' + esc(elsewhere.join(', ')) : ' · not on any dashboard') + '</span></div>' +
+          '<button type="button" class="btn sm' + (on.has(c.id) ? ' ghost' : '') + '" data-bd="add" data-v="' + esc(c.id) + '">' + icon('plus') + '<span>' + (on.has(c.id) ? 'Add again' : 'Add') + '</span></button></li>';
+      }).join('') + '</ul>' : '<p class="muted">No saved charts yet. Build one in the Chart builder and choose Save to board.</p>') + '</section>';
   }
-  function reorderSections(order) { board = order.flatMap((name) => board.filter((b) => (b.section || '') === name)); saveBoard(); renderBoard(); }
-  /** a small popover with one text field */
-  function askName(anchor, label, value, onOk) {
-    const pop = C.map.openPop('<form class="bd-ask"><label class="bd-ask-l" for="bd-ask-in">' + esc(label) + '</label><div class="input-wrap sm"><input id="bd-ask-in" maxlength="60" autocomplete="off" value="' + esc(value || '') + '" placeholder="For example: Weekly review"></div>' +
-      '<div class="bd-ask-btns"><button type="button" class="btn sm ghost" data-ask-cancel>Cancel</button><button type="submit" class="btn primary sm">Save</button></div></form>', { anchor, cls: 'bd-askpop' });
-    const input = pop.querySelector('input');
-    setTimeout(() => { input.focus(); input.select(); }, 30);
-    pop.querySelector('form').addEventListener('submit', (e) => { e.preventDefault(); const v = input.value.trim(); C.map.closePop(); if (v) onOk(v); });
-    pop.querySelector('[data-ask-cancel]').addEventListener('click', () => C.map.closePop());
+
+  /* ---------- editing ---------- */
+  function startEdit(dash, isNew) {
+    DB.edit = { id: dash.id, name: dash.name, tiles: G().resolve(G().liveTiles(dash.tiles, board), null, false), dirty: !!isNew, isNew: !!isNew };
+    DB.picker = !DB.edit.tiles.length; DB.confirm = null;
+    renderBoard();
   }
+  function editTiles(fn) { if (!DB.edit) return; DB.edit.tiles = fn(DB.edit.tiles.map((t) => Object.assign({}, t))); DB.edit.dirty = true; renderBoard(); }
+  function saveEdit() {
+    const e = DB.edit; if (!e) return;
+    const ds = allDashes().map((x) => Object.assign({}, x));
+    const out = { id: e.id, name: (e.name || '').trim().slice(0, 60) || 'Dashboard', tiles: G().resolve(e.tiles, null, false).map((t) => (t.text ? { id: t.id, text: { title: t.text.title || '', body: t.text.body || '' }, x: t.x, y: t.y, w: t.w, h: t.h } : { id: t.id, chart: t.chart, x: t.x, y: t.y, w: t.w, h: t.h })) };
+    const i = ds.findIndex((x) => x.id === e.id);
+    if (i >= 0) ds[i] = out; else ds.push(out);
+    DB.edit = null; DB.picker = false; DB.confirm = null; DB.cur = out.id; keep(DB_CUR, out.id);
+    saveDashes(ds);
+    C.toast('Dashboard saved');
+    renderBoard();
+  }
+  function onBoardChange(e) {
+    const t = e.target;
+    if (t.id === 'bd-range') { keep(BOARD_RANGE, t.value); Object.values(cardUi).forEach((v) => (v.zoom = null)); renderBoard(); }
+  }
+  function onBoardInput(e) {
+    const t = e.target;
+    if (!DB.edit) return;
+    if (t.id === 'bd-name') { DB.edit.name = t.value; DB.edit.dirty = true; return; }
+    if (t.dataset.tt) { const tile = DB.edit.tiles.find((x) => x.id === t.dataset.v); if (tile) { tile.text = Object.assign({}, tile.text, { [t.dataset.tt]: t.value }); DB.edit.dirty = true; } }
+  }
+
+  /* ---------- dragging and resizing ----------
+     While the pointer moves nothing is redrawn: the tile follows the pointer, a dashed outline
+     shows the squares it will land on, and the other tiles slide to where they would go. */
+  let tileDrag = null;
+  const setBox = (n, t) => { n.style.setProperty('--x', t.x); n.style.setProperty('--y', t.y); n.style.setProperty('--w', t.w); n.style.setProperty('--h', t.h); };
+  document.addEventListener('pointerdown', (e) => {
+    const h = e.target.closest && e.target.closest('#bd-cv [data-cv]');
+    if (!h || !DB.edit || (e.button != null && e.button !== 0)) return;
+    const cv = document.getElementById('bd-cv'), n = h.closest('[data-tile]');
+    if (!cv || !n) return;
+    e.preventDefault();
+    const tiles = G().resolve(DB.edit.tiles, null, false);
+    const t0 = tiles.find((t) => t.id === h.dataset.v); if (!t0) return;
+    tileDrag = { id: t0.id, mode: h.dataset.cv === 'rz' ? 'resize' : 'move', sx: e.clientX, sy: e.clientY, colW: cv.getBoundingClientRect().width / G().COLS, tiles, t0, n, cv, rect: n.getBoundingClientRect(), result: tiles, pid: e.pointerId, moved: false };
+    try { h.setPointerCapture(e.pointerId); } catch (err) { /* older browsers */ }
+    n.classList.add('dragging');
+  });
+  window.addEventListener('pointermove', (e) => {
+    const d = tileDrag; if (!d || e.pointerId !== d.pid) return;
+    const dx = e.clientX - d.sx, dy = e.clientY - d.sy;
+    if (Math.abs(dx) + Math.abs(dy) > 3) d.moved = true;
+    const t = Object.assign({}, d.t0), MW = G().MIN_W, mh = G().minH(t), COLS = G().COLS;
+    if (d.mode === 'move') {
+      t.x = Math.max(0, Math.min(COLS - t.w, Math.round(d.t0.x + dx / d.colW)));
+      t.y = Math.max(0, Math.round(d.t0.y + dy / d.colW));
+      d.n.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+    } else {
+      t.w = Math.max(MW, Math.min(COLS - t.x, Math.round(d.t0.w + dx / d.colW)));
+      t.h = Math.max(mh, Math.round(d.t0.h + dy / d.colW));
+      d.n.style.width = Math.max(d.colW * MW - 10, d.rect.width + dx) + 'px';
+      d.n.style.height = Math.max(d.colW * mh - 10, d.rect.height + dy) + 'px';
+      const b = d.n.querySelector('.bd-badge'); if (b) { b.hidden = false; b.textContent = t.w + ' × ' + t.h; }
+    }
+    d.result = G().resolve(d.tiles.map((x) => (x.id === d.id ? t : x)), d.id, false);
+    d.result.forEach((x) => { if (x.id === d.id) return; const o = d.cv.querySelector('[data-tile="' + CSS.escape(x.id) + '"]'); if (o) setBox(o, x); });
+    const g = document.getElementById('bd-ghost'), mine = d.result.find((x) => x.id === d.id);
+    if (g && mine) { g.hidden = false; setBox(g, mine); }
+    d.cv.style.setProperty('--rows', G().height(d.result) + 6);
+  });
+  function endTileDrag(e) {
+    const d = tileDrag; if (!d || (e && e.pointerId !== d.pid)) return;
+    tileDrag = null;
+    if (DB.edit && d.moved) { DB.edit.tiles = d.result; DB.edit.dirty = true; }
+    renderBoard();
+    const h = elB && elB.querySelector('#bd-cv [data-cv="' + (d.mode === 'move' ? 'move' : 'rz') + '"][data-v="' + CSS.escape(d.id) + '"]');
+    if (h) h.focus({ preventScroll: true });
+  }
+  window.addEventListener('pointerup', endTileDrag);
+  window.addEventListener('pointercancel', endTileDrag);
+
+  function onBoardKey(e) {
+    if (e.target.matches && e.target.matches('[data-trow]') && e.key === 'Enter') { e.preventDefault(); return C.openEditor(e.target.dataset.trow); }
+    const n = e.target.closest('[data-seg]'); if (n && !DB.edit && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); n.dispatchEvent(new MouseEvent('click', { bubbles: true })); return; }
+    if (e.key === 'Enter' && e.target.id === 'bd-name') { e.preventDefault(); e.target.blur(); return; }
+    const h = e.target.closest && e.target.closest('#bd-cv [data-cv="move"]');
+    if (!h || !DB.edit || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
+    e.preventDefault();
+    const tiles = G().resolve(DB.edit.tiles, null, false), t = tiles.find((x) => x.id === h.dataset.v); if (!t) return;
+    const dx = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0, dy = e.key === 'ArrowUp' ? -1 : e.key === 'ArrowDown' ? 1 : 0;
+    const COLS = G().COLS;
+    const nt = e.shiftKey ? Object.assign({}, t, { w: Math.max(G().MIN_W, Math.min(COLS - t.x, t.w + dx)), h: Math.max(G().minH(t), t.h + dy) }) : Object.assign({}, t, { x: Math.max(0, Math.min(COLS - t.w, t.x + dx)), y: Math.max(0, t.y + dy) });
+    DB.edit.tiles = G().resolve(tiles.map((x) => (x.id === t.id ? nt : x)), t.id, false); DB.edit.dirty = true;
+    const id = t.id; renderBoard();
+    const again = elB.querySelector('#bd-cv [data-cv="move"][data-v="' + CSS.escape(id) + '"]'); if (again) again.focus({ preventScroll: true });
+  }
+
+  /* ---------- chart menu (viewing) ---------- */
   function cardMenu(btn, id) {
     syncBoard();
-    const it = board.find((b) => b.id === id); if (!it) return;
-    const secs = sections().filter(Boolean), cur = it.section || '', kpi = it.type === 'kpi';
-    const peers = board.filter((b) => (b.section || '') === cur && (b.type === 'kpi') === kpi), pi = peers.indexOf(it);
-    const items = [];
-    if (!kpi) {
-      items.push({ head: 'Size' });
-      SIZES.forEach(([k, l]) => items.push({ label: l, ic: (it.size || 'md') === k ? 'check' : null, run: () => patchItem(id, { size: k === 'md' ? null : k }) }));
-      items.push('sep');
-    }
-    items.push({ head: 'Section' });
-    secs.filter((x) => x !== cur).forEach((x) => items.push({ label: 'Move to ' + x, ic: 'rows', run: () => patchItem(id, { section: x }, true) }));
-    if (cur) items.push({ label: 'Take out of “' + cur + '”', ic: 'x', run: () => patchItem(id, { section: null }, true) });
-    items.push({ label: 'New section…', ic: 'plus', run: () => askName(btn, 'Name the new section', '', (v) => patchItem(id, { section: v }, true)) });
-    if (peers.length > 1) {
-      items.push('sep');
-      if (pi > 0) items.push({ label: 'Move earlier', ic: 'up', run: () => nudge(id, -1) });
-      if (pi < peers.length - 1) items.push({ label: 'Move later', ic: 'down', run: () => nudge(id, 1) });
-    }
-    items.push('sep');
-    items.push({ label: 'Download PNG', ic: 'image', run: () => { const card = elB.querySelector('[data-card="' + id + '"]'); withCfg(it, () => exportPng(card, it.title || autoTitle())); } });
-    items.push({ label: 'Download CSV', ic: 'download', run: () => withCfg(it, () => exportCsv(it.title || autoTitle())) });
-    items.push('sep');
-    items.push({ label: 'Remove from board', ic: 'trash', danger: true, run: () => removeItem(id) });
+    const it = chartById(id); if (!it) return;
+    const d = shown();
+    const others = G().usedOn(allDashes(), id).filter((x) => x.id !== d.id);
+    const items = [
+      { label: 'Download PNG', ic: 'image', run: () => { const card = elB.querySelector('[data-card="' + id + '"]'); withCfg(it, () => exportPng(card, it.title || autoTitle())); } },
+      { label: 'Download CSV', ic: 'download', run: () => withCfg(it, () => exportCsv(it.title || autoTitle())) },
+      'sep',
+      { label: 'Remove from this dashboard', ic: 'x', run: () => removeFromDash(id) },
+      { label: others.length ? 'Delete chart (also on ' + others.map((x) => x.name).join(', ') + ')' : 'Delete chart', ic: 'trash', danger: true, run: () => deleteChart(id) }
+    ];
     C.map.menu(items, { anchor: btn, cls: 'menu bd-menu' });
   }
-  function sectionMenu(btn, si) {
-    syncBoard();
-    const order = sections(), name = order[+si]; if (!name) return;
-    const named = order.filter(Boolean), ni = named.indexOf(name);
-    const items = [{ label: 'Rename section…', ic: 'note', run: () => askName(btn, 'Rename section', name, (v) => { board = board.map((b) => ((b.section || '') === name ? Object.assign({}, b, { section: v }) : b)); saveBoard(); renderBoard(); }) }];
-    const swap = (d) => { const o = named.slice(); [o[ni], o[ni + d]] = [o[ni + d], o[ni]]; reorderSections([''].concat(o)); };
-    if (ni > 0) items.push({ label: 'Move section up', ic: 'up', run: () => swap(-1) });
-    if (ni < named.length - 1) items.push({ label: 'Move section down', ic: 'down', run: () => swap(1) });
-    items.push('sep', { label: 'Ungroup (keep the charts)', ic: 'x', run: () => { board = board.map((x) => { if ((x.section || '') !== name) return x; const c = Object.assign({}, x); delete c.section; return c; }); saveBoard(); renderBoard(); } });
-    C.map.menu(items, { anchor: btn, cls: 'menu bd-menu' });
+  function removeFromDash(chartId) {
+    const d = curDash(), before = allDashes();
+    const ds = before.map((x) => (x.id === d.id ? Object.assign({}, x, { tiles: x.tiles.filter((t) => t.chart !== chartId) }) : x));
+    saveDashes(ds); renderBoard();
+    C.toast('Removed from “' + d.name + '”. The chart is still saved.', { action: 'Undo', onAction: () => { saveDashes(before); renderBoard(); } });
   }
-  function removeItem(id) {
+  function deleteChart(id) {
     syncBoard();
     const idx = board.findIndex((b) => b.id === id); if (idx < 0) return;
-    const gone = board[idx];
-    board = board.filter((b) => b.id !== gone.id); saveBoard();
+    const gone = board[idx], beforeCharts = board.slice(), beforeDash = allDashes();
+    const ds = beforeDash.map((x) => Object.assign({}, x, { tiles: (x.tiles || []).filter((t) => t.chart !== id) }));
+    saveDashes(ds, board.filter((b) => b.id !== id));
     if (cfg.id === gone.id) { cfg.id = null; keep(LS_DRAFT, cfg); }
     renderBoard();
-    C.toast('Removed “' + (gone.title || 'chart') + '”', { action: 'Undo', onAction: () => { syncBoard(); if (!board.some((b) => b.id === gone.id)) { board = board.slice(); board.splice(Math.min(idx, board.length), 0, gone); saveBoard(); } } });
+    C.toast('Deleted “' + (gone.title || 'chart') + '”', { action: 'Undo', onAction: () => { saveDashes(beforeDash, beforeCharts); renderBoard(); } });
   }
+  /** a chart just saved in the builder goes on the dashboard you last looked at */
+  function placeNewChart(item) {
+    syncBoard();
+    if (!Array.isArray(S().state.board.dashboards) || !S().state.board.dashboards.length) return curDash().name; // the old board shows every chart anyway
+    const d = curDash();
+    const ds = allDashes().map((x) => (x.id === d.id ? Object.assign({}, x, { tiles: G().addChart(x.tiles, item, C.uid('tl')) }) : x));
+    saveDashes(ds);
+    return d.name;
+  }
+
   function filterText() {
     const st = { all: 'All tasks', open: 'Open tasks', overdue: 'Overdue tasks', done: 'Done tasks' }[cfg.status] || 'All tasks';
     const rg = { all: 'all time', '4w': 'last 4 weeks', '12w': 'last 12 weeks', '6m': 'last 6 months', '1y': 'last year' }[curRange()] || 'all time';
@@ -1996,13 +2137,43 @@
     if (swallowZoomClick) { e.preventDefault(); return; }
     const t = e.target;
     syncBoard();
+    const b = t.closest('[data-bd]');
+    if (b) {
+      const a = b.dataset.bd, v = b.dataset.v;
+      if (a !== 'deldash') DB.confirm = null;
+      switch (a) {
+        case 'open': return boardView.open(b.dataset.id);
+        case 'edit': return startEdit(curDash());
+        case 'new': return startEdit({ id: C.uid('db'), name: 'New dashboard', tiles: [] }, true);
+        case 'home': saveDashes(allDashes(), null, curDash().id); C.toast('“' + curDash().name + '” opens first now'); return renderBoard();
+        case 'cancel': DB.edit = null; DB.picker = false; return renderBoard();
+        case 'save': return saveEdit();
+        case 'picker': DB.picker = !DB.picker; return renderBoard();
+        case 'float': return editTiles((tl) => G().float(tl));
+        case 'addtext': return editTiles((tl) => { const p = G().place(tl, 24, 2); return tl.concat([{ id: C.uid('tl'), text: { title: '', body: '' }, x: p.x, y: p.y, w: 24, h: 2 }]); });
+        case 'add': { const c = chartById(v); if (!c) return; editTiles((tl) => G().addChart(tl, c, C.uid('tl'))); C.toast('Added “' + (c.title || 'chart') + '”'); return; }
+        case 'tdel': return editTiles((tl) => tl.filter((x) => x.id !== v));
+        case 'deldash': {
+          if (DB.confirm !== 'del') { DB.confirm = 'del'; return renderBoard(); }
+          const id = DB.edit.id, name = DB.edit.name, before = allDashes();
+          const ds = before.filter((x) => x.id !== id);
+          DB.edit = null; DB.confirm = null; DB.cur = ds[0].id; keep(DB_CUR, DB.cur);
+          saveDashes(ds, null, homeId() === id ? ds[0].id : homeId());
+          C.toast('Deleted “' + name + '”. Its charts are still saved.', { action: 'Undo', onAction: () => { saveDashes(before); renderBoard(); } });
+          return renderBoard();
+        }
+      }
+      return;
+    }
+    if (DB.edit) return; // arranging, not reading
     const card = t.closest('[data-card]');
     const lg = t.closest('[data-legend]');
-    if (lg && card) { const v = cardView(card.dataset.card), k = lg.dataset.legend; v.solo = k && v.solo !== k ? k : null; return renderBoard(); }
+    if (lg && card) { const vw = cardView(card.dataset.card), k = lg.dataset.legend; vw.solo = k && vw.solo !== k ? k : null; return renderBoard(); }
     if (t.closest('[data-unzoom]') && card) { cardView(card.dataset.card).zoom = null; return renderBoard(); }
     if (card) {
       const tc = t.closest('[data-tcheck]'); if (tc) return C.completeTask(tc.dataset.tcheck);
-      const ts = t.closest('[data-tsort]'); if (ts) { const it = board.find((b) => b.id === card.dataset.card); if (it) patchItem(it.id, { sort: nextSort(it.sort, ts.dataset.tsort) }); return; }
+      const ts = t.closest('[data-tsort]');
+      if (ts) { const it = chartById(card.dataset.card); if (it) { board = board.map((x) => (x.id === it.id ? Object.assign({}, x, { sort: nextSort(it.sort, ts.dataset.tsort) }) : x)); saveBoard(); renderBoard(); } return; }
       if (t.closest('[data-tmore]')) return openRecords(card.dataset.card, 'all', '');
       const tr = t.closest('[data-trow]'); if (tr) return C.openEditor(tr.dataset.trow);
     }
@@ -2010,13 +2181,61 @@
     if (seg && card) return openRecords(card.dataset.card, seg.dataset.seg, seg.dataset.tip);
     const ed = t.closest('[data-edit]');
     if (ed) {
-      const item = board.find((b) => b.id === ed.dataset.edit);
-      if (item) { Object.assign(cfg, BLANK, item); keep(LS_DRAFT, cfg); const v = cardView(item.id); ui.solo = v.solo; ui.zoom = v.zoom; C.go('charts'); }
+      const item = chartById(ed.dataset.edit);
+      if (item) { Object.assign(cfg, BLANK, item); keep(LS_DRAFT, cfg); const vw = cardView(item.id); ui.solo = vw.solo; ui.zoom = vw.zoom; C.go('charts'); }
       return;
     }
     const cm = t.closest('[data-cmenu]'); if (cm) return cardMenu(cm, cm.dataset.cmenu);
-    const sm = t.closest('[data-smenu]'); if (sm) return sectionMenu(sm, sm.dataset.smenu);
+    // phones: a tap on a card's empty space shows all of its tasks
+    if (card && phone() && !t.closest('button, a, input, select, textarea')) return openRecords(card.dataset.card, 'all', '');
   }
+
+  /* ---------- phones: press and hold a chart for its numbers ---------- */
+  const HOLD_MS = 450, HOLD_SLOP = 10;
+  let hold = null, eatClick = false;
+  function holdFacts(e, card) {
+    const node = e.target.closest && e.target.closest('[data-tip]');
+    const item = chartById(card.dataset.card); if (!item) return null;
+    if (node && card.contains(node)) {
+      const tip = node.dataset.tip, i = tip.indexOf(':');
+      return { title: i > 0 ? tip.slice(0, i) : (item.title || 'Chart'), lines: [i > 0 ? tip.slice(i + 1).trim() : tip, 'Tap to see the tasks'] };
+    }
+    const r = recordsFor(item, 'all');
+    return { title: item.title || withCfg(item, autoTitle), lines: [r ? r.tasks.length + ' task' + (r.tasks.length === 1 ? '' : 's') : '', 'Tap to see them'].filter(Boolean) };
+  }
+  function showHold(f, x, y) {
+    let b = document.getElementById('bd-hold');
+    if (!b) { b = document.createElement('div'); b.id = 'bd-hold'; b.className = 'bd-hold'; b.setAttribute('role', 'status'); document.body.appendChild(b); }
+    b.innerHTML = '<b>' + esc(f.title) + '</b>' + f.lines.map((s) => '<span>' + esc(s) + '</span>').join('');
+    b.hidden = false;
+    const r = b.getBoundingClientRect(), vw = document.documentElement.clientWidth;
+    b.style.left = Math.max(8, Math.min(vw - r.width - 8, x - r.width / 2)) + 'px';
+    b.style.top = (y - r.height - 28 >= 8 ? y - r.height - 28 : y + 28) + 'px';
+  }
+  function endHold() {
+    if (!hold) return;
+    clearTimeout(hold.timer);
+    if (hold.shown) { const b = document.getElementById('bd-hold'); if (b) b.hidden = true; eatClick = true; setTimeout(() => { eatClick = false; }, 600); }
+    hold = null;
+  }
+  document.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' || DB.edit) return;
+    const card = e.target.closest && e.target.closest('#bd-cv.can-drill .bd-card');
+    if (!card) return;
+    endHold();
+    hold = { x: e.clientX, y: e.clientY, shown: false, pid: e.pointerId };
+    hold.timer = setTimeout(() => {
+      if (!hold) return;
+      const f = holdFacts(e, card); if (!f) { hold = null; return; }
+      hold.shown = true; showHold(f, hold.x, hold.y);
+    }, HOLD_MS);
+  });
+  window.addEventListener('pointermove', (e) => { if (hold && e.pointerId === hold.pid && !hold.shown && Math.hypot(e.clientX - hold.x, e.clientY - hold.y) > HOLD_SLOP) { clearTimeout(hold.timer); hold = null; } });
+  window.addEventListener('pointerup', endHold);
+  window.addEventListener('pointercancel', endHold);
+  window.addEventListener('scroll', () => { if (hold && !hold.shown) { clearTimeout(hold.timer); hold = null; } }, true);
+  document.addEventListener('contextmenu', (e) => { if (e.target.closest && e.target.closest('#bd-cv.can-drill .bd-card') && (hold || eatClick)) e.preventDefault(); });
+  document.addEventListener('click', (e) => { if (eatClick && e.target.closest && e.target.closest('#bd-cv')) { eatClick = false; e.preventDefault(); e.stopImmediatePropagation(); } }, true);
 
   /* ---------- records modal ---------- */
   let modal = null;
@@ -2039,7 +2258,14 @@
         const [li, ri] = seg.slice(1).split(':').map(Number), l = h.links.find((x) => x.li === li && x.ri === ri);
         return l ? { title: item.title || autoTitle(), label: l.a + ' → ' + l.b, color: h.colors[l.a], tasks: l.tasks } : null;
       }
+      if (seg === 'all' && cfg.type === 'sunburst') { const sb = sunData(); return sb ? { title: item.title || autoTitle(), label: 'Whole map', color: 'var(--accent)', tasks: sb.center.all } : null; }
+      if (seg === 'all' && cfg.type === 'handoff') { const h = handoffData(); return { title: item.title || autoTitle(), label: 'Every handoff', color: 'var(--accent)', tasks: h.pairs.map((q) => q.t) }; }
       const b = build();
+      if (seg === 'all') {
+        const seen = new Set(), tasks = [];
+        (b.points ? b.points.map((p) => p.t) : (b.raw || []).map((r) => r.t)).forEach((t) => { if (t && !seen.has(t.id)) { seen.add(t.id); tasks.push(t); } });
+        return { title: item.title || autoTitle(), label: 'All ' + tasks.length + ' task' + (tasks.length === 1 ? '' : 's'), color: 'var(--accent)', tasks };
+      }
       if (seg[0] === 'p') {
         const p = b.points[+seg.slice(1)];
         if (!p) return null;
