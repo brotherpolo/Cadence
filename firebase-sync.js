@@ -79,6 +79,7 @@
         finish(u);
       });
     });
+    await approval(db, auth, user);
     const uid = user.uid;
     FB.app = app; FB.db = app.firestore(); FB.load = load; FB.SDK = SDK; FB.config = cfg; // push.js builds on these
     const me = { uid, name: user.displayName || '', email: (user.email || '').toLowerCase(), verified: !!user.emailVerified };
@@ -227,21 +228,57 @@
   };
   const msg = (e) => ERR[e && e.code] || (e && e.message) || 'Something went wrong. Try again.';
 
+  /* Cadence is by approval: a new account sees only a "no access" screen until a Formwright admin turns on
+     "Cadence" for it on the Users screen (users/{uid}.cadence; admins always can).
+     firestore.rules enforce the same thing, so this screen is only the friendly part. */
+  const approved = (d) => !!d && (d.role === 'admin' || d.cadence === true);
+  async function approval(db, auth, user) {
+    const ref = db.collection('users').doc(user.uid);
+    let snap;
+    try { snap = await ref.get(); } catch (e) { console.warn('Could not check approval:', e); return; }
+    if (!snap.exists) {
+      // the same starting record Formwright makes: a member with no access, so an admin can find and approve it
+      try { await ref.set({ email: user.email || '', displayName: user.displayName || '', role: 'member', groups: [], access: {}, createdAt: Date.now() }); }
+      catch (e) { console.warn('Could not create the account record:', e); }
+      try { snap = await ref.get(); } catch (e) { return; }
+    }
+    if (!approved(snap.exists ? snap.data() : null)) {
+      mode = 'approve'; showGate(auth);
+      await new Promise((resolve) => {
+        const stop = ref.onSnapshot((x) => { if (approved(x.exists ? x.data() : null)) { stop(); hideGate(); mode = 'signin'; resolve(); } }, (e) => console.warn('Approval check stopped:', e));
+      });
+    }
+    // if an admin takes access away later, close Cadence straight away and show the no-access screen
+    ref.onSnapshot((x) => { if (!approved(x.exists ? x.data() : null)) { try { localStorage.removeItem('cadence.v1'); } catch (e) { /* blocked */ } location.reload(); } }, () => {});
+  }
+  function renderApprove() {
+    const u = currentAuth && currentAuth.currentUser;
+    gate.innerHTML = '<div class="gate-card" role="dialog" aria-modal="true" aria-labelledby="gate-title">' +
+      '<div class="brand"><svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="2" width="28" height="28" rx="9" class="logo-bg"/><rect x="8.5" y="16" width="3.6" height="8" rx="1.8" class="logo-bar"/><rect x="14.2" y="11" width="3.6" height="13" rx="1.8" class="logo-bar"/><rect x="19.9" y="7.5" width="3.6" height="16.5" rx="1.8" class="logo-bar hi"/></svg><span class="brand-name">Cadence</span></div>' +
+      '<h1 id="gate-title" class="gate-title">You don’t have access yet</h1>' +
+      '<p class="muted gate-sub">Please contact an administrator.</p>' +
+      '<p class="gate-note">Signed in as <b>' + esc((u && u.email) || 'this account') + '</b></p>' +
+      '<div class="gate-links"><button type="button" class="gate-link" data-aout>Sign out</button></div>' +
+      '</div>';
+  }
   function showGate(auth) {
     currentAuth = auth;
     if (!gate) {
       gate = document.createElement('div');
       gate.className = 'gate';
       document.body.appendChild(gate);
+      // nothing behind the screen can be reached with the keyboard or a screen reader
+      [...document.body.children].forEach((el) => { if (el !== gate) el.inert = true; });
       gate.addEventListener('submit', (e) => onSubmit(e, auth));
       gate.addEventListener('click', (e) => onClick(e, auth));
     }
     renderGate();
   }
-  function hideGate() { if (gate) { gate.remove(); gate = null; } }
+  function hideGate() { if (gate) { gate.remove(); gate = null; [...document.body.children].forEach((el) => { el.inert = false; }); } }
 
   function renderGate(error, note) {
     if (mode === 'verify') return renderVerify(error, note);
+    if (mode === 'approve') return renderApprove();
     const up = mode === 'signup';
     gate.innerHTML = '<div class="gate-card" role="dialog" aria-modal="true" aria-labelledby="gate-title">' +
       '<div class="brand"><svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="2" width="28" height="28" rx="9" class="logo-bg"/><rect x="8.5" y="16" width="3.6" height="8" rx="1.8" class="logo-bar"/><rect x="14.2" y="11" width="3.6" height="13" rx="1.8" class="logo-bar"/><rect x="19.9" y="7.5" width="3.6" height="16.5" rx="1.8" class="logo-bar hi"/></svg><span class="brand-name">Cadence</span></div>' +
@@ -298,6 +335,7 @@
       catch (err) { renderGate(msg(err)); }
       return;
     }
+    if (e.target.closest('[data-aout]')) { await auth.signOut(); try { localStorage.removeItem('cadence.v1'); } catch (err) { /* blocked */ } return location.reload(); }
     if (e.target.closest('[data-vout]')) { mode = 'signin'; stopVerifyWatch(); return auth.signOut(); }
     if (e.target.closest('[data-g]')) {
       try { await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()); }

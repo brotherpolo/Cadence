@@ -200,6 +200,7 @@ In the task editor, **Assigned to** shows "Me", the people you've worked with re
 - The assignee sees the owner's type and importance names and colors, even if their own settings differ.
 - Completing a repeating task as the assignee creates the next occurrence for the same owner and assignee.
 - The app shows a notice when someone assigns you a task, and when an assignee completes or hands back one of yours. Use the **Assigned to me** / **Assigned to others** filters on the Tasks page to see just those.
+- **Version 25** makes Cadence **by approval**: a new account sees only a blocking screen ("You don't have access yet. Please contact an administrator.", the email it's signed in with, and Sign out) until a Formwright admin switches on **Can use Cadence** for it under Users (admins always can). It opens by itself once approved, and closes at once if access is taken away, and the rules refuse Cadence data to anyone not approved. Its sign-in also creates the same starting account record Formwright does, so new people show up there to approve. The site now runs scripts only from itself and Google's sign-in, Firebase and App Check services (the old inline redirect is `boot.js`). **Order matters:** install Formwright's update, approve everyone who uses Cadence, then upload these files, and deploy the new `firestore.rules` last.
 - **Version 24** turns the Board into **Dashboards**: several per person, each a grid you arrange by dragging and resizing. **Deploy the new `firestore.rules` before uploading the new files**: the old rules reject a board that holds dashboards. Your existing board opens as a dashboard called "My board" (sections become headings; small, medium and wide cards become 8, 12 and 24 squares across). Nothing is saved in the new shape until you change something, so nothing is lost if you go back. New charts from the Chart builder go on the dashboard you last opened.
 - **Version 22** links tasks to Formwright records (see "Linking tasks to records"). **Deploy the new `firestore.rules` before uploading the new files**: the old rules reject tasks with a record link.
 - **Version 16** adds burn-up and flow charts, period comparison, trend lines, chart summaries, chart filters and a Board-wide date range. No rules change.
@@ -246,6 +247,7 @@ dashgrid.js           dashboard layout: positions, moving, resizing, turning the
 charts.js             Chart builder and Dashboards pages
 settings.js           Settings page
 app.js                app shell, routing, shortcuts
+boot.js               forwards the old GitHub Pages address (kept out of index.html so inline scripts can be refused)
 firestore.rules       Firestore security rules (Cadence and Formwright)
 storage.rules         Storage security rules (Formwright uploads)
 firestore.indexes.json  indexes: reminders, and tasks linked to a record
@@ -280,6 +282,9 @@ Cadence is served from Firebase Hosting at its own site (for example `https://ca
 `index.html` loads every file with a version tag (`app.js?v=20`). When you change any file, bump the number in `index.html` (and `C.VERSION` in `utils.js`) so browsers fetch the new copies instead of cached ones. Settings → Your data shows the version each device is running.
 
 ### Security settings
+
+- **Approval:** Cadence is for approved accounts only (`users/{uid}.cadence`, set by a Formwright admin on the Users screen; admins always can). See Version 25.
+- **Scripts:** the Content Security Policy in `firebase.json` allows scripts only from this site, `www.gstatic.com` (Firebase), `apis.google.com` (Google sign-in) and `www.google.com` (App Check). There are no inline scripts.
 
 - **App Check** (optional, recommended): add `window.CADENCE_APPCHECK_KEY = '<reCAPTCHA Enterprise site key>';` to `firebase-config.js`. Cadence then proves to Firebase that requests come from this site. Nothing changes until the key is set.
 - **What gets published:** Hosting publishes this folder except tests, functions, rules, docs and any `.json`, `.md`, `.env`, `.pem`, `.key`, `.csv`, `.sql`, `.log` or service-account file, so a key file added by mistake is never served.

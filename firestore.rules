@@ -34,6 +34,8 @@ rules_version = '2';
 //   copied so the assignee sees them even without access to the form).
 //
 // Privacy policy these rules enforce:
+//   - Cadence is by approval: only admins and accounts an admin has approved
+//     (users/{uid}.cadence) can use tasks, the directory, push settings and private items.
 //   - Settings, the map and the board are private: only their owner can read or
 //     write them. Nobody else can see them, not even people you share tasks with.
 //   - A task is visible only to its owner and its assignee.
@@ -113,6 +115,10 @@ service cloud.firestore {
     function isAdmin() { return hasAccount() && me().get('role', 'member') == 'admin'; }
     // Someone an admin has let in: an admin, or in at least one security group. A brand-new
     // account sees nothing in Formwright (not even form designs or names) until then.
+    // Cadence is by approval: an admin turns on "Cadence" for an account in Formwright's
+    // Users screen (users/{uid}.cadence). Admins can always use it. Without approval an
+    // account can't read or write tasks, the people directory, push settings or private items.
+    function cadenceOk() { return hasAccount() && (me().get('role', 'member') == 'admin' || me().get('cadence', false) == true); }
     function isMember() { return hasAccount() && (me().get('role', 'member') == 'admin' || me().get('groups', []).size() > 0); }
 
     // Effective level for one form: the form's own entry, else the "*" default, else nothing.
@@ -289,9 +295,9 @@ service cloud.firestore {
 
     match /tasks/{taskId} {
       // reads (single gets and the app's "members array-contains me" query)
-      allow read: if signedIn() && request.auth.uid in resource.data.members;
+      allow read: if signedIn() && request.auth.uid in resource.data.members && cadenceOk();
 
-      allow create: if signedIn()
+      allow create: if signedIn() && cadenceOk()
         && validTask(request.resource.data, taskId)
         && (
           // owner: their own email, and a real assignee if any
@@ -304,7 +310,7 @@ service cloud.firestore {
           || spawnedByAssignee(request.resource.data)
         );
 
-      allow update: if signedIn()
+      allow update: if signedIn() && cadenceOk()
         && validTask(request.resource.data, taskId)
         && (
           // owner: anything except ownership. A changed email must be their own,
@@ -325,7 +331,7 @@ service cloud.firestore {
                                    'members', 'updatedAt']))
         );
 
-      allow delete: if signedIn()
+      allow delete: if signedIn() && cadenceOk()
         // deleting a task that never reached the server is a no-op
         && (resource == null
             || resource.data.ownerId == request.auth.uid
@@ -337,9 +343,9 @@ service cloud.firestore {
 
     match /people/{email} {
       // one exact address at a time; the directory can't be listed or scraped
-      allow get: if signedIn();
+      allow get: if signedIn() && cadenceOk();
       allow list: if false;
-      allow create, update: if signedIn()
+      allow create, update: if signedIn() && cadenceOk()
         && request.auth.token.email_verified == true
         && myEmail() != null
         && email == myEmail()
@@ -366,11 +372,13 @@ service cloud.firestore {
           && (!('testAt' in d) || d.testAt is number);
     }
     match /notify/{uid} {
-      allow read, delete: if isOwner(uid);
-      allow create, update: if isOwner(uid) && validNotify(request.resource.data);
+      allow read: if isOwner(uid) && cadenceOk();
+      allow delete: if isOwner(uid);
+      allow create, update: if isOwner(uid) && cadenceOk() && validNotify(request.resource.data);
       match /devices/{deviceId} {
-        allow read, delete: if isOwner(uid);
-        allow create, update: if isOwner(uid)
+        allow read: if isOwner(uid) && cadenceOk();
+        allow delete: if isOwner(uid);
+        allow create, update: if isOwner(uid) && cadenceOk()
           && request.resource.data.keys().hasOnly(['token', 'label', 'createdAt', 'updatedAt'])
           && request.resource.data.token is string && request.resource.data.token.size() <= 4096
           && optString(request.resource.data, 'label', 120);
@@ -382,8 +390,9 @@ service cloud.firestore {
     // (the app moves them to /tasks) but no longer written, so an outdated tab
     // can't re-upload stale copies.
     match /users/{uid}/items/{itemId} {
-      allow read, delete: if isOwner(uid);
-      allow create, update: if isOwner(uid)
+      allow read: if isOwner(uid) && cadenceOk();
+      allow delete: if isOwner(uid);
+      allow create, update: if isOwner(uid) && cadenceOk()
         && ((itemId == 'settings' && validSettings(request.resource.data))
             || (itemId == 'map' && validMap(request.resource.data))
             || (itemId == 'board' && validBoard(request.resource.data)));
