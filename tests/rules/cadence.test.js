@@ -14,14 +14,17 @@ const NONE = { view: 'none', edit: 'none' };
 const READ = { view: 'all', edit: 'none' };
 const OWN = { view: 'own', edit: 'own' };
 
-// Cadence people. owen owns tasks; bob is his assignee; nora has never opened Formwright.
+// Cadence people. owen owns tasks; bob is his assignee; nora uses Cadence but has no Formwright access.
 // In Formwright: owen can see every Clients record and nothing else; bob has no access;
 // mia sees only Clients records she created; admin sees everything.
+// Cadence is by approval (cadence: true): stan signed up but isn't approved yet.
 const accounts = {
   admin: { role: 'admin', access: {} },
-  owen: { role: 'member', access: { '*': NONE, f_clients: READ } },
-  bob: { role: 'member', access: { '*': NONE } },
-  mia: { role: 'member', access: { '*': NONE, f_clients: OWN } },
+  owen: { role: 'member', access: { '*': NONE, f_clients: READ }, cadence: true },
+  bob: { role: 'member', access: { '*': NONE }, cadence: true },
+  mia: { role: 'member', access: { '*': NONE, f_clients: OWN }, cadence: true },
+  nora: { role: 'member', access: {}, cadence: true },
+  stan: { role: 'member', access: {} },
 };
 
 const email = (uid) => `${uid}@example.com`;
@@ -269,6 +272,44 @@ describe('people directory', () => {
     await assertFails(setDoc(doc(db('owen'), 'people', email('bob')), { uid: 'owen', name: 'Not Bob' }));
     const unverified = env.authenticatedContext('zed', { email: email('zed'), email_verified: false }).firestore();
     await assertFails(setDoc(doc(unverified, 'people', email('zed')), { uid: 'zed', name: 'Zed' }));
+  });
+});
+
+describe('Cadence is by approval', () => {
+  test('an account that isn’t approved can’t use any Cadence data', async () => {
+    await assertFails(setDoc(doc(db('stan'), 'tasks', 'ts'), task('ts', 'stan')));
+    await assertFails(getDocs(query(collection(db('stan'), 'tasks'), where('members', 'array-contains', 'stan'))));
+    await assertFails(getDoc(doc(db('stan'), 'people', email('owen'))));
+    await assertFails(setDoc(doc(db('stan'), 'people', email('stan')), { uid: 'stan', name: 'Stan' }));
+    await assertFails(setDoc(doc(db('stan'), 'users', 'stan', 'items', 'settings'), { kind: 'settings', types: [], levels: [{ id: 'l1' }] }));
+    await assertFails(setDoc(doc(db('stan'), 'notify', 'stan'), { kind: 'notify', due: true }));
+  });
+
+  test('no account record at all: no Cadence', async () => {
+    await assertFails(setDoc(doc(db('ghost'), 'tasks', 'tg'), task('tg', 'ghost')));
+    await assertFails(getDoc(doc(db('ghost'), 'people', email('owen'))));
+  });
+
+  test('nobody approves themselves', async () => {
+    await assertFails(updateDoc(doc(db('stan'), 'users', 'stan'), { cadence: true }));
+    await assertFails(setDoc(doc(db('newbie'), 'users', 'newbie'), { email: email('newbie'), displayName: 'N', role: 'member', groups: [], access: {}, createdAt: 1, cadence: true }));
+    // the plain starting record Cadence makes on first sign-in is allowed
+    await assertSucceeds(setDoc(doc(db('newbie'), 'users', 'newbie'), { email: email('newbie'), displayName: 'N', role: 'member', groups: [], access: {}, createdAt: 1 }));
+  });
+
+  test('an admin approves, and the account can then use Cadence', async () => {
+    await assertSucceeds(updateDoc(doc(db('admin'), 'users', 'stan'), { cadence: true }));
+    await assertSucceeds(setDoc(doc(db('stan'), 'tasks', 'ts'), task('ts', 'stan')));
+    await assertSucceeds(getDoc(doc(db('stan'), 'tasks', 'ts')));
+  });
+
+  test('admins can always use Cadence', async () => {
+    await assertSucceeds(setDoc(doc(db('admin'), 'tasks', 'ta'), task('ta', 'admin')));
+  });
+
+  test('taking approval away stops reading, even your own tasks', async () => {
+    await assertSucceeds(updateDoc(doc(db('admin'), 'users', 'owen'), { cadence: false }));
+    await assertFails(getDoc(doc(db('owen'), 'tasks', 't_shared')));
   });
 });
 
