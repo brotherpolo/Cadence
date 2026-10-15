@@ -138,7 +138,7 @@ Cadence reads Formwright's forms and your Formwright account (`users/{uid}`) to 
 `functions/audit.js` and the `audit*` functions in `index.js` write `audit/{id}` whenever a record, form, security group, account (`users/{uid}`) or `settings/*` document changes, with who did it and what changed. Deleted records keep a copy, and `restoreRecord` (admins, within 90 days) puts one back. Writes the server makes itself (auto numbers, removals, restores) are skipped there and noted by the function that made them. Admins read the trail; nobody writes it from the apps. It needs the `audit` indexes:
 
 ```sh
-firebase deploy --only firestore:rules,firestore:indexes,functions --project tasks-2ae9d
+bash deploy.sh firestore:rules,firestore:indexes,functions   # backs up the database first
 ```
 
 ### Email PDF (Formwright → a record → Email PDF)
@@ -301,6 +301,14 @@ A Firestore record holds at most 1 MB. Tasks are saved one per record, so they h
 - **Sidebar meter:** shows how full the map is and roughly how many more nodes fit at your current average node size. It adds a Board line once the Board passes 50%. It turns amber at 70% and red at 90%, with words as well as colour.
 - **Hiding it:** **×** hides it on this device. **Settings → Map → Storage** shows the full picture and has **Show in sidebar / Hide from sidebar**.
 - **When it shows:** only when you're signed in, since the limit applies to synced data.
+
+## Backups
+
+- **Automatic:** Firestore keeps a daily backup (7 days) and a weekly one (Sundays, 8 weeks). Photos and files are copied nightly to `gs://tasks-2ae9d-file-backups` (kept for good; deletions recoverable for 30 days).
+- **Before every deploy:** the deploy workflows (Formwright's and Cadence's) first export the whole database to `gs://tasks-2ae9d-db-exports/before-deploy/<date>-<app>-<commit>` with `scripts/backup-db.mjs`, and stop without deploying if that fails. Cloud Shell deploys do the same with `bash deploy.sh <what>` in the Cadence folder. These copies are deleted after 90 days by a rule on the bucket.
+- **Any time:** `gcloud firestore export gs://tasks-2ae9d-db-exports/$(date +%Y-%m-%d-%H%M) --project=tasks-2ae9d` makes a copy that's kept until you delete it.
+- **Restoring** overwrites live documents with the same IDs, so plan it first (one collection or everything, into this database or a new one).
+- The deploy account needs **Cloud Datastore Import Export Admin** on the project and **Storage Legacy Bucket Writer** on the `tasks-2ae9d-db-exports` bucket only.
 
 ## Hosting
 
