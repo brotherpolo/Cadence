@@ -1,0 +1,168 @@
+/* Formwright automations: "When an Invoice changes and Status is Approved, create a Cadence
+ * task…". Admins set them up in Formwright (Administration → Automations); they're stored in
+ * automations/{id} and run here, so they work whatever changed the record (a phone, an
+ * import, Set field, another automation) and on dates when nobody is signed in.
+ *
+ *   automation = {
+ *     name, formId, on,
+ *     trigger: { type: 'created' | 'changed' | 'date' | 'emailed',
+ *                field?, op?, value?          changed: this field changed (and now "op value")
+ *                dateField?, days?, rel?  }   date: N days 'before' | 'after' the date, or 'on' it
+ *     join: 'all' | 'any', conds: [...]       only if… (rules.js conditions; the parent's fields too)
+ *     acts: [
+ *       { do: 'set',   target: 'self' | 'parent', parentForm?, sets: [{ field, mode: 'value'|'today'|'clear'|'copy', value, from }] },
+ *       { do: 'task',  title, notes, assign: 'owner'|'actor'|'person', person, dueDays },
+ *       { do: 'email', to: { fields: [], parentFields: [], people: [], owner, addresses }, subject, message, pdf },
+ *       { do: 'child', formId, copy, sets: [...] },
+ *     ],
+ *   }
+ *
+ * The parts here are plain functions (unit-tested): what a trigger matches, whether the
+ * conditions hold, and the plan of what an automation would do. index.js loads the data,
+ * carries the plan out and keeps the run log (automations/{id}/runs) and the audit trail. */
+const fw = require('./fwkit.cjs');
+
+const MAX_DEPTH = 3;
+const an = (w) => (/^[aeiou]/i.test(w) ? 'an ' : 'a ') + w;
+const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+const EMAIL = /^[^\s@<>(),;:"\[\]\\]+@[^\s@<>(),;:"\[\]\\]+\.[^\s@<>(),;:"\[\]\\]{2,}$/;
+
+/** "2026-10-15" in a time zone */
+const dayKey = (ms, tz) => new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
+const addDays = (key, n) => { const [y, m, d] = key.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10); };
+const localNow = (ms, tz) => { const p = new Intl.DateTimeFormat('en-CA', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).formatToParts(new Date(ms)); const g = (k) => p.find((x) => x.type === k).value; return `${g('year')}-${g('month')}-${g('day')}T${g('hour')}:${g('minute')}`; };
+
+/** How deep in a chain this write is: 0 when a person (or an import) made it. */
+function depthOf(before, after) {
+  if (!after || !after.auto) return 0;
+  if (before && same(before.auto, after.auto)) return 0;
+  return Number(after.auto.depth) || 0;
+}
+/** The automation that made this write, if one did. */
+const madeBy = (before, after) => (after && after.auto && !(before && same(before.auto, after.auto)) ? after.auto.id : null);
+
+const fieldVal = (f, rec) => (f.type === 'autonumber' ? rec?.nums?.[f.id] : rec?.values?.[f.id]);
+
+/**
+ * Does the trigger match this event? ev = { kind, before, after, form }.
+ * "changed" needs the record's values to change; with a field, that field; with "to", the field
+ * must now match and not have matched before (Status *becomes* Approved).
+ */
+function triggerMatches(a, ev) {
+  const t = a.trigger || {};
+  if (t.type !== ev.kind) return false;
+  if (ev.kind !== 'changed') return true;
+  const { before, after, form } = ev;
+  if (!before || !after) return false;
+  if (!t.field) return !same(before.values, after.values);
+  const f = (form.fields || []).find((x) => x.id === t.field);
+  if (!f) return false;
+  const b = fieldVal(f, before), n = fieldVal(f, after);
+  if (same(b, n)) return false;
+  if (!t.op) return true;
+  const c = { op: t.op, value: t.value };
+  return fw.testCond(c, n, f) && !fw.testCond(c, b, f);
+}
+
+/** "Only if" conditions (none = always). look: kit.look(form, rec). */
+function condsHold(a, look) {
+  const has = (a.conds || []).some((c) => (c.group ? (c.conds || []).some((x) => x.field) : c.field));
+  return has ? fw.ruleFires({ join: a.join, conds: a.conds }, look) : true;
+}
+
+/** Is today the day for a date trigger? (dates are compared as calendar days) */
+function dateDue(a, form, rec, todayKey) {
+  const t = a.trigger || {};
+  const f = (form.fields || []).find((x) => x.id === t.dateField);
+  if (!f) return false;
+  const v = String(fieldVal(f, rec) || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const n = Math.max(0, Math.round(Number(t.days) || 0));
+  const target = t.rel === 'before' ? addDays(v, -n) : t.rel === 'after' ? addDays(v, n) : v;
+  return target === todayKey;
+}
+
+/** A value for "set" and "child": typed, today, cleared, or copied from another field. */
+function valueFor(s, f, rec, srcForm, now, tz) {
+  if (s.mode === 'clear') return { clear: true };
+  if (s.mode === 'today') return { v: f.type === 'datetime' ? localNow(now, tz) : f.type === 'time' ? localNow(now, tz).slice(11) : dayKey(now, tz) };
+  if (s.mode === 'copy') { const g = (srcForm.fields || []).find((x) => x.id === s.from); return { v: g ? fieldVal(g, rec) ?? null : null }; }
+  let v = s.value;
+  if (f.type === 'checkbox') v = v === true || v === 'true' || v === 'Yes';
+  else if (['number', 'decimal', 'currency', 'percent', 'rating', 'range'].includes(f.type)) v = v === '' || v == null ? null : Number(v);
+  else if (f.type === 'multiselect') v = Array.isArray(v) ? v : v ? [v] : [];
+  return { v };
+}
+
+/** {Field} → this record's field; {Client › Name} → the parent's. */
+function templater(k, form, rec, parent, pform, extra) {
+  return (tpl) => fw.fillTemplate(tpl, {
+    field: (n) => {
+      const i = n.indexOf('›');
+      if (i > 0 && parent && pform) { const pn = n.slice(0, i).trim().toLowerCase(); if (pn === pform.name.toLowerCase() || pn === fw.itemName(pform).toLowerCase()) return k.fieldText(pform, parent, n.slice(i + 1).trim()); }
+      return k.fieldText(form, rec, n);
+    },
+    title: k.recTitle(rec, form), form: form.name, item: fw.itemName(form), company: extra.company || '', sender: extra.sender || '', date: extra.dateText || '',
+  });
+}
+
+/**
+ * What an automation would do to one record: [{ kind, text, ...details }]. Pure: nothing is
+ * written. ctx = { k (kit), form, rec, parent, pform, people: Map(uid → {name,email}), owner (the
+ * automation's admin), actor (who made the change), now, tz, company }
+ */
+function plan(a, ctx) {
+  const { k, form, rec, parent, pform, people, now, tz } = ctx;
+  const out = [];
+  const name = (uid) => people.get(uid)?.name || people.get(uid)?.email || 'someone';
+  const dateText = new Date(now).toLocaleDateString('en-CA', { year: 'numeric', month: 'long', day: 'numeric', timeZone: tz });
+  const fill = templater(k, form, rec, parent, pform, { company: ctx.company, sender: name(ctx.owner), dateText });
+  (a.acts || []).forEach((act, i) => {
+    if (act.do === 'set') {
+      const onParent = act.target === 'parent';
+      const tf = onParent ? pform : form, tr = onParent ? parent : rec;
+      if (!tf || !tr) { out.push({ kind: 'skip', text: 'Set fields on the parent: this record has no parent' }); return; }
+      if (onParent && act.parentForm && tf.id !== act.parentForm) { out.push({ kind: 'skip', text: `Set fields on the parent: its parent is ${an(fw.itemName(tf).toLowerCase())}` }); return; }
+      const set = {}, clear = [], words = [];
+      (act.sets || []).forEach((s) => {
+        const f = (tf.fields || []).find((x) => x.id === s.field);
+        if (!f || ['heading', 'formula', 'autonumber'].includes(f.type)) return;
+        const r = valueFor(s, f, rec, form, now, tz);
+        const cur = tr.values?.[f.id];
+        if (r.clear) { if (cur != null && cur !== '' && !(Array.isArray(cur) && !cur.length)) { clear.push(f.id); words.push(`clear ${f.label}`); } return; }
+        if (same(cur, r.v)) return;
+        set[f.id] = r.v; words.push(`${f.label} to ${k.fmt(f, r.v) || 'empty'}`);
+      });
+      if (!words.length) { out.push({ kind: 'skip', text: `Set fields${onParent ? ' on the parent' : ''}: already as wanted` }); return; }
+      out.push({ kind: 'set', target: onParent ? 'parent' : 'self', recordId: tr.id, formId: tf.id, set, clear, text: `Set ${words.join(', ')}${onParent ? ` on ${tf.name}: ${k.recTitle(tr, tf)}` : ''}` });
+    } else if (act.do === 'task') {
+      const assignee = act.assign === 'person' ? act.person : act.assign === 'actor' ? ctx.actor || rec.ownerId : rec.ownerId;
+      const due = act.dueDays === '' || act.dueDays == null ? null : addDays(dayKey(now, tz), Math.max(0, Math.round(Number(act.dueDays) || 0)));
+      const title = fill(act.title || 'Follow up {Title}').slice(0, 500).trim() || 'Follow up';
+      out.push({ kind: 'task', title, notes: fill(act.notes || '').slice(0, 20000), assignee: assignee || null, due, text: `Create task “${title}” for ${name(assignee)}${due ? `, due ${due}` : ''}` });
+    } else if (act.do === 'email') {
+      const to = act.to || {}, list = [];
+      const addField = (tf, tr, fid) => { const f = (tf?.fields || []).find((x) => x.id === fid); const v = f && tr ? String(fieldVal(f, tr) || '') : ''; v.split(/[,;\s]+/).forEach((x) => list.push(x)); };
+      (to.fields || []).forEach((fid) => addField(form, rec, fid));
+      (to.parentFields || []).forEach((fid) => addField(pform, parent, fid));
+      (to.people || []).forEach((uid) => list.push(people.get(uid)?.email || ''));
+      if (to.owner) list.push(people.get(rec.ownerId)?.email || '');
+      String(to.addresses || '').split(/[,;\s]+/).forEach((x) => list.push(x));
+      const addrs = [...new Set(list.map((x) => x.trim().toLowerCase()).filter((x) => EMAIL.test(x)))].slice(0, 10);
+      if (!addrs.length) { out.push({ kind: 'skip', text: 'Send an email: no email address to send to' }); return; }
+      const subject = fill(act.subject || '{Item} {Title}').replace(/[\r\n]+/g, ' ').slice(0, 200).trim() || fw.itemName(form);
+      out.push({ kind: 'email', to: addrs, subject, message: fill(act.message || '').slice(0, 10000), pdf: !!act.pdf, text: `Email ${addrs.join(', ')}: “${subject}”${act.pdf ? ' with the PDF' : ''}` });
+    } else if (act.do === 'child') {
+      const cf = ctx.formById(act.formId);
+      if (!cf || !(form.children || []).some((c) => c.formId === cf.id)) { out.push({ kind: 'skip', text: 'Create a child record: that form isn’t a child of this one' }); return; }
+      const values = {};
+      if (act.copy) (cf.fields || []).forEach((g) => { const f = (form.fields || []).find((x) => x.type === g.type && x.label.trim().toLowerCase() === g.label.trim().toLowerCase() && !['heading', 'formula', 'autonumber', 'signature'].includes(x.type)); const v = f && rec.values?.[f.id]; if (v != null && v !== '') values[g.id] = JSON.parse(JSON.stringify(v)); });
+      (act.sets || []).forEach((s) => { const g = (cf.fields || []).find((x) => x.id === s.field); if (!g || ['heading', 'formula', 'autonumber'].includes(g.type)) return; const r = valueFor(s, g, rec, form, now, tz); if (r.clear) delete values[g.id]; else values[g.id] = r.v; });
+      const t = k.recTitle({ id: null, formId: cf.id, values }, cf);
+      out.push({ kind: 'child', formId: cf.id, values, text: `Create ${fw.itemName(cf).toLowerCase()} “${t}” under this ${fw.itemName(form).toLowerCase()}` });
+    }
+  });
+  return out;
+}
+
+module.exports = { MAX_DEPTH, same, dayKey, addDays, localNow, depthOf, madeBy, triggerMatches, condsHold, dateDue, plan, valueFor };

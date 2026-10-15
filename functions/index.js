@@ -9,6 +9,9 @@
  *   autoNumberOnCreate, autoNumberFill, autoNumberSet
  *                 Formwright's Auto number fields (autonumber.js)
  *   emailRecord   Formwright → Email PDF: an administrator emails a record's PDF (email.js)
+ *   automation*   Formwright → Administration → Automations: run on every record change
+ *                 (automationOnWrite), at 7:00 each morning for dates (automationDaily), after
+ *                 Email PDF, and as a dry run from the editor (automationTest) (automate.js)
  *   audit*        Formwright → Audit trail: records, forms, groups, accounts and settings as
  *                 they change; restoreRecord brings a deleted record back (audit.js)
  *
@@ -27,6 +30,9 @@ const { removeAccount } = require('./remove');
 const autonumber = require('./autonumber');
 const { sendRecordEmail } = require('./email');
 const audit = require('./audit');
+const automate = require('./automate');
+const fw = require('./fwkit.cjs');
+const { FieldValue } = require('firebase-admin/firestore');
 const { defineSecret } = require('firebase-functions/params');
 const GMAIL_APP_PASSWORD = defineSecret('GMAIL_APP_PASSWORD');
 
@@ -256,14 +262,18 @@ exports.autoNumberSet = callable('autoNumberSet', async (d, uid, data) => {
 /* ---------- Formwright → Email PDF ---------- */
 // Sends through Gmail as GMAIL_USER (functions/.env) with the app password from Secret Manager.
 let mailer = null;
+function gmail() {
+  const user = String(process.env.GMAIL_USER || '').trim();
+  const pass = String(GMAIL_APP_PASSWORD.value() || '').replace(/\s+/g, '');
+  if (user && pass && !mailer) {
+    const nodemailer = require('nodemailer');
+    mailer = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user, pass } });
+  }
+  return { user, pass, ready: !!(user && pass) };
+}
 exports.emailRecord = onCall({ region: 'us-central1', timeoutSeconds: 120, memory: '512MiB', secrets: [GMAIL_APP_PASSWORD] }, async (request) => {
   try {
-    const user = String(process.env.GMAIL_USER || '').trim();
-    const pass = String(GMAIL_APP_PASSWORD.value() || '').replace(/\s+/g, '');
-    if (user && pass && !mailer) {
-      const nodemailer = require('nodemailer');
-      mailer = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user, pass } });
-    }
+    const { user, pass } = gmail();
     const brand = await db.collection('settings').doc('exports').get();
     const out = await sendRecordEmail(db, (mail) => mailer.sendMail(mail), request.auth && request.auth.uid, request.data, {
       from: user, ready: !!(user && pass), fromName: (brand.exists && brand.get('companyName')) || '', tz: process.env.FORMWRIGHT_TZ || 'America/Toronto',
@@ -271,7 +281,8 @@ exports.emailRecord = onCall({ region: 'us-central1', timeoutSeconds: 120, memor
     const rec = (await db.collection('records').doc(request.data.recordId).get()).data() || {};
     const form = await formInfo(rec.formId);
     await logAudit(request.auth.uid, { area: 'record', kind: 'emailed', recordId: request.data.recordId, formId: rec.formId, formName: form.name || '', title: audit.titleOf(rec, form),
-      note: `To ${out.to.join(', ')}${out.cc.length ? '; Cc ' + out.cc.join(', ') : ''} · “${String(request.data.subject || '').slice(0, 200)}”` });
+      note: `To ${out.to.join(', ')}${out.cc.length ? '; Cc ' + out.cc.join(', ') : ''} · “${String(request.data.subject || '').slice(0, 200)}”${request.data.attach === false ? ' (no PDF)' : ''}` });
+    try { await runAutomations('emailed', { recordId: request.data.recordId, actor: request.auth.uid }); } catch (e) { logger.error('automations after email failed', e); }
     return out;
   } catch (e) {
     if (CALLABLE_CODES.includes(e.code)) throw new HttpsError(e.code, e.message);
@@ -355,4 +366,209 @@ exports.restoreRecord = callable('restoreRecord', async (d, uid, data) => {
   await logAudit(uid, { area: 'record', kind: 'restored', recordId: out.recordId, formId: out.formId, formName: form.name || '', title: audit.titleOf(rec, form),
     note: [out.parentGone ? 'its parent is gone, so it was restored on its own' : '', out.trimmed ? 'signatures and long text weren’t kept for this one' : ''].filter(Boolean).join('; ') });
   return out;
+});
+
+
+/* ---------- Formwright → Automations ---------- */
+const TZ = process.env.FORMWRIGHT_TZ || 'America/Toronto';
+const cache = { autos: new Map(), forms: { at: 0, list: [] }, people: { at: 0, map: new Map() } };
+const FRESH = 60e3;
+async function automationsFor(formId) {
+  const c = cache.autos.get(formId);
+  if (c && Date.now() - c.at < FRESH) return c.list;
+  const s = await db.collection('automations').where('formId', '==', formId).get();
+  const list = s.docs.map((d) => ({ ...d.data(), id: d.id })).filter((a) => a.on);
+  cache.autos.set(formId, { at: Date.now(), list });
+  return list;
+}
+async function allForms() {
+  if (Date.now() - cache.forms.at < FRESH) return cache.forms.list;
+  const s = await db.collection('forms').get();
+  cache.forms = { at: Date.now(), list: s.docs.map((d) => ({ ...d.data(), id: d.id })) };
+  return cache.forms.list;
+}
+async function allPeople() {
+  if (Date.now() - cache.people.at < FRESH) return cache.people.map;
+  const [u, p] = await Promise.all([db.collection('users').get(), db.collection('profiles').get()]);
+  const map = new Map();
+  u.docs.forEach((d) => map.set(d.id, { email: String(d.get('email') || '').toLowerCase(), name: d.get('displayName') || '' }));
+  p.docs.forEach((d) => { const x = map.get(d.id) || { email: '', name: '' }; if (d.get('displayName')) x.name = d.get('displayName'); if (!x.email && d.get('email')) x.email = String(d.get('email')).toLowerCase(); map.set(d.id, x); });
+  cache.people = { at: Date.now(), map };
+  return map;
+}
+const recData = (d) => (d.exists ? { ...d.data(), id: d.id } : null);
+/** A record with what's needed to read it like the app: its parent, children and linked records. */
+async function recordContext(recordId) {
+  const rec = recData(await db.collection('records').doc(recordId).get());
+  if (!rec) return null;
+  const forms = await allForms();
+  const parent = rec.parentId ? recData(await db.collection('records').doc(rec.parentId).get()) : null;
+  const kids = (await db.collection('records').where('parentId', '==', rec.id).get()).docs.map(recData);
+  const pk = parent ? (await db.collection('records').where('parentId', '==', parent.id).get()).docs.map(recData) : [];
+  const have = new Map([rec, parent, ...kids, ...pk].filter(Boolean).map((r) => [r.id, r]));
+  const fmap = new Map(forms.map((f) => [f.id, f]));
+  const links = new Set();
+  have.forEach((r) => (fmap.get(r.formId)?.fields || []).forEach((f) => { if (f.type === 'relation' && r.values?.[f.id] && !have.has(r.values[f.id])) links.add(r.values[f.id]); }));
+  const linked = links.size ? (await db.getAll(...[...links].slice(0, 200).map((id) => db.collection('records').doc(id)))).map(recData).filter(Boolean) : [];
+  linked.forEach((r) => have.set(r.id, r));
+  const k = fw.makeKit({ forms, records: [...have.values()], timeZone: TZ });
+  const form = fmap.get(rec.formId), pform = parent ? fmap.get(parent.formId) : null;
+  return { k, forms, form, rec, parent, pform };
+}
+/** The record's PDF, made here (the same layout as Export PDF, with the form's default columns). */
+async function serverPdf(c, people) {
+  const L = require('./vendor/pdf-lib.min.js');
+  const brand = (await db.collection('settings').doc('exports').get()).data() || {};
+  const model = c.k.pdfModel(c.form, c.rec, { stamp: 'Sent ' + new Date().toLocaleString('en-CA', { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: TZ }), userName: (id) => people.get(id)?.name || '' });
+  const imgs = new Map();
+  const kind = (b) => (b[0] === 0x89 && b[1] === 0x50 ? 'png' : b[0] === 0xff && b[1] === 0xd8 ? 'jpg' : null);
+  const dataUrl = (u) => { const m = /^data:image\/(png|jpe?g);base64,(.+)$/i.exec(String(u || '')); return m ? Buffer.from(m[2], 'base64') : null; };
+  const logo = dataUrl(brand.logo);
+  if (logo && kind(logo)) imgs.set('logo', { bytes: logo, type: kind(logo) });
+  model.brand = { name: brand.companyName || '', logoKey: imgs.has('logo') ? 'logo' : '' };
+  let missing = 0;
+  await Promise.all(model.items.map(async (it, i) => {
+    if ((it.kind !== 'image' && it.kind !== 'signature') || !it.src) return;
+    try {
+      const b = typeof it.src === 'string' ? dataUrl(it.src) : it.src.path ? (await admin.storage().bucket().file(it.src.path).download())[0] : null;
+      if (!b || !kind(b) || b.length > 12e6) throw new Error('not a JPEG or PNG');
+      imgs.set('i' + i, { bytes: b, type: kind(b) }); it.imgKey = 'i' + i;
+    } catch (e) { missing++; }
+  }));
+  const bytes = Buffer.from(await fw.drawPdf(L, model, imgs));
+  return { bytes, name: fw.fileName(model.formName, model.title), missing, company: brand.companyName || '' };
+}
+
+/** Carry out one automation on one record, log the run, and note changes in the audit trail. */
+async function runOne(a, c, { kind, actor, depth, test = false }) {
+  const people = await allPeople();
+  const brand = (await db.collection('settings').doc('exports').get()).data() || {};
+  const now = Date.now();
+  const steps = automate.plan(a, { k: c.k, form: c.form, rec: c.rec, parent: c.parent, pform: c.pform, people, owner: a.createdBy, actor, now, tz: TZ, company: brand.companyName || '', formById: (id) => c.forms.find((f) => f.id === id) });
+  if (test) return steps;
+  const by = 'auto:' + a.id, byName = 'Automation: ' + (a.name || 'Untitled');
+  const stamp = { depth: depth + 1, id: a.id, at: now, actor: actor || null };
+  const did = [], errors = [];
+  const title = c.k.recTitle(c.rec, c.form);
+  for (const st of steps) {
+    try {
+      if (st.kind === 'skip') { did.push(st.text); continue; }
+      if (st.kind === 'set') {
+        const up = { updatedAt: now, updatedBy: by, auto: stamp };
+        Object.entries(st.set).forEach(([fid, v]) => { up['values.' + fid] = v; });
+        st.clear.forEach((fid) => { up['values.' + fid] = FieldValue.delete(); });
+        await db.collection('records').doc(st.recordId).update(up);
+        const tf = c.forms.find((f) => f.id === st.formId), tr = st.target === 'parent' ? c.parent : c.rec;
+        const changes = [...Object.keys(st.set), ...st.clear].map((fid) => { const f = (tf.fields || []).find((x) => x.id === fid); return { key: fid, label: f?.label || fid, type: f?.type || 'text', from: audit.auditValue(tr.values?.[fid], f?.type), to: st.clear.includes(fid) ? null : audit.auditValue(st.set[fid], f?.type) }; });
+        await db.collection('audit').add({ at: now, by, byName, area: 'record', kind: 'changed', recordId: st.recordId, formId: st.formId, formName: tf.name || '', title: c.k.recTitle(tr, tf), changes, note: `${byName}${kind === 'date' ? ' (date)' : ''}` });
+      } else if (st.kind === 'task') {
+        const owner = a.createdBy, op = people.get(owner) || {}, ap = st.assignee && st.assignee !== owner ? people.get(st.assignee) || {} : null;
+        const ref = db.collection('tasks').doc();
+        const t = {
+          id: ref.id, title: st.title, notes: st.notes || '', due: st.due || null, time: null, done: false, doneAt: null, createdAt: now, updatedAt: now,
+          subtasks: [], repeat: 'none', ownerId: owner, ownerName: op.name || null, ownerEmail: op.email || null,
+          assigneeId: ap ? st.assignee : null, assigneeName: ap ? ap.name || null : null, assigneeEmail: ap ? ap.email || null : null,
+          members: ap ? [owner, st.assignee] : [owner],
+          recordId: c.rec.id, formId: c.form.id, recordSnap: { title, form: c.form.name || '', color: fw.COLORS[(c.form.color ?? 0) % fw.COLORS.length] },
+        };
+        await ref.set(t);
+      } else if (st.kind === 'email') {
+        const g = gmail();
+        if (!g.ready) throw new Error('Email isn’t set up (Gmail app password)');
+        let att = [], pdfName = null, bytes = 0, note = '';
+        if (st.pdf) {
+          const p = await serverPdf(c, people);
+          if (p.bytes.length > 8 * 1024 * 1024) throw new Error('The PDF is over 8 MB');
+          att = [{ filename: p.name, content: p.bytes, contentType: 'application/pdf' }]; pdfName = p.name; bytes = p.bytes.length;
+          if (p.missing) note = ` (${p.missing} picture${p.missing === 1 ? '' : 's'} left out)`;
+        }
+        const info = await mailer.sendMail({ from: { name: brand.companyName || g.user, address: g.user }, to: st.to, subject: st.subject, text: st.message, attachments: att });
+        await db.collection('records').doc(c.rec.id).collection('emails').doc().set({ to: st.to, cc: [], copyMe: false, subject: st.subject, fileName: pdfName, bytes, by, byName, at: now, messageId: (info && info.messageId) || null });
+        await db.collection('audit').add({ at: now, by, byName, area: 'record', kind: 'emailed', recordId: c.rec.id, formId: c.form.id, formName: c.form.name || '', title, note: `To ${st.to.join(', ')} · “${st.subject}”${st.pdf ? '' : ' (no PDF)'}` });
+        st.text += note;
+      } else if (st.kind === 'child') {
+        const ref = db.collection('records').doc();
+        await ref.set({ formId: st.formId, values: st.values, parentId: c.rec.id, parentFormId: c.form.id, ownerId: c.rec.ownerId, createdBy: by, createdAt: now, updatedAt: now, updatedBy: by, auto: stamp });
+        const cf = c.forms.find((f) => f.id === st.formId) || {};
+        await db.collection('audit').add({ at: now, by, byName, area: 'record', kind: 'created', recordId: ref.id, formId: st.formId, formName: cf.name || '', title: st.text.replace(/^Create [^“]*“|”.*$/g, ''), note: `${byName}, under ${title}` });
+      }
+      did.push(st.text);
+    } catch (e) {
+      logger.error('automation step failed', a.id, st.kind, e);
+      errors.push(`${st.text}: ${e.message || 'failed'}`);
+    }
+  }
+  await db.collection('automations').doc(a.id).collection('runs').add({ at: now, recordId: c.rec.id, title, kind, depth, ok: !errors.length, did, errors, actor: actor || null });
+  return steps;
+}
+
+/** Run the automations of a record's form that match this event. */
+async function runAutomations(kind, { recordId, before = null, after = null, actor = null, depth = 0, only = null }) {
+  const formId = (after || (await db.collection('records').doc(recordId).get()).data() || {}).formId;
+  if (!formId) return;
+  const list = (only ? [only] : await automationsFor(formId)).filter((a) => a.formId === formId);
+  if (!list.length) return;
+  let c = null;
+  for (const a of list) {
+    if (kind === 'changed' || kind === 'created') {
+      if (automate.madeBy(before, after) === a.id) continue; // its own change
+      if (!c) { const forms = await allForms(); c = { formOnly: forms.find((f) => f.id === formId) }; }
+      if (!automate.triggerMatches(a, { kind, before, after, form: c.formOnly || {} })) continue;
+    } else if ((a.trigger || {}).type !== kind) continue;
+    if (depth >= automate.MAX_DEPTH) {
+      await db.collection('automations').doc(a.id).collection('runs').add({ at: Date.now(), recordId, title: '', kind, depth, ok: false, did: [], errors: [`Stopped: automations had already changed this record ${depth} times in a row`] });
+      continue;
+    }
+    if (!c || !c.k) c = await recordContext(recordId);
+    if (!c) return;
+    if (!automate.condsHold(a, c.k.look(c.form, c.rec))) continue;
+    await runOne(a, c, { kind, actor, depth });
+    c = null; // the record may have changed: read it again for the next automation
+  }
+}
+
+exports.automationOnWrite = onDocumentWrittenWithAuthContext({ document: 'records/{recordId}', secrets: [GMAIL_APP_PASSWORD], memory: '512MiB', timeoutSeconds: 120 }, async (event) => {
+  const [before, after] = docs(event);
+  if (!after) return;
+  const depth = automate.depthOf(before, after);
+  const actor = depth ? (after.auto && after.auto.actor) || null : (String(after.updatedBy || '').startsWith('auto:') ? null : after.updatedBy || uidOf(event) || null);
+  await runAutomations(before ? 'changed' : 'created', { recordId: event.params.recordId, before, after, actor, depth });
+});
+
+// every morning: automations on a date (on it, or days before or after)
+exports.automationDaily = onSchedule({ schedule: '0 7 * * *', timeZone: TZ, secrets: [GMAIL_APP_PASSWORD], memory: '512MiB', timeoutSeconds: 540, retryCount: 0 }, async () => {
+  const today = automate.dayKey(Date.now(), TZ);
+  const s = await db.collection('automations').where('on', '==', true).get();
+  for (const d of s.docs) {
+    const a = { ...d.data(), id: d.id };
+    if ((a.trigger || {}).type !== 'date') continue;
+    const form = (await allForms()).find((f) => f.id === a.formId); if (!form) continue;
+    const recs = (await db.collection('records').where('formId', '==', a.formId).get()).docs.map(recData);
+    for (const r of recs) {
+      if (!automate.dateDue(a, form, r, today)) continue;
+      const mark = db.collection('automations').doc(a.id).collection('fired').doc(r.id);
+      const m = await mark.get();
+      if (m.exists && m.get('day') === today) continue;
+      await mark.set({ day: today, at: Date.now() });
+      try {
+        const c = await recordContext(r.id);
+        if (c && automate.condsHold(a, c.k.look(c.form, c.rec))) await runOne(a, c, { kind: 'date', actor: r.ownerId, depth: 0 });
+      } catch (e) { logger.error('date automation failed', a.id, r.id, e); }
+    }
+  }
+});
+
+// the editor's "Test run": what it would do to one record, nothing written (admins)
+exports.automationTest = callable('automationTest', async (d, uid, data) => {
+  if (!uid) throw Object.assign(new Error('Sign in first.'), { code: 'unauthenticated' });
+  const me = await d.collection('users').doc(uid).get();
+  if (!me.exists || me.get('role') !== 'admin') throw Object.assign(new Error('Only administrators can test automations.'), { code: 'permission-denied' });
+  const a = data && data.automation, recordId = data && data.recordId;
+  if (!a || typeof recordId !== 'string') throw Object.assign(new Error('Say which automation and record.'), { code: 'invalid-argument' });
+  const c = await recordContext(recordId);
+  if (!c || c.rec.formId !== a.formId) throw Object.assign(new Error('That record isn’t on this automation’s form.'), { code: 'not-found' });
+  const holds = automate.condsHold(a, c.k.look(c.form, c.rec));
+  const due = (a.trigger || {}).type === 'date' ? automate.dateDue(a, c.form, c.rec, automate.dayKey(Date.now(), TZ)) : null;
+  const steps = await runOne({ ...a, id: 'test', createdBy: uid }, c, { kind: 'test', actor: uid, depth: 0, test: true });
+  return { title: c.k.recTitle(c.rec, c.form), holds, due, steps: steps.map((x) => ({ kind: x.kind, text: x.text })) };
 });

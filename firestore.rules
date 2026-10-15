@@ -146,7 +146,7 @@ service cloud.firestore {
     }
     function validRecord(d) {
       return d.keys().hasOnly(['formId', 'values', 'parentId', 'parentFormId', 'ownerId',
-                               'createdBy', 'createdAt', 'updatedAt', 'updatedBy', 'nums', 'autoLog'])
+                               'createdBy', 'createdAt', 'updatedAt', 'updatedBy', 'nums', 'autoLog', 'auto'])
         && d.keys().hasAll(['formId', 'values', 'ownerId', 'createdBy', 'updatedBy'])
         && d.formId is string
         && d.values is map
@@ -420,6 +420,7 @@ service cloud.firestore {
         // auto numbers (nums) and their change log are written only by the server
         && !('nums' in request.resource.data)
         && !('autoLog' in request.resource.data)
+        && !('auto' in request.resource.data)
         && canCreateIn(request.resource.data.formId);
 
       allow update: if signedIn()
@@ -429,7 +430,9 @@ service cloud.firestore {
         && request.resource.data.ownerId == resource.data.ownerId
         && request.resource.data.createdBy == resource.data.createdBy
         && request.resource.data.get('nums', null) == resource.data.get('nums', null)
-        && request.resource.data.get('autoLog', null) == resource.data.get('autoLog', null);
+        && request.resource.data.get('autoLog', null) == resource.data.get('autoLog', null)
+        // which automation last changed it (server only)
+        && request.resource.data.get('auto', null) == resource.data.get('auto', null);
 
       allow delete: if signedIn() && canEditRecord(resource.data);
 
@@ -437,6 +440,33 @@ service cloud.firestore {
       match /emails/{emailId} {
         allow read: if signedIn() && canViewRecord(get(/databases/$(database)/documents/records/$(recordId)).data);
         allow write: if false;
+      }
+    }
+
+    // Automations (Formwright → Administration → Automations): admins set them up; the server
+    // runs them (functions/automate.js) and writes their run log.
+    function validAutomation(d) {
+      return d.keys().hasOnly(['name', 'formId', 'on', 'trigger', 'join', 'conds', 'acts', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy'])
+        && d.keys().hasAll(['name', 'formId', 'on', 'trigger', 'acts', 'createdBy'])
+        && d.name is string && d.name.size() > 0 && d.name.size() <= 120
+        && d.formId is string && d.formId.size() > 0 && d.formId.size() <= 100
+        && d.on is bool
+        && d.trigger is map && d.trigger.get('type', '') in ['created', 'changed', 'date', 'emailed']
+        && d.acts is list && d.acts.size() <= 10
+        && (!('conds' in d) || (d.conds is list && d.conds.size() <= 12))
+        && d.createdBy is string;
+    }
+    match /automations/{autoId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && validAutomation(request.resource.data) && request.resource.data.createdBy == request.auth.uid;
+      allow update: if isAdmin() && validAutomation(request.resource.data) && request.resource.data.createdBy == resource.data.createdBy;
+      allow delete: if isAdmin();
+      match /runs/{runId} {
+        allow read, delete: if isAdmin();
+        allow create, update: if false;
+      }
+      match /fired/{recordId} {
+        allow read, write: if false;
       }
     }
 

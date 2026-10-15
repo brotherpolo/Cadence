@@ -222,6 +222,24 @@ describe('storage uploads', () => {
   });
 });
 
+describe('automations', () => {
+  const auto = (by, extra = {}) => ({ name: 'Chase invoices', formId: 'f_jobs', on: true, trigger: { type: 'changed' }, join: 'all', conds: [], acts: [{ do: 'task', title: 'x' }], createdBy: by, createdAt: 1, updatedAt: 1, updatedBy: by, ...extra });
+  test('admins only; created as themselves; runs are written by the server', async () => {
+    await assertSucceeds(setDoc(doc(db('admin'), 'automations', 'a1'), auto('admin')));
+    await assertFails(setDoc(doc(db('admin'), 'automations', 'a2'), auto('alice')));
+    await assertFails(setDoc(doc(db('olivia'), 'automations', 'a3'), auto('olivia')));
+    await assertFails(getDoc(doc(db('olivia'), 'automations', 'a1')));
+    await assertFails(setDoc(doc(db('admin'), 'automations', 'a4'), auto('admin', { trigger: { type: 'whenever' } })));
+    await assertFails(setDoc(doc(db('admin'), 'automations', 'a1', 'runs', 'r1'), { at: 1 }));
+  });
+  test('records: the automation marker is the server’s', async () => {
+    await assertFails(setDoc(doc(db('alice'), 'records', 'r_auto'), record('alice', { auto: { depth: 1 } })));
+    await env.withSecurityRulesDisabled(async (ctx) => { await setDoc(doc(ctx.firestore(), 'records', 'r_alice'), record('alice', { auto: { depth: 1, id: 'a1' } })); });
+    await assertSucceeds(updateDoc(doc(db('alice'), 'records', 'r_alice'), { values: { title: 'Edited' }, updatedBy: 'alice' }));
+    await assertFails(updateDoc(doc(db('alice'), 'records', 'r_alice'), { auto: null, updatedBy: 'alice' }));
+  });
+});
+
 describe('reports', () => {
   const report = (owner, extra = {}) => ({ name: 'Pipeline', ownerId: owner, shared: false, widgets: [{ id: 'w1', type: 'kpi' }], createdAt: 1, updatedAt: 1, ...extra });
   beforeEach(async () => {

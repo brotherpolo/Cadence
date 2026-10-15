@@ -6,7 +6,8 @@
  * and notes it on the record in records/{id}/emails.
  *
  *   sendRecordEmail(db, send, callerUid, data, opts)
- *     data: { recordId, to: [email], cc: [email], copyMe, subject, message, pdf (base64), fileName }
+ *     data: { recordId, to: [email], cc: [email], copyMe, subject, message, pdf (base64), fileName, attach }
+ *       attach: false sends the message without the PDF (no pdf needed)
  *     send(mail) → { messageId }: nodemailer's sendMail in production, a stand-in in tests
  *     opts: { from, fromName, now }
  *
@@ -43,10 +44,11 @@ async function sendRecordEmail(db, send, callerUid, data, opts = {}) {
   const subject = oneLine(data.subject, 200);
   if (!subject) fail('invalid-argument', 'Add a subject.');
   const message = String(data.message || '').replace(/\r\n?/g, '\n').slice(0, 10000);
-  const pdf = Buffer.from(String(data.pdf || ''), 'base64');
-  if (!pdf.length || pdf.subarray(0, 5).toString('latin1') !== '%PDF-') fail('invalid-argument', 'The PDF is missing or damaged. Try again.');
+  const attach = data.attach !== false;
+  const pdf = attach ? Buffer.from(String(data.pdf || ''), 'base64') : Buffer.alloc(0);
+  if (attach && (!pdf.length || pdf.subarray(0, 5).toString('latin1') !== '%PDF-')) fail('invalid-argument', 'The PDF is missing or damaged. Try again.');
   if (pdf.length > MAX_PDF) fail('invalid-argument', 'The PDF is over 8 MB, too big to email. Try a record with fewer or smaller photos.');
-  const fileName = safeFileName(data.fileName);
+  const fileName = attach ? safeFileName(data.fileName) : null;
 
   const recRef = db.collection('records').doc(recordId);
   const rec = await recRef.get();
@@ -71,7 +73,7 @@ async function sendRecordEmail(db, send, callerUid, data, opts = {}) {
     replyTo: myEmail && EMAIL.test(myEmail) ? (myName ? { name: myName, address: myEmail } : myEmail) : undefined,
     subject,
     text: message,
-    attachments: [{ filename: fileName, content: pdf, contentType: 'application/pdf' }],
+    attachments: attach ? [{ filename: fileName, content: pdf, contentType: 'application/pdf' }] : [],
   };
   let info;
   try {

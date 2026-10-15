@@ -152,6 +152,14 @@ firebase functions:secrets:set GMAIL_APP_PASSWORD --project tasks-2ae9d   # past
 
 Limits: 10 addresses per email, an 8 MB PDF, 100 emails per person per day (`emailLimits/{uid}`, server only). If Gmail refuses the password, make a new app password and run the `secrets:set` line again, then redeploy the functions.
 
+### Automations (Formwright → Administration → Automations)
+
+`functions/automate.js` (the logic, unit-tested) and `index.js` (`automationOnWrite` on every record write, `automationDaily` at 7:00 a.m. Toronto time, `automationTest` for the editor's Test run, and Email PDF calling them after sending). Automations are in `automations/{id}` (admins only), with `runs/` (the run log, server-written) and `fired/` (date runs done today). Records changed by an automation carry `auto: { depth, id, at, actor }`, written only by the server, used to stop loops (3 in a row). Emails use the same Gmail setup as Email PDF; PDFs are made here with `fwkit.cjs` (built from Formwright, see its README) and `vendor/pdf-lib.min.js`. Deploy rules and functions together:
+
+```sh
+bash deploy.sh firestore:rules,functions
+```
+
 ### Removing a person (Formwright → Users → Remove)
 
 `functions/remove.js` (the `removeAccount` callable function) does it, because only the server may delete someone else's sign-in. Only an administrator may call it. It deletes their account, private items, push settings and directory entry, deletes the tasks they own, hands back tasks assigned to them, deletes their private reports, dashboards and list views (shared ones pass to the admin), optionally gives their Formwright records to someone else, keeps their name on `profiles/{uid}` with `removed: true`, then deletes their sign-in. Deploy it with the other functions:
@@ -288,7 +296,7 @@ firestore.rules       Firestore security rules (Cadence and Formwright)
 storage.rules         Storage security rules (Formwright uploads)
 firestore.indexes.json  indexes: reminders, and tasks linked to a record
 firebase.json         Firebase CLI config (rules, indexes, functions, hosting)
-functions/            Cloud Functions: notifications (index.js), removing a person (remove.js), auto numbers (autonumber.js), Email PDF (email.js), audit trail (audit.js), package.json, .env
+functions/            Cloud Functions: notifications (index.js), removing a person (remove.js), auto numbers (autonumber.js), Email PDF (email.js), audit trail (audit.js), automations (automate.js, fwkit.cjs, vendor/pdf-lib.min.js), package.json, .env
 tests/                rules tests (development only; run with npm test inside tests/)
 ```
 
