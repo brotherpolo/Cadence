@@ -80,3 +80,18 @@ test('the plan: set fields, a task, an email, a child record', () => {
   const again = A.plan({ acts: [{ do: 'set', target: 'self', sets: [{ field: 'st', mode: 'value', value: 'Approved' }] }] }, { k, form, rec, parent: P, pform: cli, people, now, tz: 'America/Toronto', formById: () => null });
   assert.equal(again[0].kind, 'skip', 'already as wanted: nothing to write (stops loops)');
 });
+
+test('workflow stage trigger and arrival', () => {
+  const A = require('../../functions/automate.js');
+  const a = { trigger: { type: 'stage', to: 's2' } }, any = { trigger: { type: 'stage' } };
+  assert.equal(A.triggerMatches(a, { kind: 'changed', before: { stage: 's1' }, after: { stage: 's2' } }), true);
+  assert.equal(A.triggerMatches(a, { kind: 'changed', before: { stage: 's2' }, after: { stage: 's2' } }), false, 'no move');
+  assert.equal(A.triggerMatches(a, { kind: 'changed', before: { stage: 's1' }, after: { stage: 's3' } }), false, 'other stage');
+  assert.equal(A.triggerMatches(any, { kind: 'created', before: null, after: { stage: 's1' } }), true);
+  assert.equal(A.triggerMatches(any, { kind: 'date', after: { stage: 's1' } }), false);
+  const form = { workflow: { on: true, stages: [{ id: 's1', name: 'Draft' }, { id: 's2', name: 'Review' }] } };
+  assert.equal(A.stageArrival(form, { stage: 's1' }, { stage: 's2', assigneeGroup: 'g' }).stage.name, 'Review');
+  assert.equal(A.stageArrival(form, { stage: 's2' }, { stage: 's2' }), null);
+  assert.equal(A.stageArrival({ workflow: { on: false, stages: form.workflow.stages } }, null, { stage: 's1' }), null);
+  assert.equal(A.stageArrival(form, null, { stage: 'gone' }), null);
+});

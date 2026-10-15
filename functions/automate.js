@@ -41,6 +41,14 @@ function depthOf(before, after) {
 /** The automation that made this write, if one did. */
 const madeBy = (before, after) => (after && after.auto && !(before && same(before.auto, after.auto)) ? after.auto.id : null);
 
+/** A record that just arrived at a workflow stage: { stage, assignee, assigneeGroup } or null. */
+function stageArrival(form, before, after) {
+  const wf = form && form.workflow;
+  if (!wf || !wf.on || !after || !after.stage || (before && before.stage === after.stage)) return null;
+  const stage = (wf.stages || []).find((s) => s.id === after.stage);
+  return stage ? { stage, assignee: after.assignee || null, assigneeGroup: after.assigneeGroup || null } : null;
+}
+
 const fieldVal = (f, rec) => (f.type === 'autonumber' ? rec?.nums?.[f.id] : rec?.values?.[f.id]);
 
 /**
@@ -50,6 +58,11 @@ const fieldVal = (f, rec) => (f.type === 'autonumber' ? rec?.nums?.[f.id] : rec?
  */
 function triggerMatches(a, ev) {
   const t = a.trigger || {};
+  if (t.type === 'stage') { // a workflow move: the stage changed (to the chosen one)
+    if (ev.kind !== 'changed' && ev.kind !== 'created') return false;
+    const b = ev.before?.stage || null, n = ev.after?.stage || null;
+    return !!n && n !== b && (!t.to || n === t.to);
+  }
   if (t.type !== ev.kind) return false;
   if (ev.kind !== 'changed') return true;
   const { before, after, form } = ev;
@@ -165,4 +178,4 @@ function plan(a, ctx) {
   return out;
 }
 
-module.exports = { MAX_DEPTH, same, dayKey, addDays, localNow, depthOf, madeBy, triggerMatches, condsHold, dateDue, plan, valueFor };
+module.exports = { stageArrival, MAX_DEPTH, same, dayKey, addDays, localNow, depthOf, madeBy, triggerMatches, condsHold, dateDue, plan, valueFor };

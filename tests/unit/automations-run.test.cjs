@@ -22,11 +22,11 @@ function makeDb() {
     };
   }
   function col(p, filters = []) {
-    const list = () => [...m.keys()].filter((k) => k.startsWith(p + '/') && !k.slice(p.length + 1).includes('/')).filter((k) => filters.every(([f, v]) => (m.get(k) || {})[f] === v));
+    const list = () => [...m.keys()].filter((k) => k.startsWith(p + '/') && !k.slice(p.length + 1).includes('/')).filter((k) => filters.every(([f, op, v]) => (op === 'array-contains' ? ((m.get(k) || {})[f] || []).includes(v) : (m.get(k) || {})[f] === v)));
     return {
       doc: (id) => ref(p + '/' + (id || 'auto' + ++n)),
       add: async (d) => { const r = ref(p + '/auto' + ++n); await r.set(d); return r; },
-      where: (f, op, v) => col(p, [...filters, [f, v]]),
+      where: (f, op, v) => col(p, [...filters, [f, op, v]]),
       get: async () => ({ docs: list().map(snap), size: list().length }),
     };
   }
@@ -58,6 +58,13 @@ const fns = require(path.join(__dirname, '../../functions/index.js'));
 const set = (p, d) => db.m.set(p, d);
 set('users/boss', { email: 'adam@x.example', displayName: 'Adam', role: 'admin' });
 set('users/amy', { email: 'amy@x.example', displayName: 'Amy', role: 'member' });
+set('users/rev1', { email: 'rev1@x.example', displayName: 'Rae', role: 'member', groups: ['g_rev'] });
+set('users/rev2', { email: 'rev2@x.example', displayName: 'Rob', role: 'member', groups: ['g_rev', 'g_x'] });
+set('forms/f_req', { name: 'Requests', itemName: 'Request', titleField: 't', fields: [{ id: 't', type: 'text', label: 'Title' }], workflow: { on: true, stages: [
+  { id: 's1', name: 'Draft', assign: { type: 'owner' }, notify: {} },
+  { id: 's2', name: 'Review', assign: { type: 'group', group: 'g_rev' }, notify: { task: true, email: true } },
+  { id: 's3', name: 'Approved', assign: { type: 'owner' }, notify: { task: true } },
+] } });
 set('settings/exports', { companyName: 'Pollack Inc.' });
 set('forms/f_cli', { name: 'Clients', itemName: 'Client', children: [{ formId: 'f_job' }], fields: [{ id: 'cn', type: 'text', label: 'Name' }, { id: 'ce', type: 'email', label: 'Email' }] });
 set('forms/f_job', { name: 'Jobs', itemName: 'Job', color: 1, titleField: 't', children: [{ formId: 'f_note' }], fields: [{ id: 't', type: 'text', label: 'Title' }, { id: 'st', type: 'select', label: 'Stage', options: ['Open', 'Done'] }, { id: 'amt', type: 'currency', label: 'Budget' }, { id: 'fin', type: 'date', label: 'Finished on' }, { id: 'due', type: 'date', label: 'Due' }] });
@@ -142,4 +149,31 @@ test('Test run: admins only, nothing written', async () => {
   assert.ok(out.steps.length === 4 && out.steps.some((s) => /Create task/.test(s.text)));
   assert.equal(db.m.size, before);
   await assert.rejects(fns.automationTest({ auth: { uid: 'amy' }, data: { automation: {}, recordId: 'j1' } }), (e) => e.code === 'permission-denied');
+});
+
+test('workflow: arriving at a stage closes the old workflow tasks, tasks/emails the new assignees, runs stage automations', async () => {
+  set('automations/a9', { name: 'Approved note', formId: 'f_req', on: true, createdBy: 'boss', trigger: { type: 'stage', to: 's3' }, conds: [], acts: [{ do: 'task', title: 'File {Title}', assign: 'owner' }] });
+  const r0 = { formId: 'f_req', values: { t: 'New laptop' }, ownerId: 'amy', createdBy: 'amy', updatedBy: 'amy', stage: 's1', assignee: 'amy', assigneeGroup: null };
+  set('records/q1', r0);
+  const t0 = where('tasks/').length, m0 = sent.length;
+  await write('q1', null, r0);
+  assert.equal(where('tasks/').length, t0, 'Draft has no notices');
+  const r1 = { ...r0, stage: 's2', assignee: null, assigneeGroup: 'g_rev', stageAt: 2 };
+  set('records/q1', r1);
+  await write('q1', r0, r1);
+  const wt = () => where('tasks/', (v) => v.recordId === 'q1').map(([, v]) => v);
+  assert.deepEqual(wt().map((t) => [t.title, t.assigneeId, t.ownerId, t.done]).sort(), [['Review: New laptop', 'rev1', 'amy', false], ['Review: New laptop', 'rev2', 'amy', false]], JSON.stringify(wt()));
+  const mails = sent.slice(m0);
+  assert.deepEqual(mails.map((m) => m.to).sort(), ['rev1@x.example', 'rev2@x.example']);
+  assert.match(mails[0].subject, /^Request New laptop is waiting on you \(Review\)$/);
+  const r2 = { ...r1, stage: 's3', assignee: 'amy', assigneeGroup: null, updatedBy: 'rev1' };
+  set('records/q1', r2);
+  await write('q1', r1, r2, 'rev1');
+  const all = wt();
+  assert.ok(all.filter((t) => t.title.startsWith('Review')).every((t) => t.done), 'Review tasks closed');
+  assert.ok(all.some((t) => t.title === 'Approved: New laptop' && !t.done), 'Approved task');
+  assert.ok(all.some((t) => t.title === 'File New laptop'), 'the stage automation ran');
+  const n = all.length;
+  await write('q1', r2, { ...r2, values: { t: 'New laptop!' } }, 'amy');
+  assert.equal(wt().length, n, 'an ordinary edit sends no notices');
 });

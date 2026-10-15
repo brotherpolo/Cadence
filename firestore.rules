@@ -141,12 +141,23 @@ service cloud.firestore {
         (editLevel(d.formId) == 'own' && d.ownerId == request.auth.uid)
       ));
     }
+    // Workflows: while a record is at a stage, only its assignee (or a member of its assigned
+    // group, who can see the record) and administrators may change it.
+    function inWorkflow(d) { return d.get('stage', null) != null; }
+    function PersonResponsible(d) {
+      return hasAccount() && (d.get('assignee', null) == request.auth.uid
+        || (d.get('assigneeGroup', null) != null && d.assigneeGroup in me().get('groups', [])));
+    }
+    function canEditNow(d) {
+      return inWorkflow(d) ? (isAdmin() || PersonResponsible(d)) : canEditRecord(d);
+    }
     function canCreateIn(formId) {
       return isAdmin() || (hasAccount() && editLevel(formId) in ['own', 'all']);
     }
     function validRecord(d) {
       return d.keys().hasOnly(['formId', 'values', 'parentId', 'parentFormId', 'ownerId',
-                               'createdBy', 'createdAt', 'updatedAt', 'updatedBy', 'nums', 'autoLog', 'auto'])
+                               'createdBy', 'createdAt', 'updatedAt', 'updatedBy', 'nums', 'autoLog', 'auto',
+                               'stage', 'assignee', 'assigneeGroup', 'stageAt'])
         && d.keys().hasAll(['formId', 'values', 'ownerId', 'createdBy', 'updatedBy'])
         && d.formId is string
         && d.values is map
@@ -411,7 +422,7 @@ service cloud.firestore {
     match /records/{recordId} {
       // List queries must filter by formId, and by ownerId == your uid when you only
       // have "own" access, or Firestore rejects the query.
-      allow read: if signedIn() && canViewRecord(resource.data);
+      allow read: if signedIn() && (canViewRecord(resource.data) || PersonResponsible(resource.data));
 
       allow create: if signedIn()
         && validRecord(request.resource.data)
@@ -425,7 +436,7 @@ service cloud.firestore {
 
       allow update: if signedIn()
         && validRecord(request.resource.data)
-        && canEditRecord(resource.data)
+        && canEditNow(resource.data)
         && request.resource.data.formId == resource.data.formId
         && request.resource.data.ownerId == resource.data.ownerId
         && request.resource.data.createdBy == resource.data.createdBy
@@ -434,7 +445,17 @@ service cloud.firestore {
         // which automation last changed it (server only)
         && request.resource.data.get('auto', null) == resource.data.get('auto', null);
 
-      allow delete: if signedIn() && canEditRecord(resource.data);
+      allow delete: if signedIn() && canEditNow(resource.data);
+
+      // Workflow stage history: written by whoever moves the record, as themselves; never changed.
+      match /stages/{entryId} {
+        allow read: if signedIn() && (canViewRecord(get(recordPath(recordId)).data) || PersonResponsible(get(recordPath(recordId)).data));
+        allow create: if signedIn()
+          && request.resource.data.by == request.auth.uid
+          && request.resource.data.keys().hasOnly(['at', 'by', 'from', 'fromName', 'to', 'toName', 'label', 'comment', 'assignee', 'assigneeGroup'])
+          && (isAdmin() || PersonResponsible(get(recordPath(recordId)).data) || canEditNow(get(recordPath(recordId)).data));
+        allow delete: if isAdmin();
+      }
 
       // Email PDF: what was sent, written only by the server; readable with the record
       match /emails/{emailId} {
@@ -451,7 +472,7 @@ service cloud.firestore {
         && d.name is string && d.name.size() > 0 && d.name.size() <= 120
         && d.formId is string && d.formId.size() > 0 && d.formId.size() <= 100
         && d.on is bool
-        && d.trigger is map && d.trigger.get('type', '') in ['created', 'changed', 'date', 'emailed']
+        && d.trigger is map && d.trigger.get('type', '') in ['created', 'changed', 'date', 'emailed', 'stage']
         && d.acts is list && d.acts.size() <= 10
         && (!('conds' in d) || (d.conds is list && d.conds.size() <= 12))
         && d.createdBy is string;

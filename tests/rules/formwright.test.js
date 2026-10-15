@@ -240,6 +240,37 @@ describe('automations', () => {
   });
 });
 
+describe('workflows', () => {
+  const move = (uid, id, patch, entry = {}) => { const d = db(uid); const b = writeBatch(d); b.update(doc(d, 'records', id), { ...patch, updatedBy: uid, updatedAt: 2 }); b.set(doc(collection(d, 'records', id, 'stages')), { at: 2, by: uid, from: 's1', to: 's2', label: 'Next', comment: '', ...entry }); return b.commit(); };
+  beforeEach(async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'records', 'r_wf'), record('alice', { stage: 's1', assignee: 'bob', assigneeGroup: null, stageAt: 1 }));
+      await setDoc(doc(ctx.firestore(), 'records', 'r_grp'), record('alice', { stage: 's1', assignee: null, assigneeGroup: 'g_staff', stageAt: 1 }));
+    });
+  });
+  test('the assignee can see and move it, even with “mine only” access; the owner can’t change it now', async () => {
+    await assertSucceeds(getDoc(doc(db('bob'), 'records', 'r_wf')));
+    await assertSucceeds(getDocs(query(collection(db('bob'), 'records'), where('assignee', '==', 'bob'))));
+    await assertFails(updateDoc(doc(db('alice'), 'records', 'r_wf'), { values: { title: 'Mine' }, updatedBy: 'alice' }));
+    await assertFails(updateDoc(doc(db('olivia'), 'records', 'r_wf'), { values: { title: 'Office' }, updatedBy: 'olivia' }));
+    await assertSucceeds(move('bob', 'r_wf', { stage: 's2', assignee: 'alice', stageAt: 2 }));
+    await assertSucceeds(updateDoc(doc(db('alice'), 'records', 'r_wf'), { values: { title: 'Now mine' }, updatedBy: 'alice' }));
+  });
+  test('a group’s members can work on it; admins always', async () => {
+    await assertSucceeds(updateDoc(doc(db('olivia'), 'records', 'r_grp'), { values: { title: 'x' }, updatedBy: 'olivia' }));
+    await assertFails(updateDoc(doc(db('ned'), 'records', 'r_grp'), { values: { title: 'x' }, updatedBy: 'ned' }));
+    await assertSucceeds(move('admin', 'r_wf', { stage: 's3', assignee: 'alice', stageAt: 2 }));
+  });
+  test('history: written as yourself, never changed', async () => {
+    await assertFails(move('bob', 'r_wf', { stage: 's2' }, { by: 'alice' }));
+    await assertFails(move('bob', 'r_wf', { stage: 's2' }, { extra: 1 }));
+    await assertSucceeds(getDocs(collection(db('bob'), 'records', 'r_wf', 'stages')));
+  });
+  test('stage triggers are allowed in automations', async () => {
+    await assertSucceeds(setDoc(doc(db('admin'), 'automations', 'a_s'), { name: 'On approve', formId: 'f_jobs', on: true, trigger: { type: 'stage', to: 's2' }, join: 'all', conds: [], acts: [{ do: 'task', title: 'x' }], createdBy: 'admin', createdAt: 1, updatedAt: 1, updatedBy: 'admin' }));
+  });
+});
+
 describe('reports', () => {
   const report = (owner, extra = {}) => ({ name: 'Pipeline', ownerId: owner, shared: false, widgets: [{ id: 'w1', type: 'kpi' }], createdAt: 1, updatedAt: 1, ...extra });
   beforeEach(async () => {

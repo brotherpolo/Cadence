@@ -527,9 +527,55 @@ async function runAutomations(kind, { recordId, before = null, after = null, act
   }
 }
 
+/** Workflows: a record reached a stage. Close the last stage's tasks and tell whoever has it now. */
+async function stageNotify(recordId, before, after) {
+  const form = (await allForms()).find((f) => f.id === after.formId);
+  const arr = automate.stageArrival(form, before, after);
+  if (!arr) return;
+  const people = await allPeople();
+  const now = Date.now();
+  // the previous stage's workflow tasks for this record are done
+  const open = await db.collection('tasks').where('recordId', '==', recordId).get();
+  for (const d of open.docs) {
+    const t = d.data();
+    if (!t.done && String(t.notes || '').startsWith('Workflow:')) await d.ref.update({ done: true, doneAt: now, updatedAt: now });
+  }
+  const st = arr.stage, notify = st.notify || {};
+  if (!notify.task && !notify.email) return;
+  const mover = String(after.updatedBy || '').startsWith('auto:') ? null : after.updatedBy || null;
+  let who = arr.assignee ? [arr.assignee] : [];
+  if (!who.length && arr.assigneeGroup) who = [...(await db.collection('users').where('groups', 'array-contains', arr.assigneeGroup).get()).docs.map((d) => d.id)].slice(0, 10);
+  if (!who.length) return;
+  const k = fw.makeKit({ forms: await allForms(), records: [{ ...after, id: recordId }] });
+  const title = k.recTitle({ ...after, id: recordId }, form);
+  const owner = mover || who[0];
+  const op = people.get(owner) || {};
+  for (const uid of who) {
+    const ap = uid !== owner ? people.get(uid) || {} : null;
+    if (notify.task) {
+      const ref = db.collection('tasks').doc();
+      await ref.set({
+        id: ref.id, title: `${st.name}: ${title}`.slice(0, 500), notes: `Workflow: ${form.name} is waiting on you at ${st.name}.`, due: null, time: null, done: false, doneAt: null, createdAt: now, updatedAt: now,
+        subtasks: [], repeat: 'none', ownerId: owner, ownerName: op.name || null, ownerEmail: op.email || null,
+        assigneeId: ap ? uid : null, assigneeName: ap ? ap.name || null : null, assigneeEmail: ap ? ap.email || null : null, members: ap ? [owner, uid] : [owner],
+        recordId, formId: form.id, recordSnap: { title, form: form.name || '', color: fw.COLORS[(form.color ?? 0) % fw.COLORS.length] },
+      });
+    }
+    if (notify.email && people.get(uid)?.email) {
+      const g = gmail();
+      if (!g.ready) continue;
+      const brand = (await db.collection('settings').doc('exports').get()).data() || {};
+      try {
+        await mailer.sendMail({ from: { name: brand.companyName || g.user, address: g.user }, to: people.get(uid).email, subject: `${fw.itemName(form)} ${title} is waiting on you (${st.name})`, text: `${people.get(mover)?.name || 'Someone'} moved ${fw.itemName(form).toLowerCase()} “${title}” to ${st.name}. It’s waiting on you.\n\nOpen Formwright and look in My work.` });
+      } catch (e) { logger.error('workflow email failed', e); }
+    }
+  }
+}
+
 exports.automationOnWrite = onDocumentWrittenWithAuthContext({ document: 'records/{recordId}', secrets: [GMAIL_APP_PASSWORD], memory: '512MiB', timeoutSeconds: 120 }, async (event) => {
   const [before, after] = docs(event);
   if (!after) return;
+  try { await stageNotify(event.params.recordId, before, after); } catch (e) { logger.error('workflow notice failed', e); }
   const depth = automate.depthOf(before, after);
   const actor = depth ? (after.auto && after.auto.actor) || null : (String(after.updatedBy || '').startsWith('auto:') ? null : after.updatedBy || uidOf(event) || null);
   await runAutomations(before ? 'changed' : 'created', { recordId: event.params.recordId, before, after, actor, depth });

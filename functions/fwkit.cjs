@@ -752,6 +752,39 @@ function once(rules, fields, byId, under, look) {
 var sameSet = (a, b) => a.size === b.size && [...a].every((x) => b.has(x));
 var NO_RULES = { hidden: /* @__PURE__ */ new Set(), hiddenFields: /* @__PURE__ */ new Set(), cleared: /* @__PURE__ */ new Set(), required: (f) => !!(f && f.required && holdsValue(f)), fired: /* @__PURE__ */ new Map(), blank: /* @__PURE__ */ new Set() };
 
+// src/workflow.js
+var STAGE_FIELD = "_stage";
+var wfOn = (form) => !!(form?.workflow?.on && (form.workflow.stages || []).length);
+var stagesOf = (form) => wfOn(form) ? form.workflow.stages : [];
+var stageById = (form, id) => stagesOf(form).find((s) => s.id === id) || null;
+function withStageField(form) {
+  if (!wfOn(form)) return form;
+  return { ...form, fields: [...form.fields || [], { id: STAGE_FIELD, type: "select", label: "Stage", options: stagesOf(form).map((s) => s.name), pseudo: true }] };
+}
+var stageName = (form, rec) => stageById(form, rec?.stage)?.name || "";
+function stageView(form, stageId) {
+  const st = stageById(form, stageId);
+  const out = { hide: /* @__PURE__ */ new Set(), view: /* @__PURE__ */ new Set(), req: /* @__PURE__ */ new Set(), keys: /* @__PURE__ */ new Set() };
+  if (!st) return out;
+  const fields = form.fields || [];
+  const under = headingOf(fields);
+  const mode = (id) => (st.fields || {})[id] || "edit";
+  fields.forEach((f) => {
+    const m = mode(f.id), hm = under[f.id] ? mode(under[f.id]) : "edit";
+    if (f.type === "heading") {
+      if (m === "hide") out.keys.add("f:" + f.id);
+      return;
+    }
+    if (m === "hide" || hm === "hide") out.hide.add(f.id);
+    else if (m === "view" || hm === "view") out.view.add(f.id);
+    else if (m === "req" && !["formula", "autonumber"].includes(f.type)) out.req.add(f.id);
+  });
+  Object.entries(st.sections || {}).forEach(([k, v]) => {
+    if (v === "hide") out.keys.add(k);
+  });
+  return out;
+}
+
 // src/server/recordkit.js
 var POPUP = /* @__PURE__ */ new Set(["textarea", "file", "image", "signature", "location", "multiselect"]);
 var COLORS = ["#3346c8", "#0f7b6c", "#b4531a", "#8a3fb8", "#b42367", "#3d6b1f", "#56607a", "#0b6aa2"];
@@ -893,6 +926,7 @@ function makeKit({ forms = [], records = [], locale = "en-CA", timeZone = "Ameri
     });
   }
   function valOf(f, rec, form) {
+    if (f.id === STAGE_FIELD) return stageName(form || formById(rec.formId), rec);
     if (f.type === "autonumber") return rec.nums?.[f.id] ?? null;
     if (f.type !== "formula") return rec.values?.[f.id];
     form = form || formById(rec.formId);
@@ -916,7 +950,7 @@ function makeKit({ forms = [], records = [], locale = "en-CA", timeZone = "Ameri
     return f ? text(form, rec, f) : void 0;
   };
   function getter(form, rec, parent) {
-    const byId = new Map((form.fields || []).map((f) => [f.id, f]));
+    const byId = new Map((withStageField(form).fields || []).map((f) => [f.id, f]));
     const p = parent !== void 0 ? parent : rec.parentId ? recById(rec.parentId) : null;
     return (src, fid) => {
       if (src === "self") {
@@ -925,24 +959,24 @@ function makeKit({ forms = [], records = [], locale = "en-CA", timeZone = "Ameri
       }
       if (!p || p.formId !== src) return null;
       const pf = formById(src);
-      const f = pf?.fields?.find((x) => x.id === fid);
+      const f = withStageField(pf)?.fields?.find((x) => x.id === fid);
       return f ? { f, v: valOf(f, p, pf) } : null;
     };
   }
-  const rulesFor = (form, rec) => form?.rules?.length ? evaluate(form, getter(form, rec)) : NO_RULES;
+  const rulesFor = (form, rec) => form?.rules?.length ? evaluate(withStageField(form), getter(form, rec)) : NO_RULES;
   function look(form, rec) {
     const g = getter(form, rec);
     return (c) => {
       if (!c.src || c.src === "self") {
-        const f = (form.fields || []).find((x) => x.id === c.field);
+        const f = (withStageField(form).fields || []).find((x) => x.id === c.field);
         return f ? { f, v: valOf(f, rec, form) } : null;
       }
       return g(c.src, c.field);
     };
   }
   function pdfModel(form, rec, { stamp = "", userName = (id) => "" } = {}) {
-    const rs = rulesFor(form, rec);
-    const items = (form.fields || []).filter((f) => !rs.hiddenFields.has(f.id) && !rs.hidden.has("f:" + f.id)).map((f) => {
+    const rs = rulesFor(form, rec), sv = stageView(form, rec.stage);
+    const items = (form.fields || []).filter((f) => !rs.hiddenFields.has(f.id) && !rs.hidden.has("f:" + f.id) && !sv.hide.has(f.id) && !sv.keys.has("f:" + f.id)).map((f) => {
       const v = f.type === "heading" || rs.cleared.has(f.id) ? null : valOf(f, rec, form);
       const it = fieldItem(f, v, f.type === "heading" ? "" : f.type === "rating" ? isEmpty2(v) ? "" : `${v} of ${f.max || 5}` : text(form, { ...rec, values: { ...rec.values, [f.id]: v } }, f));
       return it;
@@ -957,7 +991,7 @@ function makeKit({ forms = [], records = [], locale = "en-CA", timeZone = "Ameri
       const cf = rel && formById(k);
       if (!cf || cf.id === form.id) return;
       const isGrid = rel.display === "grid";
-      if (rs.hidden.has((isGrid ? "g:" : "c:") + cf.id)) return;
+      if (rs.hidden.has((isGrid ? "g:" : "c:") + cf.id) || sv.keys.has((isGrid ? "g:" : "c:") + cf.id)) return;
       const rows = childrenOf(rec.id, cf.id).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
       const usable = (cf.fields || []).filter((f) => f.type !== "heading");
       const num2 = (f) => ["number", "decimal", "currency", "percent", "range"].includes(f.type) || f.type === "formula";
