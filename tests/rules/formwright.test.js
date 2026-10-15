@@ -542,6 +542,18 @@ describe('emails sent from a record', () => {
   });
 });
 
+describe('audit trail', () => {
+  test('administrators read it; nobody writes it from the app', async () => {
+    await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'audit', 'a1'), { at: 1, by: 'alice', area: 'record', kind: 'changed' }));
+    await assertSucceeds(getDoc(doc(db('admin'), 'audit', 'a1')));
+    await assertSucceeds(getDocs(query(collection(db('admin'), 'audit'), where('by', '==', 'alice'))));
+    await assertFails(getDoc(doc(db('olivia'), 'audit', 'a1')));
+    await assertFails(getDoc(doc(db('alice'), 'audit', 'a1')));
+    await assertFails(setDoc(doc(db('admin'), 'audit', 'a2'), { at: 1 }));
+    await assertFails(deleteDoc(doc(db('admin'), 'audit', 'a1')));
+  });
+});
+
 describe('PDF export settings', () => {
   const ok = (uid, extra = {}) => ({ companyName: 'Pollack Renovations', logo: 'data:image/png;base64,iVBORw0KGgo=', updatedAt: 1, updatedBy: uid, ...extra });
 

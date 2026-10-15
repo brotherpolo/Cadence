@@ -440,6 +440,12 @@ service cloud.firestore {
       }
     }
 
+    // Audit trail (Formwright → Administration): written only by the server; admins read it.
+    match /audit/{entryId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
     // Auto number counters (Formwright): handed out by the server only; admins may look.
     match /counters/{counterId} {
       allow read: if isAdmin();

@@ -9,6 +9,8 @@
  *   autoNumberOnCreate, autoNumberFill, autoNumberSet
  *                 Formwright's Auto number fields (autonumber.js)
  *   emailRecord   Formwright → Email PDF: an administrator emails a record's PDF (email.js)
+ *   audit*        Formwright → Audit trail: records, forms, groups, accounts and settings as
+ *                 they change; restoreRecord brings a deleted record back (audit.js)
  *
  * Each person's choices live in notify/{uid}; their devices' push tokens in
  * notify/{uid}/devices/{deviceId}. Times are worked out in that person's own
@@ -16,7 +18,7 @@
  * notifyState/{uid} remembers when reminders last ran for each person; only
  * these functions can see it (firestore.rules denies it to everyone else).
  */
-const { onDocumentWritten, onDocumentCreated } = require('firebase-functions/v2/firestore');
+const { onDocumentWritten, onDocumentCreated, onDocumentWrittenWithAuthContext } = require('firebase-functions/v2/firestore');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { setGlobalOptions, logger } = require('firebase-functions/v2');
 const admin = require('firebase-admin');
@@ -24,6 +26,7 @@ const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { removeAccount } = require('./remove');
 const autonumber = require('./autonumber');
 const { sendRecordEmail } = require('./email');
+const audit = require('./audit');
 const { defineSecret } = require('firebase-functions/params');
 const GMAIL_APP_PASSWORD = defineSecret('GMAIL_APP_PASSWORD');
 
@@ -200,6 +203,8 @@ exports.removeAccount = onCall({ region: 'us-central1', timeoutSeconds: 300 }, a
   try {
     const out = await removeAccount(db, admin.auth(), request.auth && request.auth.uid, request.data);
     logger.info('removed account', { by: request.auth.uid, uid: request.data.uid, giveTo: request.data.giveTo || null, out });
+    await logAudit(request.auth.uid, { area: 'user', kind: 'removed', targetId: request.data.uid, targetName: out.name || '',
+      note: [out.records ? `${out.records} record${out.records === 1 ? '' : 's'} given to someone else` : 'records kept under their name', out.tasksDeleted ? `${out.tasksDeleted} task${out.tasksDeleted === 1 ? '' : 's'} deleted` : '', out.tasksReturned ? `${out.tasksReturned} handed back` : ''].filter(Boolean).join('; ') });
     return out;
   } catch (e) {
     const known = ['unauthenticated', 'invalid-argument', 'failed-precondition', 'permission-denied', 'not-found'];
@@ -230,8 +235,23 @@ exports.autoNumberOnCreate = onDocumentCreated('records/{recordId}', async (even
     throw e; // retried by Firestore triggers when retries are on; otherwise "Number existing records" fixes it
   }
 });
-exports.autoNumberFill = callable('autoNumberFill', autonumber.fillNumbers);
-exports.autoNumberSet = callable('autoNumberSet', autonumber.setNumber);
+exports.autoNumberFill = callable('autoNumberFill', async (d, uid, data) => {
+  const out = await autonumber.fillNumbers(d, uid, data);
+  const form = await formInfo(data.formId);
+  const f = (form.fields || []).find((x) => x.id === data.fieldId);
+  await logAudit(uid, { area: 'form', kind: 'numbered', formId: data.formId, formName: form.name || '', targetId: data.formId, targetName: form.name || '',
+    note: `${f ? f.label + ': ' : ''}numbered ${out.numbered}${out.numbered ? ` (${out.first}${out.numbered > 1 ? ' to ' + out.last : ''})` : ''}; kept ${out.kept} typed in${out.duplicates.length ? '; duplicates: ' + out.duplicates.join(', ') : ''}` });
+  return out;
+});
+exports.autoNumberSet = callable('autoNumberSet', async (d, uid, data) => {
+  const out = await autonumber.setNumber(d, uid, data);
+  const rec = (await db.collection('records').doc(data.recordId).get()).data() || {};
+  const form = await formInfo(rec.formId);
+  const f = (form.fields || []).find((x) => x.id === data.fieldId);
+  await logAudit(uid, { area: 'record', kind: 'changed', recordId: data.recordId, formId: rec.formId, formName: form.name || '', title: audit.titleOf(rec, form),
+    changes: [{ key: data.fieldId, label: (f && f.label) || 'Number', type: 'autonumber', from: out.from, to: out.to }], note: 'Number changed by an administrator' });
+  return out;
+});
 
 /* ---------- Formwright → Email PDF ---------- */
 // Sends through Gmail as GMAIL_USER (functions/.env) with the app password from Secret Manager.
@@ -245,12 +265,94 @@ exports.emailRecord = onCall({ region: 'us-central1', timeoutSeconds: 120, memor
       mailer = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user, pass } });
     }
     const brand = await db.collection('settings').doc('exports').get();
-    return await sendRecordEmail(db, (mail) => mailer.sendMail(mail), request.auth && request.auth.uid, request.data, {
+    const out = await sendRecordEmail(db, (mail) => mailer.sendMail(mail), request.auth && request.auth.uid, request.data, {
       from: user, ready: !!(user && pass), fromName: (brand.exists && brand.get('companyName')) || '', tz: process.env.FORMWRIGHT_TZ || 'America/Toronto',
     });
+    const rec = (await db.collection('records').doc(request.data.recordId).get()).data() || {};
+    const form = await formInfo(rec.formId);
+    await logAudit(request.auth.uid, { area: 'record', kind: 'emailed', recordId: request.data.recordId, formId: rec.formId, formName: form.name || '', title: audit.titleOf(rec, form),
+      note: `To ${out.to.join(', ')}${out.cc.length ? '; Cc ' + out.cc.join(', ') : ''} · “${String(request.data.subject || '').slice(0, 200)}”` });
+    return out;
   } catch (e) {
     if (CALLABLE_CODES.includes(e.code)) throw new HttpsError(e.code, e.message);
     logger.error('emailRecord failed', e);
     throw new HttpsError('internal', 'The email didn’t go. Try again.');
   }
+});
+
+/* ---------- Formwright → Audit trail ---------- */
+// audit/{id}: written only here; administrators read it in Formwright. Kept forever.
+const names = new Map(); // uid → display name, for this instance
+async function personName(uid) {
+  if (!uid || uid === 'system' || uid === 'unknown') return uid === 'system' ? 'System' : 'Someone';
+  if (names.has(uid)) return names.get(uid);
+  let n = '';
+  try {
+    const p = await db.collection('profiles').doc(uid).get();
+    n = (p.exists && p.get('displayName')) || '';
+    if (!n) { const u = await db.collection('users').doc(uid).get(); n = (u.exists && (u.get('displayName') || String(u.get('email') || '').split('@')[0])) || ''; }
+  } catch (e) { /* a missing name isn't worth failing over */ }
+  names.set(uid, n || 'Someone');
+  return n || 'Someone';
+}
+async function formInfo(formId) {
+  if (!formId) return {};
+  const f = await db.collection('forms').doc(formId).get();
+  return f.exists ? f.data() : {};
+}
+async function logAudit(uid, entry) {
+  try {
+    await db.collection('audit').add({ at: Date.now(), by: uid || 'unknown', byName: await personName(uid), ...entry });
+  } catch (e) { logger.error('audit write failed', e); }
+}
+// writes the server makes itself (numbers, removals, restores) log their own, clearer entry
+const bySystem = (event) => event.authType === 'service_account' || event.authType === 'system' || /gserviceaccount\.com$/.test(String(event.authId || ''));
+const uidOf = (event) => { const id = String(event.authId || ''); return id && !id.includes('@') ? id : ''; };
+const docs = (event) => [event.data.before.exists ? event.data.before.data() : null, event.data.after.exists ? event.data.after.data() : null];
+const who = async (uid) => ({ by: uid || 'unknown', byName: await personName(uid) });
+
+exports.auditRecord = onDocumentWrittenWithAuthContext('records/{recordId}', async (event) => {
+  if (bySystem(event)) return;
+  const [before, after] = docs(event);
+  if (!before && !after) return;
+  const uid = (after && after.updatedBy) || uidOf(event);
+  const entry = audit.recordEntry(event.params.recordId, before, after, await formInfo((after || before).formId), await who(uid), Date.now());
+  if (entry) await db.collection('audit').add(entry);
+});
+exports.auditForm = onDocumentWrittenWithAuthContext('forms/{formId}', async (event) => {
+  if (bySystem(event)) return;
+  const [before, after] = docs(event);
+  const entry = audit.formEntry(event.params.formId, before, after, await who(uidOf(event)), Date.now());
+  if (entry) await db.collection('audit').add(entry);
+});
+exports.auditGroup = onDocumentWrittenWithAuthContext('groups/{groupId}', async (event) => {
+  if (bySystem(event)) return;
+  const [before, after] = docs(event);
+  const forms = await db.collection('forms').get();
+  const entry = audit.groupEntry(event.params.groupId, before, after, await who(uidOf(event)), Date.now(), new Map(forms.docs.map((d) => [d.id, d.get('name')])));
+  if (entry) await db.collection('audit').add(entry);
+});
+exports.auditUser = onDocumentWrittenWithAuthContext('users/{userId}', async (event) => {
+  if (bySystem(event)) return;
+  const [before, after] = docs(event);
+  if (before && after && (before.role || 'member') === (after.role || 'member') && !!before.cadence === !!after.cadence
+    && JSON.stringify([...(before.groups || [])].sort()) === JSON.stringify([...(after.groups || [])].sort())) return; // only access worked out again
+  const groups = await db.collection('groups').get();
+  const entry = audit.userEntry(event.params.userId, before, after, await who(uidOf(event)), Date.now(),
+    new Map(groups.docs.map((d) => [d.id, d.get('name')])), new Map([[event.params.userId, await personName(event.params.userId)]]));
+  if (entry) await db.collection('audit').add(entry);
+});
+exports.auditSettings = onDocumentWrittenWithAuthContext('settings/{settingsId}', async (event) => {
+  if (bySystem(event)) return;
+  const [before, after] = docs(event);
+  const entry = audit.settingsEntry(event.params.settingsId, before, after, await who((after && after.updatedBy) || uidOf(event)), Date.now());
+  if (entry) await db.collection('audit').add(entry);
+});
+exports.restoreRecord = callable('restoreRecord', async (d, uid, data) => {
+  const out = await audit.restoreRecord(d, uid, data);
+  const rec = (await db.collection('records').doc(out.recordId).get()).data() || {};
+  const form = await formInfo(out.formId);
+  await logAudit(uid, { area: 'record', kind: 'restored', recordId: out.recordId, formId: out.formId, formName: form.name || '', title: audit.titleOf(rec, form),
+    note: [out.parentGone ? 'its parent is gone, so it was restored on its own' : '', out.trimmed ? 'signatures and long text weren’t kept for this one' : ''].filter(Boolean).join('; ') });
+  return out;
 });

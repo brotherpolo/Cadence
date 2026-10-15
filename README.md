@@ -96,6 +96,7 @@ imports/{id}                 spreadsheet imports, kept 7 days for undo (admins o
 imports/{id}/before/{recId}  a record as it was before an import changed it (admins only)
 records/{id}.nums            auto numbers (server only); counters/{id} their counters
 records/{id}/emails/{id}     PDFs emailed from a record (server only; readable with the record)
+audit/{id}                   the audit trail (server only; admins read)
 settings/exports             company name and logo for Formwright's PDF exports (admins write; members read)
 uploads/... (Storage)        files attached to records
 ```
@@ -132,6 +133,14 @@ Cadence reads Formwright's forms and your Formwright account (`users/{uid}`) to 
 
 `functions/autonumber.js`: `autoNumberOnCreate` numbers every new record's Auto number fields from a counter (`counters/{formId}__{fieldId}`) in a transaction; `autoNumberFill` (admins) numbers existing records, keeping numbers already typed in; `autoNumberSet` (admins) changes one number, keeps it unique and logs it in `autoLog`. The numbers are in `records/{id}.nums`, which the rules let only the server write. The year option uses `FORMWRIGHT_TZ` (default `America/Toronto`). Deploy with the other functions.
 
+### Audit trail (Formwright → Administration → Audit trail)
+
+`functions/audit.js` and the `audit*` functions in `index.js` write `audit/{id}` whenever a record, form, security group, account (`users/{uid}`) or `settings/*` document changes, with who did it and what changed. Deleted records keep a copy, and `restoreRecord` (admins, within 90 days) puts one back. Writes the server makes itself (auto numbers, removals, restores) are skipped there and noted by the function that made them. Admins read the trail; nobody writes it from the apps. It needs the `audit` indexes:
+
+```sh
+firebase deploy --only firestore:rules,firestore:indexes,functions --project tasks-2ae9d
+```
+
 ### Email PDF (Formwright → a record → Email PDF)
 
 `functions/email.js` (`emailRecord`, administrators only) sends a record's PDF through Gmail and logs it in `records/{id}/emails`. It needs, once:
@@ -158,7 +167,7 @@ From this folder, in Cloud Shell:
 
 ```sh
 (cd tests && npm install && npm test)     # rules tests against the emulators (needs Java, which Cloud Shell has)
-(cd tests && npm run test:unit)           # dashboard layout, remove-person, auto-number and email tests (no emulator needed)
+(cd tests && npm run test:unit)           # dashboard layout, remove-person, auto-number, email and audit tests (no emulator needed)
 firebase deploy --only firestore:rules,firestore:indexes,storage --project tasks-2ae9d
 ```
 
@@ -279,7 +288,7 @@ firestore.rules       Firestore security rules (Cadence and Formwright)
 storage.rules         Storage security rules (Formwright uploads)
 firestore.indexes.json  indexes: reminders, and tasks linked to a record
 firebase.json         Firebase CLI config (rules, indexes, functions, hosting)
-functions/            Cloud Functions: notifications (index.js), removing a person (remove.js), auto numbers (autonumber.js), Email PDF (email.js), package.json, .env
+functions/            Cloud Functions: notifications (index.js), removing a person (remove.js), auto numbers (autonumber.js), Email PDF (email.js), audit trail (audit.js), package.json, .env
 tests/                rules tests (development only; run with npm test inside tests/)
 ```
 
