@@ -432,6 +432,12 @@ service cloud.firestore {
         && request.resource.data.get('autoLog', null) == resource.data.get('autoLog', null);
 
       allow delete: if signedIn() && canEditRecord(resource.data);
+
+      // Email PDF: what was sent, written only by the server; readable with the record
+      match /emails/{emailId} {
+        allow read: if signedIn() && canViewRecord(get(/databases/$(database)/documents/records/$(recordId)).data);
+        allow write: if false;
+      }
     }
 
     // Auto number counters (Formwright): handed out by the server only; admins may look.

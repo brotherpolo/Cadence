@@ -531,6 +531,17 @@ describe('auto numbers', () => {
   });
 });
 
+describe('emails sent from a record', () => {
+  test('readable by whoever can see the record; written only by the server', async () => {
+    await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'records', 'r_alice', 'emails', 'e1'), { to: ['x@y.com'], subject: 'Hi', by: 'admin', at: 1 }));
+    await assertSucceeds(getDoc(doc(db('alice'), 'records', 'r_alice', 'emails', 'e1')));
+    await assertSucceeds(getDocs(collection(db('olivia'), 'records', 'r_alice', 'emails')));
+    await assertFails(getDoc(doc(db('bob'), 'records', 'r_alice', 'emails', 'e1')), 'bob sees only his own records');
+    await assertFails(setDoc(doc(db('admin'), 'records', 'r_alice', 'emails', 'e2'), { to: [], subject: 'fake' }));
+    await assertFails(getDoc(doc(db('admin'), 'emailLimits', 'admin')));
+  });
+});
+
 describe('PDF export settings', () => {
   const ok = (uid, extra = {}) => ({ companyName: 'Pollack Renovations', logo: 'data:image/png;base64,iVBORw0KGgo=', updatedAt: 1, updatedBy: uid, ...extra });
 

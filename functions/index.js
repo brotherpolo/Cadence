@@ -8,6 +8,7 @@
  *   removeAccount Formwright → Users → Remove: an administrator removes a person (remove.js)
  *   autoNumberOnCreate, autoNumberFill, autoNumberSet
  *                 Formwright's Auto number fields (autonumber.js)
+ *   emailRecord   Formwright → Email PDF: an administrator emails a record's PDF (email.js)
  *
  * Each person's choices live in notify/{uid}; their devices' push tokens in
  * notify/{uid}/devices/{deviceId}. Times are worked out in that person's own
@@ -22,6 +23,9 @@ const admin = require('firebase-admin');
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { removeAccount } = require('./remove');
 const autonumber = require('./autonumber');
+const { sendRecordEmail } = require('./email');
+const { defineSecret } = require('firebase-functions/params');
+const GMAIL_APP_PASSWORD = defineSecret('GMAIL_APP_PASSWORD');
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -206,7 +210,7 @@ exports.removeAccount = onCall({ region: 'us-central1', timeoutSeconds: 300 }, a
 });
 
 /* ---------- Formwright → Auto number fields ---------- */
-const CALLABLE_CODES = ['unauthenticated', 'invalid-argument', 'failed-precondition', 'permission-denied', 'not-found', 'already-exists'];
+const CALLABLE_CODES = ['unauthenticated', 'invalid-argument', 'failed-precondition', 'permission-denied', 'not-found', 'already-exists', 'resource-exhausted', 'unavailable'];
 const callable = (name, fn) => onCall({ region: 'us-central1', timeoutSeconds: 300 }, async (request) => {
   try {
     return await fn(db, request.auth && request.auth.uid, request.data);
@@ -228,3 +232,25 @@ exports.autoNumberOnCreate = onDocumentCreated('records/{recordId}', async (even
 });
 exports.autoNumberFill = callable('autoNumberFill', autonumber.fillNumbers);
 exports.autoNumberSet = callable('autoNumberSet', autonumber.setNumber);
+
+/* ---------- Formwright → Email PDF ---------- */
+// Sends through Gmail as GMAIL_USER (functions/.env) with the app password from Secret Manager.
+let mailer = null;
+exports.emailRecord = onCall({ region: 'us-central1', timeoutSeconds: 120, memory: '512MiB', secrets: [GMAIL_APP_PASSWORD] }, async (request) => {
+  try {
+    const user = String(process.env.GMAIL_USER || '').trim();
+    const pass = String(GMAIL_APP_PASSWORD.value() || '').replace(/\s+/g, '');
+    if (user && pass && !mailer) {
+      const nodemailer = require('nodemailer');
+      mailer = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true, auth: { user, pass } });
+    }
+    const brand = await db.collection('settings').doc('exports').get();
+    return await sendRecordEmail(db, (mail) => mailer.sendMail(mail), request.auth && request.auth.uid, request.data, {
+      from: user, ready: !!(user && pass), fromName: (brand.exists && brand.get('companyName')) || '', tz: process.env.FORMWRIGHT_TZ || 'America/Toronto',
+    });
+  } catch (e) {
+    if (CALLABLE_CODES.includes(e.code)) throw new HttpsError(e.code, e.message);
+    logger.error('emailRecord failed', e);
+    throw new HttpsError('internal', 'The email didn’t go. Try again.');
+  }
+});
