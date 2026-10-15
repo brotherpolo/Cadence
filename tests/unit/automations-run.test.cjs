@@ -63,7 +63,7 @@ set('users/rev1', { email: 'rev1@x.example', displayName: 'Rae', role: 'member',
 set('users/rev2', { email: 'rev2@x.example', displayName: 'Rob', role: 'member', groups: ['g_rev', 'g_x'] });
 set('forms/f_req', { name: 'Requests', itemName: 'Request', titleField: 't', fields: [{ id: 't', type: 'text', label: 'Title' }], workflow: { on: true, stages: [
   { id: 's1', name: 'Draft', assign: { type: 'owner' }, notify: {} },
-  { id: 's2', name: 'Review', assign: { type: 'group', group: 'g_rev' }, notify: { task: true, email: true } },
+  { id: 's2', name: 'Review', assign: { type: 'group', group: 'g_rev' }, notify: { task: true, email: true }, dueDays: 2 },
   { id: 's3', name: 'Approved', assign: { type: 'owner' }, notify: { task: true } },
 ] } });
 set('settings/exports', { companyName: 'Pollack Inc.' });
@@ -170,7 +170,11 @@ test('workflow: arriving at a stage closes the old workflow tasks, tasks/emails 
   assert.deepEqual(wt().map((t) => [t.title, t.assigneeId, t.ownerId, t.done]).sort(), [['Review: New laptop', 'rev1', 'amy', false], ['Review: New laptop', 'rev2', 'amy', false]], JSON.stringify(wt()));
   const mails = sent.slice(m0);
   assert.deepEqual(mails.map((m) => m.to).sort(), ['rev1@x.example', 'rev2@x.example']);
-  assert.match(mails[0].subject, /^Request New laptop is waiting on you \(Review\)$/);
+  assert.match(mails[0].subject, /^Request New laptop: you’re the person responsible \(Review\)$/);
+  const fw = require('../../functions/fwkit.cjs');
+  const due = fw.stageDue({ dueDays: 2 }, fw.dayKey(2, 'America/Toronto'));
+  assert.ok(wt().every((t) => t.due === due) && /^\d{4}-\d{2}-\d{2}$/.test(due), 'Review tasks are due in 2 working days: ' + due);
+  assert.match(mails[0].text, new RegExp('due ' + due));
   const r2 = { ...r1, stage: 's3', assignee: 'amy', assigneeGroup: null, updatedBy: 'rev1' };
   set('records/q1', r2);
   await write('q1', r1, r2, 'rev1');
@@ -181,4 +185,19 @@ test('workflow: arriving at a stage closes the old workflow tasks, tasks/emails 
   const n = all.length;
   await write('q1', r2, { ...r2, values: { t: 'New laptop!' } }, 'amy');
   assert.equal(wt().length, n, 'an ordinary edit sends no notices');
+});
+
+test('workflow: a new record without a stage (import, automation, Duplicate) starts at the first stage, once', async () => {
+  const r = { formId: 'f_req', values: { t: 'Imported chair' }, ownerId: 'amy', createdBy: 'boss', updatedBy: 'boss' };
+  set('records/q2', r);
+  await write('q2', null, r, 'boss');
+  const now = db.m.get('records/q2');
+  assert.deepEqual([now.stage, now.assignee, now.assigneeGroup, typeof now.stageAt], ['s1', 'amy', null, 'number'], 'Draft goes to the owner');
+  const hist = where('records/q2/stages/').map(([, v]) => v);
+  assert.deepEqual(hist.map((h) => [h.to, h.label, h.by]), [['s1', 'Started', 'boss']]);
+  await write('q2', null, r, 'boss'); // a repeat of the same event: already started, nothing more
+  assert.equal(where('records/q2/stages/').length, 1);
+  const plain = { formId: 'f_job', values: { t: 'No workflow' }, ownerId: 'amy', createdBy: 'amy', updatedBy: 'amy' };
+  set('records/q3', plain); await write('q3', null, plain);
+  assert.equal(db.m.get('records/q3').stage, undefined, 'forms without a workflow are left alone');
 });

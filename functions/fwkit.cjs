@@ -22,14 +22,19 @@ var entry_exports = {};
 __export(entry_exports, {
   ACTION_LABEL: () => ACTION_LABEL,
   COLORS: () => COLORS,
+  assigneeFor: () => assigneeFor,
+  dayKey: () => dayKey,
   drawPdf: () => drawPdf,
   fileName: () => fileName,
   fillTemplate: () => fillTemplate,
+  firstStage: () => firstStage,
   itemName: () => itemName,
   makeKit: () => makeKit,
   opOf: () => opOf,
   ruleFires: () => ruleFires,
-  testCond: () => testCond
+  stageDue: () => stageDue,
+  testCond: () => testCond,
+  wfOn: () => wfOn
 });
 module.exports = __toCommonJS(entry_exports);
 
@@ -757,6 +762,7 @@ var STAGE_FIELD = "_stage";
 var wfOn = (form) => !!(form?.workflow?.on && (form.workflow.stages || []).length);
 var stagesOf = (form) => wfOn(form) ? form.workflow.stages : [];
 var stageById = (form, id) => stagesOf(form).find((s) => s.id === id) || null;
+var firstStage = (form) => stagesOf(form)[0] || null;
 function withStageField(form) {
   if (!wfOn(form)) return form;
   return { ...form, fields: [...form.fields || [], { id: STAGE_FIELD, type: "select", label: "Stage", options: stagesOf(form).map((s) => s.name), pseudo: true }] };
@@ -783,6 +789,35 @@ function stageView(form, stageId) {
     if (v === "hide") out.keys.add(k);
   });
   return out;
+}
+function assigneeFor(stage, rec, moverId) {
+  const a = stage?.assign || { type: "owner" };
+  if (a.type === "person" && a.person) return { assignee: a.person, assigneeGroup: null };
+  if (a.type === "group" && a.group) return { assignee: null, assigneeGroup: a.group };
+  if (a.type === "mover") return { assignee: moverId || rec?.ownerId || null, assigneeGroup: null };
+  if (a.type === "keep" && rec && (rec.assignee || rec.assigneeGroup)) return { assignee: rec.assignee || null, assigneeGroup: rec.assigneeGroup || null };
+  return { assignee: rec?.ownerId || moverId || null, assigneeGroup: null };
+}
+var DAY = 864e5;
+var keyOf = (d) => d.toISOString().slice(0, 10);
+var fromKey = (k) => /* @__PURE__ */ new Date(k + "T00:00:00Z");
+function addWorkdays(dateKey, n) {
+  let d = fromKey(dateKey);
+  while ([0, 6].includes(d.getUTCDay())) d = new Date(+d + DAY);
+  let left = Math.max(0, Math.round(Number(n) || 0));
+  while (left > 0) {
+    d = new Date(+d + DAY);
+    if (![0, 6].includes(d.getUTCDay())) left--;
+  }
+  return keyOf(d);
+}
+function stageDue(stage, arrivedKey) {
+  const n = stage?.dueDays;
+  if (n == null || n === "" || !arrivedKey) return "";
+  return addWorkdays(arrivedKey, n);
+}
+function dayKey(ms, timeZone) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(ms));
 }
 
 // src/server/recordkit.js
@@ -1384,12 +1419,17 @@ function fillTemplate(tpl, ctx) {
 0 && (module.exports = {
   ACTION_LABEL,
   COLORS,
+  assigneeFor,
+  dayKey,
   drawPdf,
   fileName,
   fillTemplate,
+  firstStage,
   itemName,
   makeKit,
   opOf,
   ruleFires,
-  testCond
+  stageDue,
+  testCond,
+  wfOn
 });

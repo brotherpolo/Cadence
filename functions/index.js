@@ -559,7 +559,25 @@ async function runAutomations(kind, { recordId, before = null, after = null, act
   }
 }
 
-/** Workflows: a record reached a stage. Close the last stage's tasks and tell whoever has it now. */
+/** Workflows: a new record (from the app, an import, an automation, Duplicate…) starts at the first stage. */
+async function autoStart(recordId, after) {
+  const form = (await allForms()).find((f) => f.id === after.formId);
+  if (!fw.wfOn(form)) return false;
+  const st = fw.firstStage(form);
+  const ref = db.collection('records').doc(recordId);
+  const now = Date.now();
+  return db.runTransaction(async (tx) => {
+    const cur = await tx.get(ref);
+    if (!cur.exists || cur.get('stage')) return false; // gone, or started already
+    const rec = cur.data();
+    const next = fw.assigneeFor(st, rec, rec.createdBy || null);
+    tx.update(ref, { stage: st.id, assignee: next.assignee || null, assigneeGroup: next.assigneeGroup || null, stageAt: now });
+    tx.set(ref.collection('stages').doc(), { at: now, by: rec.createdBy || null, from: null, fromName: null, to: st.id, toName: st.name || '', label: 'Started', comment: '', assignee: next.assignee || null, assigneeGroup: next.assigneeGroup || null });
+    return true;
+  });
+}
+
+/** Workflows: a record reached a stage. Close the last stage's tasks and tell its person responsible. */
 async function stageNotify(recordId, before, after) {
   const form = (await allForms()).find((f) => f.id === after.formId);
   const arr = automate.stageArrival(form, before, after);
@@ -582,12 +600,13 @@ async function stageNotify(recordId, before, after) {
   const title = k.recTitle({ ...after, id: recordId }, form);
   const owner = mover || who[0];
   const op = people.get(owner) || {};
+  const due = fw.stageDue(st, fw.dayKey(after.stageAt || now, process.env.FORMWRIGHT_TZ || 'America/Toronto')) || null; // working days, Monday to Friday
   for (const uid of who) {
     const ap = uid !== owner ? people.get(uid) || {} : null;
     if (notify.task) {
       const ref = db.collection('tasks').doc();
       await ref.set({
-        id: ref.id, title: `${st.name}: ${title}`.slice(0, 500), notes: `Workflow: ${form.name} is waiting on you at ${st.name}.`, due: null, time: null, done: false, doneAt: null, createdAt: now, updatedAt: now,
+        id: ref.id, title: `${st.name}: ${title}`.slice(0, 500), notes: `Workflow: you’re the person responsible for this ${fw.itemName(form).toLowerCase()} at ${st.name}.${due ? ` Due ${due}.` : ''}`, due, time: null, done: false, doneAt: null, createdAt: now, updatedAt: now,
         subtasks: [], repeat: 'none', ownerId: owner, ownerName: op.name || null, ownerEmail: op.email || null,
         assigneeId: ap ? uid : null, assigneeName: ap ? ap.name || null : null, assigneeEmail: ap ? ap.email || null : null, members: ap ? [owner, uid] : [owner],
         recordId, formId: form.id, recordSnap: { title, form: form.name || '', color: fw.COLORS[(form.color ?? 0) % fw.COLORS.length] },
@@ -598,7 +617,7 @@ async function stageNotify(recordId, before, after) {
       if (!g.ready) continue;
       const brand = (await db.collection('settings').doc('exports').get()).data() || {};
       try {
-        await mailer.sendMail({ from: { name: brand.companyName || g.user, address: g.user }, to: people.get(uid).email, subject: `${fw.itemName(form)} ${title} is waiting on you (${st.name})`, text: `${people.get(mover)?.name || 'Someone'} moved ${fw.itemName(form).toLowerCase()} “${title}” to ${st.name}. It’s waiting on you.\n\nOpen Formwright and look in My work.` });
+        await mailer.sendMail({ from: { name: brand.companyName || g.user, address: g.user }, to: people.get(uid).email, subject: `${fw.itemName(form)} ${title}: you’re the person responsible (${st.name})`, text: `${people.get(mover)?.name || 'Someone'} moved ${fw.itemName(form).toLowerCase()} “${title}” to ${st.name}. You’re the person responsible for it now.${due ? `\n\nIt’s due ${due}.` : ''}\n\nOpen Formwright and look in My work.` });
       } catch (e) { logger.error('workflow email failed', e); }
     }
   }
@@ -607,6 +626,7 @@ async function stageNotify(recordId, before, after) {
 exports.automationOnWrite = onDocumentWrittenWithAuthContext({ document: 'records/{recordId}', secrets: [GMAIL_APP_PASSWORD], memory: '512MiB', timeoutSeconds: 120 }, async (event) => {
   const [before, after] = docs(event);
   if (!after) return;
+  if (!before && !after.stage) { try { await autoStart(event.params.recordId, after); } catch (e) { logger.error('workflow start failed', e); } } // its own write comes back here as the arrival
   try { await stageNotify(event.params.recordId, before, after); } catch (e) { logger.error('workflow notice failed', e); }
   const depth = automate.depthOf(before, after);
   const actor = depth ? (after.auto && after.auto.actor) || null : (String(after.updatedBy || '').startsWith('auto:') ? null : after.updatedBy || uidOf(event) || null);
