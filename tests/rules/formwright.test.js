@@ -271,6 +271,20 @@ describe('workflows', () => {
   });
 });
 
+describe('form version history', () => {
+  const v = (by, extra = {}) => ({ n: 1, at: 1, by, kind: 'saved', summary: [], form: { name: 'Jobs', fields: [] }, ...extra });
+  test('admins keep versions, as themselves; nobody changes or deletes them; members can’t read them', async () => {
+    await assertSucceeds(setDoc(doc(db('admin'), 'forms', 'f_jobs', 'versions', 'v1'), v('admin')));
+    await assertFails(setDoc(doc(db('admin'), 'forms', 'f_jobs', 'versions', 'v2'), v('alice')));
+    await assertFails(setDoc(doc(db('admin'), 'forms', 'f_jobs', 'versions', 'v3'), v('admin', { kind: 'whatever' })));
+    await assertFails(setDoc(doc(db('olivia'), 'forms', 'f_jobs', 'versions', 'v4'), v('olivia')));
+    await assertFails(updateDoc(doc(db('admin'), 'forms', 'f_jobs', 'versions', 'v1'), { kind: 'draft' }));
+    await assertFails(deleteDoc(doc(db('admin'), 'forms', 'f_jobs', 'versions', 'v1')));
+    await assertSucceeds(getDoc(doc(db('admin'), 'forms', 'f_jobs', 'versions', 'v1')));
+    await assertFails(getDoc(doc(db('olivia'), 'forms', 'f_jobs', 'versions', 'v1')));
+  });
+});
+
 describe('reports', () => {
   const report = (owner, extra = {}) => ({ name: 'Pipeline', ownerId: owner, shared: false, widgets: [{ id: 'w1', type: 'kpi' }], createdAt: 1, updatedAt: 1, ...extra });
   beforeEach(async () => {

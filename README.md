@@ -160,6 +160,10 @@ Limits: 10 addresses per email, an 8 MB PDF, 100 emails per person per day (`ema
 bash deploy.sh firestore:rules,functions
 ```
 
+### Form version history
+
+The rules let administrators add versions under `forms/{id}/versions/` (as themselves) and read them; nobody can change or delete one. Deploy with `bash deploy.sh firestore:rules`.
+
 ### Removing a person (Formwright → Users → Remove)
 
 `functions/remove.js` (the `removeAccount` callable function) does it, because only the server may delete someone else's sign-in. Only an administrator may call it. It deletes their account, private items, push settings and directory entry, deletes the tasks they own, hands back tasks assigned to them, deletes their private reports, dashboards and list views (shared ones pass to the admin), optionally gives their Formwright records to someone else, keeps their name on `profiles/{uid}` with `removed: true`, then deletes their sign-in. Deploy it with the other functions:

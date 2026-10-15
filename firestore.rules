@@ -417,6 +417,18 @@ service cloud.firestore {
     match /forms/{formId} {
       allow read: if isMember();
       allow write: if isAdmin();
+
+      // Version history: a copy of the form each time it's saved (or saved as a draft).
+      // Admins only; written as themselves; never changed or deleted.
+      match /versions/{versionId} {
+        allow read: if isAdmin();
+        allow create: if isAdmin()
+          && request.resource.data.by == request.auth.uid
+          && request.resource.data.kind in ['saved', 'draft', 'loaded', 'activated', 'baseline']
+          && request.resource.data.n is int
+          && request.resource.data.at is int
+          && request.resource.data.form is map;
+      }
     }
 
     match /records/{recordId} {
