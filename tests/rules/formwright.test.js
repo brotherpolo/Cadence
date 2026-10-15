@@ -285,6 +285,22 @@ describe('form version history', () => {
   });
 });
 
+describe('kept PDFs of sent emails', () => {
+  const pdf = (rec) => `sentEmails/${rec}/e1.pdf`;
+  test('anyone who can see the record can open it; nobody writes it from the app', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await uploadString(ref(ctx.storage(), pdf('r_bob')), '%PDF-1.7');
+    });
+    await assertSucceeds(getMetadata(ref(as('bob').storage(), pdf('r_bob'))));   // own record
+    await assertSucceeds(getMetadata(ref(as('vera').storage(), pdf('r_bob'))));  // views all
+    await assertSucceeds(getMetadata(ref(as('admin').storage(), pdf('r_bob'))));
+    await assertFails(getMetadata(ref(as('alice').storage(), pdf('r_bob'))));    // views own only
+    await assertFails(getMetadata(ref(as('ned').storage(), pdf('r_bob'))));      // no access yet
+    await assertFails(uploadString(ref(as('admin').storage(), pdf('r_bob')), '%PDF-1.7'));
+    await assertFails(uploadString(ref(as('bob').storage(), pdf('r_bob')), '%PDF-1.7'));
+  });
+});
+
 describe('reports', () => {
   const report = (owner, extra = {}) => ({ name: 'Pipeline', ownerId: owner, shared: false, widgets: [{ id: 'w1', type: 'kpi' }], createdAt: 1, updatedAt: 1, ...extra });
   beforeEach(async () => {

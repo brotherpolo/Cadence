@@ -17,6 +17,11 @@ service firebase.storage {
       let acc = me().get('access', {});
       return acc.get(formId, acc.get('*', {'view': 'none', 'edit': 'none'}));
     }
+    function canViewRecord(d) {
+      return level(d.formId).get('view', 'none') == 'all'
+        || (level(d.formId).get('view', 'none') == 'own' && d.get('ownerId', '') == request.auth.uid)
+        || d.get('assignee', '') == request.auth.uid; // the person a workflow record is waiting on
+    }
 
     match /uploads/{formId}/{ownerId}/{fileName} {
       allow read: if signedIn() && (
@@ -34,6 +39,14 @@ service firebase.storage {
             || !request.resource.contentType.lower().matches('(text/html|application/xhtml\\+xml|image/svg\\+xml|text/javascript|application/(x-)?javascript|application/ecmascript|text/xml|application/xml).*'));
 
       allow delete: if signedIn() && (ownerId == request.auth.uid || isAdmin());
+    }
+
+    // Email PDF: the PDF as it was sent, kept by the server (sentEmails/{recordId}/{emailId}.pdf).
+    // Anyone who can see the record can open it, like the Sent emails list. Only the server
+    // writes or deletes these (Delete and Delete all go through deleteSentEmails).
+    match /sentEmails/{recordId}/{fileName} {
+      allow read: if signedIn() && (isAdmin() || canViewRecord(firestore.get(/databases/(default)/documents/records/$(recordId)).data));
+      allow write: if false;
     }
   }
 }

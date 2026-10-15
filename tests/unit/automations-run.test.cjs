@@ -34,6 +34,7 @@ function makeDb() {
 }
 const db = makeDb();
 const sent = [];
+const kept = [];
 const handlers = {};
 const stubs = {
   'firebase-functions/v2/firestore': {
@@ -44,7 +45,7 @@ const stubs = {
   'firebase-functions/v2': { setGlobalOptions: () => {}, logger: { error: () => {}, info: () => {}, warn: () => {} } },
   'firebase-functions/v2/https': { onCall: (o, f) => f, HttpsError: class extends Error { constructor(c, msg) { super(msg); this.code = c; } } },
   'firebase-functions/params': { defineSecret: () => ({ value: () => 'app pass word' }) },
-  'firebase-admin': { initializeApp: () => {}, firestore: () => db, storage: () => ({ bucket: () => ({ file: () => ({ download: async () => [Buffer.alloc(0)] }) }) }), messaging: () => ({}), auth: () => ({}) },
+  'firebase-admin': { initializeApp: () => {}, firestore: () => db, storage: () => ({ bucket: () => ({ file: (p) => ({ download: async () => [Buffer.alloc(0)], save: async (b) => { kept.push([p, b]); } }) }) }), messaging: () => ({}), auth: () => ({}) },
   'firebase-admin/firestore': { FieldValue: { delete: () => DEL } },
   nodemailer: { createTransport: () => ({ sendMail: async (mail) => { sent.push(mail); return { messageId: '<m' + sent.length + '>' }; } }) },
 };
@@ -105,6 +106,10 @@ test('a person changing Stage to Done runs the automation: fields, task, email w
   assert.equal(sent[0].attachments[0].filename, 'Jobs - Roof.pdf');
   assert.equal(sent[0].attachments[0].content.subarray(0, 5).toString(), '%PDF-');
   assert.equal(where('records/j1/emails/').length, 1, 'listed under Sent emails');
+  const log = where('records/j1/emails/')[0];
+  assert.equal(log[1].message, 'Budget $5,000.00', 'the message is kept for the pop-up');
+  assert.equal(log[1].pdfPath, `sentEmails/j1/${log[0].split('/').pop()}.pdf`, 'its PDF is kept, like Email PDF');
+  assert.ok(kept.some(([p, b]) => p === log[1].pdfPath && b.subarray(0, 5).toString() === '%PDF-'));
   const kids = where('records/', (v) => v.formId === 'f_note').map(([, v]) => v);
   assert.deepEqual([kids.length, kids[0].values.t, kids[0].values.x, kids[0].parentId, kids[0].ownerId], [1, 'Roof', 'Closed by automation', 'j1', 'amy'], 'child copies Title');
   const runs = runsOf('a1');

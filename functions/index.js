@@ -8,7 +8,9 @@
  *   removeAccount Formwright → Users → Remove: an administrator removes a person (remove.js)
  *   autoNumberOnCreate, autoNumberFill, autoNumberSet
  *                 Formwright's Auto number fields (autonumber.js)
- *   emailRecord   Formwright → Email PDF: an administrator emails a record's PDF (email.js)
+ *   emailRecord   Formwright → Email PDF: an administrator emails a record's PDF (email.js);
+ *                 a copy of the PDF is kept in Storage at sentEmails/{recordId}/{emailId}.pdf
+ *   deleteSentEmails  Formwright → Sent emails → Delete / Delete all (administrators)
  *   automation*   Formwright → Administration → Automations: run on every record change
  *                 (automationOnWrite), at 7:00 each morning for dates (automationDaily), after
  *                 Email PDF, and as a dry run from the editor (automationTest) (automate.js)
@@ -28,7 +30,7 @@ const admin = require('firebase-admin');
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { removeAccount } = require('./remove');
 const autonumber = require('./autonumber');
-const { sendRecordEmail } = require('./email');
+const { sendRecordEmail, deleteSentEmails, emailLine } = require('./email');
 const audit = require('./audit');
 const automate = require('./automate');
 const fw = require('./fwkit.cjs');
@@ -271,12 +273,19 @@ function gmail() {
   }
   return { user, pass, ready: !!(user && pass) };
 }
+/** Keep a sent email's PDF in Storage (sentEmails/{recordId}/{emailId}.pdf), as sent. */
+const keepPdf = (path, pdf) => admin.storage().bucket().file(path).save(pdf, {
+  resumable: false, contentType: 'application/pdf',
+  metadata: { cacheControl: 'private, max-age=0' }, // the app names the download from the email's fileName
+});
 exports.emailRecord = onCall({ region: 'us-central1', timeoutSeconds: 120, memory: '512MiB', secrets: [GMAIL_APP_PASSWORD] }, async (request) => {
   try {
     const { user, pass } = gmail();
     const brand = await db.collection('settings').doc('exports').get();
     const out = await sendRecordEmail(db, (mail) => mailer.sendMail(mail), request.auth && request.auth.uid, request.data, {
       from: user, ready: !!(user && pass), fromName: (brand.exists && brand.get('companyName')) || '', tz: process.env.FORMWRIGHT_TZ || 'America/Toronto',
+      save: keepPdf,
+      onSaveError: (e) => logger.error('emailRecord: the PDF copy was not kept', e),
     });
     const rec = (await db.collection('records').doc(request.data.recordId).get()).data() || {};
     const form = await formInfo(rec.formId);
@@ -288,6 +297,26 @@ exports.emailRecord = onCall({ region: 'us-central1', timeoutSeconds: 120, memor
     if (CALLABLE_CODES.includes(e.code)) throw new HttpsError(e.code, e.message);
     logger.error('emailRecord failed', e);
     throw new HttpsError('internal', 'The email didn’t go. Try again.');
+  }
+});
+
+const sentWhen = (ms) => new Intl.DateTimeFormat('en-CA', { timeZone: process.env.FORMWRIGHT_TZ || 'America/Toronto', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(ms));
+// Sent emails → Delete (one) or Delete all: the log entries and their kept PDFs. Noted in the audit trail.
+exports.deleteSentEmails = onCall({ region: 'us-central1' }, async (request) => {
+  try {
+    const uid = request.auth && request.auth.uid;
+    const out = await deleteSentEmails(db, (path) => admin.storage().bucket().file(path).delete({ ignoreNotFound: true }), uid, request.data || {});
+    const rec = (await db.collection('records').doc(request.data.recordId).get()).data() || {};
+    const form = await formInfo(rec.formId);
+    const n = out.deleted.length;
+    await logAudit(uid, { area: 'record', kind: 'emaildeleted', recordId: request.data.recordId, formId: rec.formId || null, formName: form.name || '', title: rec.formId ? audit.titleOf(rec, form) : '',
+      changes: out.deleted.slice(0, 100).map((e) => ({ key: 'email:' + e.id, label: 'Sent email', type: 'text', from: emailLine(e) + (e.at ? ' · ' + sentWhen(e.at) : '') + (e.byName ? ' by ' + e.byName : ''), to: null })),
+      note: request.data.all === true ? `Deleted all ${n} sent email${n === 1 ? '' : 's'}` : `Deleted ${n === 1 ? 'a sent email' : n + ' sent emails'}` });
+    return { deleted: n };
+  } catch (e) {
+    if (CALLABLE_CODES.includes(e.code)) throw new HttpsError(e.code, e.message);
+    logger.error('deleteSentEmails failed', e);
+    throw new HttpsError('internal', 'The emails weren’t deleted. Try again.');
   }
 });
 
@@ -475,15 +504,18 @@ async function runOne(a, c, { kind, actor, depth, test = false }) {
       } else if (st.kind === 'email') {
         const g = gmail();
         if (!g.ready) throw new Error('Email isn’t set up (Gmail app password)');
-        let att = [], pdfName = null, bytes = 0, note = '';
+        let att = [], pdfName = null, bytes = 0, note = '', pdfBytes = null;
         if (st.pdf) {
           const p = await serverPdf(c, people);
           if (p.bytes.length > 8 * 1024 * 1024) throw new Error('The PDF is over 8 MB');
-          att = [{ filename: p.name, content: p.bytes, contentType: 'application/pdf' }]; pdfName = p.name; bytes = p.bytes.length;
+          att = [{ filename: p.name, content: p.bytes, contentType: 'application/pdf' }]; pdfName = p.name; bytes = p.bytes.length; pdfBytes = p.bytes;
           if (p.missing) note = ` (${p.missing} picture${p.missing === 1 ? '' : 's'} left out)`;
         }
         const info = await mailer.sendMail({ from: { name: brand.companyName || g.user, address: g.user }, to: st.to, subject: st.subject, text: st.message, attachments: att });
-        await db.collection('records').doc(c.rec.id).collection('emails').doc().set({ to: st.to, cc: [], copyMe: false, subject: st.subject, fileName: pdfName, bytes, by, byName, at: now, messageId: (info && info.messageId) || null });
+        const logRef = db.collection('records').doc(c.rec.id).collection('emails').doc();
+        let pdfPath = null; // kept like Email PDF's, so the Sent emails pop-up can open it
+        if (pdfBytes) { const path = `sentEmails/${c.rec.id}/${logRef.id}.pdf`; try { await keepPdf(path, pdfBytes); pdfPath = path; } catch (e) { logger.error('automation email: the PDF copy was not kept', e); } }
+        await logRef.set({ to: st.to, cc: [], copyMe: false, subject: st.subject, message: st.message || '', fileName: pdfName, bytes, pdfPath, by, byName, at: now, messageId: (info && info.messageId) || null });
         await db.collection('audit').add({ at: now, by, byName, area: 'record', kind: 'emailed', recordId: c.rec.id, formId: c.form.id, formName: c.form.name || '', title, note: `To ${st.to.join(', ')} · “${st.subject}”${st.pdf ? '' : ' (no PDF)'}` });
         st.text += note;
       } else if (st.kind === 'child') {

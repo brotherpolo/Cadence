@@ -152,6 +152,13 @@ firebase functions:secrets:set GMAIL_APP_PASSWORD --project tasks-2ae9d   # past
 
 Limits: 10 addresses per email, an 8 MB PDF, 100 emails per person per day (`emailLimits/{uid}`, server only). If Gmail refuses the password, make a new app password and run the `secrets:set` line again, then redeploy the functions.
 
+Each email's log keeps the message too, and the PDF exactly as sent is kept in Storage at `sentEmails/{recordId}/{emailId}.pdf` (written only by the server; `storage.rules` lets anyone who can see the record read it). If keeping the PDF fails, the email still counts as sent and its log says no copy was kept. `deleteSentEmails` (administrators only) deletes one, several or all of a record's sent emails with their PDFs, and notes what was deleted in the audit trail (kind `emaildeleted`). Deploy rules, Storage rules and functions together:
+
+```sh
+bash deploy.sh firestore:rules,storage,functions
+```
+
+
 ### Automations (Formwright → Administration → Automations)
 
 `functions/automate.js` (the logic, unit-tested) and `index.js` (`automationOnWrite` on every record write, `automationDaily` at 7:00 a.m. Toronto time, `automationTest` for the editor's Test run, and Email PDF calling them after sending). Automations are in `automations/{id}` (admins only), with `runs/` (the run log, server-written) and `fired/` (date runs done today). Records changed by an automation carry `auto: { depth, id, at, actor }`, written only by the server, used to stop loops (3 in a row). Emails use the same Gmail setup as Email PDF; PDFs are made here with `fwkit.cjs` (built from Formwright, see its README) and `vendor/pdf-lib.min.js`. Workflow notices also run in `automationOnWrite` (`stageNotify`): when a Formwright record arrives at a workflow stage, the previous stage's tasks for it (notes starting "Workflow:") are ticked done and the new assignee (or up to 10 members of the assigned group) gets a task and/or email. The security rules let only a staged record's assignee or an admin change it. Deploy rules and functions together:
@@ -297,7 +304,7 @@ settings.js           Settings page
 app.js                app shell, routing, shortcuts
 boot.js               forwards the old GitHub Pages address (kept out of index.html so inline scripts can be refused)
 firestore.rules       Firestore security rules (Cadence and Formwright)
-storage.rules         Storage security rules (Formwright uploads)
+storage.rules         Storage security rules (Formwright uploads, kept PDFs of sent emails)
 firestore.indexes.json  indexes: reminders, and tasks linked to a record
 firebase.json         Firebase CLI config (rules, indexes, functions, hosting)
 functions/            Cloud Functions: notifications (index.js), removing a person (remove.js), auto numbers (autonumber.js), Email PDF (email.js), audit trail (audit.js), automations (automate.js, fwkit.cjs, vendor/pdf-lib.min.js), package.json, .env
