@@ -125,13 +125,22 @@ window.CADENCE_FORMS_URL = 'https://cadence-forms.web.app/';
 
 Cadence reads Formwright's forms and your Formwright account (`users/{uid}`) to know which records you can see. If you've never opened Formwright, there's nothing to pick from yet.
 
+### Removing a person (Formwright → Users → Remove)
+
+`functions/remove.js` (the `removeAccount` callable function) does it, because only the server may delete someone else's sign-in. Only an administrator may call it. It deletes their account, private items, push settings and directory entry, deletes the tasks they own, hands back tasks assigned to them, deletes their private reports, dashboards and list views (shared ones pass to the admin), optionally gives their Formwright records to someone else, keeps their name on `profiles/{uid}` with `removed: true`, then deletes their sign-in. Deploy it with the other functions:
+
+```sh
+(cd functions && npm install)
+firebase deploy --only functions --project tasks-2ae9d
+```
+
 ### Deploying rules
 
 From this folder, in Cloud Shell:
 
 ```sh
 (cd tests && npm install && npm test)     # rules tests against the emulators (needs Java, which Cloud Shell has)
-(cd tests && npm run test:unit)           # dashboard layout tests (no emulator needed)
+(cd tests && npm run test:unit)           # dashboard layout and remove-person tests (no emulator needed)
 firebase deploy --only firestore:rules,firestore:indexes,storage --project tasks-2ae9d
 ```
 
@@ -252,7 +261,7 @@ firestore.rules       Firestore security rules (Cadence and Formwright)
 storage.rules         Storage security rules (Formwright uploads)
 firestore.indexes.json  indexes: reminders, and tasks linked to a record
 firebase.json         Firebase CLI config (rules, indexes, functions, hosting)
-functions/            Cloud Functions that send the notifications (index.js, package.json, .env)
+functions/            Cloud Functions: notifications (index.js), removing a person (remove.js), package.json, .env
 tests/                rules tests (development only; run with npm test inside tests/)
 ```
 
