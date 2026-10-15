@@ -6,6 +6,8 @@
  *                 morning summary (due today without a time, plus overdue)
  *   pushTest      "Send a test" in Settings
  *   removeAccount Formwright → Users → Remove: an administrator removes a person (remove.js)
+ *   autoNumberOnCreate, autoNumberFill, autoNumberSet
+ *                 Formwright's Auto number fields (autonumber.js)
  *
  * Each person's choices live in notify/{uid}; their devices' push tokens in
  * notify/{uid}/devices/{deviceId}. Times are worked out in that person's own
@@ -13,12 +15,13 @@
  * notifyState/{uid} remembers when reminders last ran for each person; only
  * these functions can see it (firestore.rules denies it to everyone else).
  */
-const { onDocumentWritten } = require('firebase-functions/v2/firestore');
+const { onDocumentWritten, onDocumentCreated } = require('firebase-functions/v2/firestore');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { setGlobalOptions, logger } = require('firebase-functions/v2');
 const admin = require('firebase-admin');
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { removeAccount } = require('./remove');
+const autonumber = require('./autonumber');
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -201,3 +204,27 @@ exports.removeAccount = onCall({ region: 'us-central1', timeoutSeconds: 300 }, a
     throw new HttpsError('internal', 'The removal didn’t finish. Try again; nothing already removed comes back.');
   }
 });
+
+/* ---------- Formwright → Auto number fields ---------- */
+const CALLABLE_CODES = ['unauthenticated', 'invalid-argument', 'failed-precondition', 'permission-denied', 'not-found', 'already-exists'];
+const callable = (name, fn) => onCall({ region: 'us-central1', timeoutSeconds: 300 }, async (request) => {
+  try {
+    return await fn(db, request.auth && request.auth.uid, request.data);
+  } catch (e) {
+    if (CALLABLE_CODES.includes(e.code)) throw new HttpsError(e.code, e.message);
+    logger.error(name + ' failed', e);
+    throw new HttpsError('internal', 'That didn’t finish. Try again.');
+  }
+});
+
+// every new record: number its Auto number fields (runs in the database's region)
+exports.autoNumberOnCreate = onDocumentCreated('records/{recordId}', async (event) => {
+  try {
+    await autonumber.assignOnCreate(db, event.params.recordId);
+  } catch (e) {
+    logger.error('auto number failed', { recordId: event.params.recordId, error: String(e && e.message) });
+    throw e; // retried by Firestore triggers when retries are on; otherwise "Number existing records" fixes it
+  }
+});
+exports.autoNumberFill = callable('autoNumberFill', autonumber.fillNumbers);
+exports.autoNumberSet = callable('autoNumberSet', autonumber.setNumber);

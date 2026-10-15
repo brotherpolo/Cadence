@@ -500,6 +500,37 @@ describe('brand-new accounts', () => {
   });
 });
 
+describe('auto numbers', () => {
+  const FIELDS = ['formId', 'values', 'parentId', 'parentFormId', 'ownerId', 'createdBy', 'createdAt', 'updatedAt', 'updatedBy'];
+  beforeEach(async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'records', 'r_num'), record('olivia', { nums: { n1: 'INV-1001' } }));
+      await setDoc(doc(ctx.firestore(), 'counters', 'f_jobs__n1'), { next: 1002 });
+    });
+  });
+
+  test('the app can’t make up a number when creating a record', async () => {
+    await assertFails(setDoc(doc(db('olivia'), 'records', 'r_new'), record('olivia', { nums: { n1: 'INV-1' } })));
+    await assertFails(setDoc(doc(db('olivia'), 'records', 'r_new'), record('olivia', { autoLog: [] })));
+    await assertSucceeds(setDoc(doc(db('olivia'), 'records', 'r_new'), record('olivia')));
+  });
+
+  test('saving a numbered record keeps its number; changing it is refused, even for admins', async () => {
+    await assertSucceeds(setDoc(doc(db('olivia'), 'records', 'r_num'), record('olivia', { values: { title: 'Changed' } }), { mergeFields: FIELDS }));
+    await assertSucceeds(updateDoc(doc(db('olivia'), 'records', 'r_num'), { 'values.title': 'Again', updatedBy: 'olivia' }));
+    await assertFails(updateDoc(doc(db('olivia'), 'records', 'r_num'), { 'nums.n1': 'INV-9', updatedBy: 'olivia' }));
+    await assertFails(updateDoc(doc(db('admin'), 'records', 'r_num'), { 'nums.n1': 'INV-9', updatedBy: 'admin' }));
+    await assertFails(setDoc(doc(db('olivia'), 'records', 'r_num'), record('olivia')), 'a full overwrite would drop the number');
+    await assertFails(updateDoc(doc(db('olivia'), 'records', 'r_num'), { autoLog: [], updatedBy: 'olivia' }));
+  });
+
+  test('counters: admins may read them; nobody writes them from the app', async () => {
+    await assertSucceeds(getDoc(doc(db('admin'), 'counters', 'f_jobs__n1')));
+    await assertFails(getDoc(doc(db('olivia'), 'counters', 'f_jobs__n1')));
+    await assertFails(setDoc(doc(db('admin'), 'counters', 'f_jobs__n1'), { next: 1 }));
+  });
+});
+
 describe('PDF export settings', () => {
   const ok = (uid, extra = {}) => ({ companyName: 'Pollack Renovations', logo: 'data:image/png;base64,iVBORw0KGgo=', updatedAt: 1, updatedBy: uid, ...extra });
 

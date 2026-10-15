@@ -94,6 +94,7 @@ profiles/{uid}               display names for "Created by"
 reports/{id}                 saved reports: the owner writes; shared ones readable by members
 imports/{id}                 spreadsheet imports, kept 7 days for undo (admins only)
 imports/{id}/before/{recId}  a record as it was before an import changed it (admins only)
+records/{id}.nums            auto numbers (server only); counters/{id} their counters
 settings/exports             company name and logo for Formwright's PDF exports (admins write; members read)
 uploads/... (Storage)        files attached to records
 ```
@@ -126,6 +127,10 @@ window.CADENCE_FORMS_URL = 'https://cadence-forms.web.app/';
 
 Cadence reads Formwright's forms and your Formwright account (`users/{uid}`) to know which records you can see. If you've never opened Formwright, there's nothing to pick from yet.
 
+### Auto numbers (Formwright's Auto number field)
+
+`functions/autonumber.js`: `autoNumberOnCreate` numbers every new record's Auto number fields from a counter (`counters/{formId}__{fieldId}`) in a transaction; `autoNumberFill` (admins) numbers existing records, keeping numbers already typed in; `autoNumberSet` (admins) changes one number, keeps it unique and logs it in `autoLog`. The numbers are in `records/{id}.nums`, which the rules let only the server write. The year option uses `FORMWRIGHT_TZ` (default `America/Toronto`). Deploy with the other functions.
+
 ### Removing a person (Formwright → Users → Remove)
 
 `functions/remove.js` (the `removeAccount` callable function) does it, because only the server may delete someone else's sign-in. Only an administrator may call it. It deletes their account, private items, push settings and directory entry, deletes the tasks they own, hands back tasks assigned to them, deletes their private reports, dashboards and list views (shared ones pass to the admin), optionally gives their Formwright records to someone else, keeps their name on `profiles/{uid}` with `removed: true`, then deletes their sign-in. Deploy it with the other functions:
@@ -141,7 +146,7 @@ From this folder, in Cloud Shell:
 
 ```sh
 (cd tests && npm install && npm test)     # rules tests against the emulators (needs Java, which Cloud Shell has)
-(cd tests && npm run test:unit)           # dashboard layout and remove-person tests (no emulator needed)
+(cd tests && npm run test:unit)           # dashboard layout, remove-person and auto-number tests (no emulator needed)
 firebase deploy --only firestore:rules,firestore:indexes,storage --project tasks-2ae9d
 ```
 
@@ -262,7 +267,7 @@ firestore.rules       Firestore security rules (Cadence and Formwright)
 storage.rules         Storage security rules (Formwright uploads)
 firestore.indexes.json  indexes: reminders, and tasks linked to a record
 firebase.json         Firebase CLI config (rules, indexes, functions, hosting)
-functions/            Cloud Functions: notifications (index.js), removing a person (remove.js), package.json, .env
+functions/            Cloud Functions: notifications (index.js), removing a person (remove.js), auto numbers (autonumber.js), package.json, .env
 tests/                rules tests (development only; run with npm test inside tests/)
 ```
 
