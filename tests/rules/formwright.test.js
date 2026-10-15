@@ -301,6 +301,18 @@ describe('kept PDFs of sent emails', () => {
   });
 });
 
+describe('default home dashboard', () => {
+  test('admins choose it; everyone let in reads it', async () => {
+    const ok = (by) => ({ dashboardId: 'd1', updatedAt: 1, updatedBy: by });
+    await assertSucceeds(setDoc(doc(db('admin'), 'settings', 'home'), ok('admin')));
+    await assertFails(setDoc(doc(db('admin'), 'settings', 'home'), ok('alice')));
+    await assertFails(setDoc(doc(db('admin'), 'settings', 'home'), { ...ok('admin'), extra: 1 }));
+    await assertFails(setDoc(doc(db('olivia'), 'settings', 'home'), ok('olivia')));
+    await assertSucceeds(getDoc(doc(db('vera'), 'settings', 'home')));
+    await assertFails(getDoc(doc(db('ned'), 'settings', 'home')));
+  });
+});
+
 describe('reports', () => {
   const report = (owner, extra = {}) => ({ name: 'Pipeline', ownerId: owner, shared: false, widgets: [{ id: 'w1', type: 'kpi' }], createdAt: 1, updatedAt: 1, ...extra });
   beforeEach(async () => {

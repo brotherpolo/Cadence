@@ -167,6 +167,10 @@ bash deploy.sh firestore:rules,storage,functions
 bash deploy.sh firestore:rules,functions
 ```
 
+### Default home dashboard
+
+`settings/home` (`dashboardId`) is the Formwright dashboard Home shows for anyone who hasn't chosen their own: admins write it, everyone let in reads it.
+
 ### Form version history
 
 The rules let administrators add versions under `forms/{id}/versions/` (as themselves) and read them; nobody can change or delete one. Deploy with `bash deploy.sh firestore:rules`.

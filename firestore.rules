@@ -729,7 +729,12 @@ service cloud.firestore {
 
     match /settings/{id} {
       allow read: if isMember();
-      allow create, update: if isAdmin() && id == 'exports' && validExportSettings(request.resource.data);
+      allow create, update: if isAdmin() && (
+        (id == 'exports' && validExportSettings(request.resource.data))
+        // settings/home: the dashboard Home shows for anyone who hasn't chosen their own
+        || (id == 'home' && request.resource.data.keys().hasOnly(['dashboardId', 'updatedAt', 'updatedBy'])
+            && request.resource.data.dashboardId is string && request.resource.data.dashboardId.size() <= 100
+            && request.resource.data.updatedBy == request.auth.uid));
       allow delete: if isAdmin();
     }
 
