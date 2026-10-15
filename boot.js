@@ -5,3 +5,17 @@
   var home = 'https://cadence-tasks.web.app/';
   if (/\.github\.io$/.test(location.hostname)) location.replace(home + location.search + location.hash);
 })();
+
+/* Your Light or Dark choice, applied before the page is drawn, so it never flashes the other one.
+   Kept on its own (cadence.theme) so this doesn't read the whole task cache; the first time, it
+   looks in the cache. "System" sets nothing and the page follows the device. */
+(function () {
+  try {
+    var t = localStorage.getItem('cadence.theme');
+    if (t === null) { var c = JSON.parse(localStorage.getItem('cadence.v1') || 'null'); t = c && c.prefs && c.prefs.theme; }
+    if (t === 'light' || t === 'dark') {
+      document.documentElement.setAttribute('data-theme', t);
+      document.documentElement.setAttribute('data-theme-early', '');
+    }
+  } catch (e) { /* storage blocked: the device's setting */ }
+})();

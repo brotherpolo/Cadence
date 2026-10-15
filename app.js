@@ -13,7 +13,9 @@
   ];
   const isMap = (r) => r === 'canvas' || r === 'outline' || r === 'table';
   const root = document.documentElement;
-  const hostTheme = root.getAttribute('data-theme'); // the viewer may set one; "system" falls back to it
+  const early = root.hasAttribute('data-theme-early'); // boot.js already applied your saved Light or Dark
+  root.removeAttribute('data-theme-early');
+  const hostTheme = early ? null : root.getAttribute('data-theme'); // the viewer may set one; "system" falls back to it
   let current = null;
   C.currentRoute = () => current;
 
@@ -407,7 +409,7 @@
   let lastDay = D.todayKey();
   setInterval(() => { if (D.todayKey() !== lastDay) { lastDay = D.todayKey(); const r = current; current = null; location.hash = r; route(); } }, 60000);
 
-  C.applyTheme();
+  if (!early) C.applyTheme(); // with boot.js's choice in place, wait for your saved settings before changing anything
   route();
   S.init().then(() => { C.applyTheme(); });
 })();

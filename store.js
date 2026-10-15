@@ -49,6 +49,7 @@
   const writeLocal = C.debounce(() => {
     try {
       localStorage.setItem(LS_KEY, JSON.stringify({ owner: state.owner || null, me: state.me || null, seen: state.seen, tasks: state.tasks, types: state.types, levels: state.levels, prefs: state.prefs, map: state.map, board: state.board }));
+      localStorage.setItem('cadence.theme', state.prefs.theme || 'system'); // read by boot.js before the page is drawn
     } catch (e) { /* storage blocked: in-memory only */ }
   }, 120);
 
@@ -355,6 +356,7 @@
 
     async init() {
       const local = readLocal();
+      if (!local) { try { const t = localStorage.getItem('cadence.theme'); if (t === 'light' || t === 'dark') state.prefs.theme = t; } catch (e) { /* blocked */ } }
       if (local) {
         state.tasks = local.tasks || [];
         state.types = local.types || C.clone(DEFAULT_TYPES);
