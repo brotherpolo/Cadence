@@ -94,6 +94,7 @@ profiles/{uid}               display names for "Created by"
 reports/{id}                 saved reports: the owner writes; shared ones readable by members
 imports/{id}                 spreadsheet imports, kept 7 days for undo (admins only)
 imports/{id}/before/{recId}  a record as it was before an import changed it (admins only)
+settings/exports             company name and logo for Formwright's PDF exports (admins write; members read)
 uploads/... (Storage)        files attached to records
 ```
 

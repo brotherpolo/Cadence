@@ -413,6 +413,69 @@ describe('saved reports and dashboards', () => {
 });
 
 
+describe('imports', () => {
+  const imp = (owner, extra = {}) => ({ formId: 'f_jobs', formName: 'Jobs', fileName: 'Jobs.xlsx', ownerId: owner, createdAt: 10, stamp: 10, status: 'running', added: ['r_new'], updated: ['r_alice'], counts: { added: 1, updated: 1, same: 0, skipped: 0 }, ...extra });
+  const before = { values: { title: 'Job' }, parentId: null, parentFormId: null, updatedAt: 1, updatedBy: 'alice' };
+
+  test('an admin imports: the import, the record as it was, and the change in one batch', async () => {
+    const d = db('admin');
+    await assertSucceeds(setDoc(doc(d, 'imports', 'imp1'), imp('admin')));
+    const b = writeBatch(d);
+    b.set(doc(d, 'records', 'r_new'), record('admin', { createdAt: 10, updatedAt: 10 }));
+    b.set(doc(d, 'imports', 'imp1', 'before', 'r_alice'), before);
+    b.set(doc(d, 'records', 'r_alice'), record('alice', { values: { title: 'Imported' }, updatedAt: 10, updatedBy: 'admin' }));
+    await assertSucceeds(b.commit());
+    await assertSucceeds(updateDoc(doc(d, 'imports', 'imp1'), { status: 'done', finishedAt: 11 }));
+    await assertSucceeds(getDocs(collection(d, 'imports')));
+    await assertSucceeds(getDocs(collection(d, 'imports', 'imp1', 'before')));
+  });
+
+  test('undo: put the record back, remove the added one, mark the import undone', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const x = ctx.firestore();
+      await setDoc(doc(x, 'imports', 'imp1'), imp('admin', { status: 'done' }));
+      await setDoc(doc(x, 'imports', 'imp1', 'before', 'r_alice'), before);
+      await setDoc(doc(x, 'records', 'r_new'), record('admin'));
+    });
+    const d = db('admin');
+    const b = writeBatch(d);
+    b.delete(doc(d, 'records', 'r_new'));
+    b.set(doc(d, 'records', 'r_alice'), record('alice', { updatedAt: 12, updatedBy: 'admin' }));
+    b.delete(doc(d, 'imports', 'imp1', 'before', 'r_alice'));
+    await assertSucceeds(b.commit());
+    await assertSucceeds(updateDoc(doc(d, 'imports', 'imp1'), { status: 'undone', undoneAt: 12, undoneBy: 'admin', undo: { removed: 1, under: 0, restored: 1, kept: [], gone: 0 } }));
+  });
+
+  test('members can’t see, start or change imports', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'imports', 'imp1'), imp('admin'));
+      await setDoc(doc(ctx.firestore(), 'imports', 'imp1', 'before', 'r_alice'), before);
+    });
+    for (const who of ['olivia', 'alice', 'ned']) {
+      const d = db(who);
+      await assertFails(getDoc(doc(d, 'imports', 'imp1')));
+      await assertFails(getDocs(collection(d, 'imports')));
+      await assertFails(getDoc(doc(d, 'imports', 'imp1', 'before', 'r_alice')));
+      await assertFails(setDoc(doc(d, 'imports', 'imp_' + who), imp(who)));
+      await assertFails(updateDoc(doc(d, 'imports', 'imp1'), { status: 'undone' }));
+      await assertFails(setDoc(doc(d, 'imports', 'imp1', 'before', 'r_bob'), before));
+    }
+  });
+
+  test('an import’s record is shape-checked and its list of records never changes', async () => {
+    const d = db('admin');
+    await assertFails(setDoc(doc(d, 'imports', 'x1'), imp('olivia')));
+    await assertFails(setDoc(doc(d, 'imports', 'x2'), imp('admin', { status: 'maybe' })));
+    await assertFails(setDoc(doc(d, 'imports', 'x3'), imp('admin', { extra: 1 })));
+    await assertFails(setDoc(doc(d, 'imports', 'x4'), imp('admin', { added: 'r_new' })));
+    await assertFails(setDoc(doc(d, 'imports', 'x5'), imp('admin', { fileName: 'x'.repeat(201) })));
+    await assertSucceeds(setDoc(doc(d, 'imports', 'ok'), imp('admin')));
+    await assertFails(updateDoc(doc(d, 'imports', 'ok'), { added: ['r_alice', 'r_bob'] }));
+    await assertFails(updateDoc(doc(d, 'imports', 'ok'), { ownerId: 'olivia' }));
+    await assertFails(setDoc(doc(d, 'imports', 'ok', 'before', 'r_bob'), { ...before, extra: true }));
+  });
+});
+
 describe('brand-new accounts', () => {
   test('see nothing until an admin adds them to a group', async () => {
     await assertFails(getDoc(doc(db('ned'), 'forms', 'f_jobs')));
@@ -434,6 +497,36 @@ describe('brand-new accounts', () => {
     await assertSucceeds(getDocs(collection(db('vera'), 'forms')));
     await assertSucceeds(getDocs(collection(db('alice'), 'profiles')));
     await assertSucceeds(getDocs(collection(db('admin'), 'forms')));
+  });
+});
+
+describe('PDF export settings', () => {
+  const ok = (uid, extra = {}) => ({ companyName: 'Pollack Renovations', logo: 'data:image/png;base64,iVBORw0KGgo=', updatedAt: 1, updatedBy: uid, ...extra });
+
+  test('admins save the company name and logo', async () => {
+    await assertSucceeds(setDoc(doc(db('admin'), 'settings', 'exports'), ok('admin')));
+    await assertSucceeds(setDoc(doc(db('admin'), 'settings', 'exports'), ok('admin', { logo: null })));
+    await assertSucceeds(setDoc(doc(db('admin'), 'settings', 'exports'), ok('admin', { logo: 'data:image/jpeg;base64,/9j/4AAQ' })));
+  });
+
+  test('everyone let in reads them; brand-new accounts don’t', async () => {
+    await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'settings', 'exports'), ok('admin')));
+    await assertSucceeds(getDoc(doc(db('vera'), 'settings', 'exports')));
+    await assertSucceeds(getDoc(doc(db('alice'), 'settings', 'exports')));
+    await assertFails(getDoc(doc(db('ned'), 'settings', 'exports')));
+  });
+
+  test('members can’t change them', async () => {
+    await assertFails(setDoc(doc(db('olivia'), 'settings', 'exports'), ok('olivia')));
+  });
+
+  test('only pictures, only that document, nothing extra', async () => {
+    const a = db('admin');
+    await assertFails(setDoc(doc(a, 'settings', 'exports'), ok('admin', { logo: 'data:text/html;base64,PHNjcmlwdD4=' })));
+    await assertFails(setDoc(doc(a, 'settings', 'exports'), ok('admin', { logo: 'data:image/png;base64,' + 'A'.repeat(600001) })));
+    await assertFails(setDoc(doc(a, 'settings', 'exports'), ok('admin', { other: 1 })));
+    await assertFails(setDoc(doc(a, 'settings', 'exports'), ok('admin', { updatedBy: 'alice' })));
+    await assertFails(setDoc(doc(a, 'settings', 'other'), ok('admin')));
   });
 });
 

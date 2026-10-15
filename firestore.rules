@@ -628,6 +628,25 @@ service cloud.firestore {
       }
     }
 
+    // ─── PDF exports: company name and logo (Formwright → Administration → PDF exports) ──
+    // One document, settings/exports. Everyone let in reads it (their exports print it);
+    // only administrators change it. The logo is a small PNG or JPEG data URL.
+    function validExportSettings(d) {
+      return d.keys().hasOnly(['companyName', 'logo', 'updatedAt', 'updatedBy'])
+        && optString(d, 'companyName', 120)
+        && (d.get('logo', null) == null
+            || (d.logo is string && d.logo.size() <= 600000
+                && d.logo.split(',')[0] in ['data:image/png;base64', 'data:image/jpeg;base64']))
+        && d.updatedAt is int
+        && d.updatedBy == request.auth.uid;
+    }
+
+    match /settings/{id} {
+      allow read: if isMember();
+      allow create, update: if isAdmin() && id == 'exports' && validExportSettings(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
     // Default deny for every other path.
     match /{document=**} {
       allow read, write: if false;
