@@ -321,7 +321,7 @@ function fieldKind(type) {
   return "text";
 }
 var fsize = (n) => n < 1024 ? n + " B" : n < 1048576 ? (n / 1024).toFixed(0) + " KB" : (n / 1048576).toFixed(1) + " MB";
-function fieldItem(f, v, text) {
+function fieldItem(f, v, text, rich = null) {
   const kind = fieldKind(f.type);
   const width = f.width === "half" && kind !== "long" ? "half" : "full";
   const empty = v == null || v === "" || Array.isArray(v) && !v.length;
@@ -342,7 +342,7 @@ function fieldItem(f, v, text) {
     case "color":
       return { ...base, hex: /^#[0-9a-f]{6}$/i.test(String(v)) ? String(v) : "", text: String(v) };
     default:
-      return base;
+      return kind === "long" && rich && rich.length ? { ...base, rich } : base;
   }
 }
 function fieldRows(items) {
@@ -532,6 +532,83 @@ function planTable(cols, rows, measure, { spaces, sizes = [9.5, 8.5, 7.5, 7], pa
   const sp = spaces[spaces.length - 1], size = sizes[sizes.length - 1];
   const widths = colWidths(cols.map((c) => ({ label: c.label })), rows, (t, b) => measure(size, b)(t), sp.avail, { min: 30, cap, pad });
   return { size, widths, landscape: !!sp.landscape, broken: true };
+}
+function layoutRich(blocks, width, measure, { size = 10.5, lh = 14 } = {}) {
+  const STY = { p: { size, lh, b: false, gap: 4 }, h3: { size: size * 1.3, lh: lh * 1.3, b: true, gap: 4, before: 4 }, h4: { size: size * 1.08, lh: lh * 1.08, b: true, gap: 3, before: 2 }, quote: { size, lh, b: false, gap: 4, indent: 11, mute: true }, li: { size, lh, b: false, gap: 2, indent: 15 } };
+  const out = [];
+  (blocks || []).forEach((bk, bi) => {
+    const st = STY[bk.t] || STY.p;
+    const indent = st.indent || 0, avail = Math.max(20, width - indent);
+    const next = blocks[bi + 1];
+    const gap = !next ? 0 : bk.t === "li" && next.t === "li" ? st.gap : (STY[bk.t] || STY.p).gap + 1;
+    const lines = [];
+    let line = { items: [], w: 0 };
+    const push = () => {
+      lines.push(line);
+      line = { items: [], w: 0 };
+    };
+    const fk = (r) => (r.b || st.b) && r.i ? "bi" : r.b || st.b ? "b" : r.i ? "i" : "r";
+    const put = (s, r) => {
+      const font = fk(r), w = measure(font, st.size, s);
+      const last = line.items[line.items.length - 1];
+      const same = last && last.font === font && last.c === r.c && last.hl === r.h && !!last.u === !!(r.u || r.a) && !!last.st === !!r.x && last.a === r.a;
+      if (same) {
+        last.s += s;
+        last.w += w;
+      } else line.items.push({ s, x: indent + line.w, w, font, size: st.size, c: r.c || "", hl: r.h || "", u: !!(r.u || r.a), st: !!r.x, a: r.a || "", mute: !!st.mute });
+      line.w += w;
+    };
+    bk.runs.forEach((r) => {
+      String(r.s).split(/(\n| +)/).forEach((tok) => {
+        if (!tok) return;
+        if (tok === "\n") {
+          push();
+          return;
+        }
+        if (/^ +$/.test(tok)) {
+          if (line.items.length) put(tok, r);
+          return;
+        }
+        let w = measure(fk(r), st.size, tok);
+        if (line.w + w > avail && line.items.length) {
+          const l = line.items[line.items.length - 1];
+          const t = l.s.replace(/ +$/, "");
+          if (t !== l.s) {
+            const cut = measure(l.font, st.size, l.s) - measure(l.font, st.size, t);
+            l.s = t;
+            l.w -= cut;
+            line.w -= cut;
+            if (!l.s) line.items.pop();
+          }
+          push();
+        }
+        let rest = tok;
+        while (w > avail && rest.length > 1) {
+          let n = rest.length - 1;
+          while (n > 1 && measure(fk(r), st.size, rest.slice(0, n)) > avail - line.w) n--;
+          put(rest.slice(0, n), r);
+          push();
+          rest = rest.slice(n);
+          w = measure(fk(r), st.size, rest);
+        }
+        put(rest, r);
+      });
+    });
+    push();
+    lines.forEach((l, i) => {
+      const first = i === 0, lastL = i === lines.length - 1;
+      const top = first && bi > 0 ? st.before || 0 : 0;
+      out.push({
+        h: st.lh + top + (lastL ? gap : 0),
+        base: top + st.size * 0.82 + (st.lh - st.size) / 2,
+        items: l.items,
+        bar: bk.t === "quote",
+        barH: st.lh,
+        prefix: first && bk.t === "li" ? { s: bk.list === "ol" ? `${bk.n || 1}.` : "\u2022", size: st.size } : null
+      });
+    });
+  });
+  return out;
 }
 
 // src/fieldnames.js
@@ -768,6 +845,235 @@ function once(rules, fields, byId, under, look) {
 }
 var sameSet = (a, b) => a.size === b.size && [...a].every((x) => b.has(x));
 var NO_RULES = { hidden: /* @__PURE__ */ new Set(), hiddenFields: /* @__PURE__ */ new Set(), cleared: /* @__PURE__ */ new Set(), required: (f) => !!(f && f.required && holdsValue(f)), fired: /* @__PURE__ */ new Map(), blank: /* @__PURE__ */ new Set() };
+
+// src/richtext.js
+var RICH_KEY = "_rich";
+var ENT = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: "\xA0" };
+var decode = (s) => s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e) => {
+  if (e[0] === "#") {
+    const n = e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+    return Number.isFinite(n) && n > 0 && n < 1114112 ? String.fromCodePoint(n) : "";
+  }
+  return ENT[e.toLowerCase()] ?? m;
+});
+function cleanColor(v) {
+  const s = String(v || "").trim().toLowerCase();
+  let m = /^#([0-9a-f]{3})$/.exec(s);
+  if (m) return "#" + [...m[1]].map((c) => c + c).join("");
+  if (/^#[0-9a-f]{6}$/.test(s)) return s;
+  m = /^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*(?:,\s*([\d.]+)\s*)?\)$/.exec(s);
+  if (m) {
+    if (m[4] !== void 0 && Number(m[4]) === 0) return "";
+    return "#" + [m[1], m[2], m[3]].map((n) => Math.min(255, Number(n)).toString(16).padStart(2, "0")).join("");
+  }
+  return "";
+}
+function cleanHref(v) {
+  const s = String(v || "").trim();
+  if (/^(https?:|mailto:|tel:)/i.test(s)) return s.slice(0, 2e3);
+  if (/^www\./i.test(s)) return "https://" + s.slice(0, 2e3);
+  return "";
+}
+function attrs(src) {
+  const a = {};
+  const re = /([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*(?:=\s*("([^"]*)"|'([^']*)'|([^\s"'>]+)))?/g;
+  let m;
+  while (m = re.exec(src)) a[m[1].toLowerCase()] = decode(m[3] ?? m[4] ?? m[5] ?? "");
+  return a;
+}
+function styleOf(css) {
+  const o = {};
+  String(css || "").split(";").forEach((d) => {
+    const i = d.indexOf(":");
+    if (i > 0) o[d.slice(0, i).trim().toLowerCase()] = d.slice(i + 1).trim().toLowerCase();
+  });
+  return o;
+}
+var BLOCKS = /* @__PURE__ */ new Set(["p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "li", "ul", "ol", "tr", "pre", "section", "article", "header", "footer", "table", "dl", "dt", "dd"]);
+var SKIP = /* @__PURE__ */ new Set(["script", "style", "head", "title", "template", "noscript", "iframe", "object", "svg", "math", "xml"]);
+var VOID = /* @__PURE__ */ new Set(["br", "img", "hr", "input", "meta", "link", "col", "wbr", "area", "base", "source"]);
+function parseRich(html) {
+  const blocks = [];
+  const ctx = [];
+  let cur = null;
+  const fmtNow = () => {
+    const f = {};
+    ctx.forEach((c) => {
+      if (c.fmt) Object.assign(f, c.fmt);
+    });
+    return f;
+  };
+  const typeNow = () => {
+    let li = null, quote = false, head = "";
+    ctx.forEach((c) => {
+      if (c.tag === "li") li = c;
+      if (c.tag === "blockquote") quote = true;
+      if (/^h[1-6]$/.test(c.tag)) head = +c.tag[1] <= 3 ? "h3" : "h4";
+    });
+    if (li) return { t: "li", list: li.list };
+    if (head) return { t: head };
+    return { t: quote ? "quote" : "p" };
+  };
+  const flush = () => {
+    if (!cur) return;
+    const last = cur.runs[cur.runs.length - 1];
+    if (last && last.s.endsWith("\n")) {
+      last.s = last.s.slice(0, -1);
+      if (!last.s) cur.runs.pop();
+    }
+    if (cur.runs.length) {
+      cur.runs[0].s = cur.runs[0].s.replace(/^ +/, "");
+      const l = cur.runs[cur.runs.length - 1];
+      l.s = l.s.replace(/ +$/, "");
+      cur.runs = cur.runs.filter((r) => r.s);
+    }
+    blocks.push(cur);
+    cur = null;
+  };
+  const start = () => {
+    if (!cur) cur = { ...typeNow(), runs: [], _open: true };
+  };
+  const add = (s) => {
+    if (!s) return;
+    start();
+    const f = fmtNow();
+    const prev = cur.runs[cur.runs.length - 1];
+    if (prev && sameFmt(prev, f)) prev.s += s;
+    else cur.runs.push({ s, ...f });
+  };
+  const listOf = () => {
+    for (let i = ctx.length - 1; i >= 0; i--) if (ctx[i].tag === "ul" || ctx[i].tag === "ol") return ctx[i].tag;
+    return "ul";
+  };
+  const re = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<![^>]*>|<\?[^>]*>|<(\/?)([a-zA-Z][a-zA-Z0-9]*)([^>]*?)(\/?)>|[^<]+|</g;
+  const src = String(html ?? "");
+  let m, skip = "";
+  while (m = re.exec(src)) {
+    const [all, close, rawTag, rest, selfClose] = m;
+    if (!rawTag) {
+      if (skip || all[0] === "<" && all.length > 1) continue;
+      const t = decode(all.replace(/[ \t\r\n\f]+/g, " ")).replace(/ /g, " ");
+      if (t === " " && !cur) continue;
+      add(t);
+      continue;
+    }
+    const tag = rawTag.toLowerCase();
+    if (skip) {
+      if (close && tag === skip) skip = "";
+      continue;
+    }
+    if (SKIP.has(tag)) {
+      if (!close && !selfClose) skip = tag;
+      continue;
+    }
+    if (close) {
+      let i = ctx.length - 1;
+      while (i >= 0 && ctx[i].tag !== tag) i--;
+      if (i < 0) continue;
+      const wasBlock = ctx.slice(i).some((c) => c.block);
+      ctx.length = i;
+      if (wasBlock) flush();
+      continue;
+    }
+    if (tag === "br") {
+      add("\n");
+      continue;
+    }
+    if (tag === "td" || tag === "th") {
+      if (cur && cur.runs.length) add(" ");
+      continue;
+    }
+    if (VOID.has(tag)) continue;
+    const a = attrs(rest);
+    const st = styleOf(a.style);
+    const fmt = {};
+    if (tag === "b" || tag === "strong") fmt.b = true;
+    if (tag === "i" || tag === "em") fmt.i = true;
+    if (tag === "u" || tag === "ins") fmt.u = true;
+    if (tag === "s" || tag === "strike" || tag === "del") fmt.x = true;
+    if (tag === "a") {
+      const h = cleanHref(a.href);
+      if (h) fmt.a = h;
+    }
+    if (tag === "font" && a.color) {
+      const c = cleanColor(a.color);
+      if (c) fmt.c = c;
+    }
+    if (st["font-weight"] && (st["font-weight"] === "bold" || st["font-weight"] === "bolder" || Number(st["font-weight"]) >= 600)) fmt.b = true;
+    if (st["font-weight"] && (st["font-weight"] === "normal" || Number(st["font-weight"]) && Number(st["font-weight"]) < 600)) fmt.b = false;
+    if (st["font-style"] === "italic") fmt.i = true;
+    if (st["font-style"] === "normal") fmt.i = false;
+    const deco = st["text-decoration"] || st["text-decoration-line"] || "";
+    if (/underline/.test(deco)) fmt.u = true;
+    if (/line-through/.test(deco)) fmt.x = true;
+    if (st.color) {
+      const c = cleanColor(st.color);
+      if (c) fmt.c = c;
+    }
+    const bg = st["background-color"] || st.background;
+    if (bg) {
+      const c = cleanColor(bg);
+      if (c && c !== "#ffffff") fmt.h = c;
+    }
+    const block = BLOCKS.has(tag);
+    const entry = { tag, fmt: Object.keys(fmt).length ? fmt : null, block };
+    if (tag === "li") entry.list = listOf();
+    if (block) flush();
+    if (!selfClose) ctx.push(entry);
+  }
+  flush();
+  const out = [];
+  blocks.forEach((b) => {
+    delete b._open;
+    b.runs = b.runs.map(tidyRun).filter((r) => r.s);
+    if (b.t !== "li") delete b.list;
+    const prev = out[out.length - 1];
+    if (!b.runs.length && b.t !== "p") b.t = "p";
+    if (!b.runs.length && prev && !prev.runs.length) return;
+    out.push(b);
+  });
+  while (out.length && !out[0].runs.length) out.shift();
+  while (out.length && !out[out.length - 1].runs.length) out.pop();
+  number(out);
+  return out;
+}
+function tidyRun(r) {
+  const o = { s: r.s };
+  ["b", "i", "u", "x"].forEach((k) => {
+    if (r[k]) o[k] = true;
+  });
+  if (r.a) o.a = r.a;
+  if (r.c && r.c !== "#141826" && r.c !== "#000000") o.c = r.c;
+  if (r.h) o.h = r.h;
+  return o;
+}
+function sameFmt(a, b) {
+  return ["b", "i", "u", "x", "a", "c", "h"].every((k) => (a[k] || false) === (b[k] || false));
+}
+function number(blocks) {
+  let n = 0, prev = null;
+  blocks.forEach((b) => {
+    if (b.t === "li" && b.list === "ol") {
+      n = prev && prev.t === "li" && prev.list === "ol" ? n + 1 : 1;
+      b.n = n;
+    } else delete b.n;
+    prev = b;
+  });
+}
+function toText(blocks) {
+  return (blocks || []).map((b) => {
+    const s = b.runs.map((r) => r.s).join("");
+    if (b.t === "li") return (b.list === "ol" ? `${b.n || 1}. ` : "\u2022 ") + s;
+    return s;
+  }).join("\n");
+}
+var norm = (s) => String(s ?? "").replace(/\r\n?/g, "\n").replace(/ /g, " ").replace(/[ \t]+\n/g, "\n").trim();
+function richBlocks(values, fid) {
+  const html = values?.[RICH_KEY]?.[fid];
+  if (!html || typeof html !== "string") return null;
+  const b = parseRich(html);
+  return norm(toText(b)) === norm(values[fid]) ? b : null;
+}
 
 // src/workflow.js
 var STAGE_FIELD = "_stage";
@@ -1021,7 +1327,7 @@ function makeKit({ forms = [], records = [], locale = "en-CA", timeZone = "Ameri
     const rs = rulesFor(form, rec), sv = stageView(form, rec.stage);
     const items = (form.fields || []).filter((f) => !rs.hiddenFields.has(f.id) && !rs.hidden.has("f:" + f.id) && !sv.hide.has(f.id) && !sv.keys.has("f:" + f.id)).map((f) => {
       const v = f.type === "heading" || rs.cleared.has(f.id) ? null : valOf(f, rec, form);
-      const it = fieldItem(f, v, f.type === "heading" ? "" : f.type === "rating" ? isEmpty2(v) ? "" : `${v} of ${f.max || 5}` : text(form, { ...rec, values: { ...rec.values, [f.id]: v } }, f));
+      const it = fieldItem(f, v, f.type === "heading" ? "" : f.type === "rating" ? isEmpty2(v) ? "" : `${v} of ${f.max || 5}` : text(form, { ...rec, values: { ...rec.values, [f.id]: v } }, f), f.type === "textarea" && v != null && !f.plain ? richBlocks(rec.values, f.id) : null);
       return it;
     });
     const sections = [];
@@ -1119,6 +1425,8 @@ async function drawPdf(L, model, imgs = /* @__PURE__ */ new Map()) {
   const F = await pdf.embedFont(StandardFonts.Helvetica);
   const B = await pdf.embedFont(StandardFonts.HelveticaBold);
   const I = await pdf.embedFont(StandardFonts.HelveticaOblique);
+  const BI = await pdf.embedFont(StandardFonts.HelveticaBoldOblique);
+  const FONT = { r: F, b: B, i: I, bi: BI };
   const chars = new Set(F.getCharacterSet());
   const T = (s) => safeText(s, (cp) => chars.has(cp));
   const INK = rgb(0.1, 0.11, 0.14), MUTE = rgb(0.4, 0.43, 0.49), RULE = rgb(0.84, 0.85, 0.88);
@@ -1274,6 +1582,33 @@ async function drawPdf(L, model, imgs = /* @__PURE__ */ new Map()) {
         text(T(it.text), x + 16, top - labH - 10, F, VAL, INK);
       } };
     }
+    if (it.kind === "long" && it.rich) {
+      const blocks = it.rich.map((b) => ({ ...b, runs: b.runs.map((r) => ({ ...r, s: T(r.s) })) }));
+      const rl = layoutRich(blocks, w, (k, size, s) => FONT[k].widthOfTextAtSize(s, size), { size: VAL, lh: VALH });
+      const LINK = rgb(0.2, 0.27, 0.78);
+      const drawLine = (ln, x, top) => {
+        const bl = top - ln.base;
+        if (ln.bar) page.drawRectangle({ x: x + 1, y: top - ln.barH, width: 2, height: ln.barH, color: RULE });
+        if (ln.prefix) text(ln.prefix.s, x + 2, bl, F, ln.prefix.size, INK);
+        ln.items.forEach((t) => {
+          const f = FONT[t.font], tw = f.widthOfTextAtSize(t.s, t.size);
+          const col = t.c ? hexRgb(rgb, t.c, INK) : t.a ? LINK : t.mute ? MUTE : INK;
+          if (t.hl) page.drawRectangle({ x: x + t.x, y: bl - t.size * 0.24, width: tw, height: t.size * 1.12, color: hexRgb(rgb, t.hl, FAINT) });
+          text(t.s, x + t.x, bl, f, t.size, col);
+          if (t.u) page.drawLine({ start: { x: x + t.x, y: bl - 1.3 }, end: { x: x + t.x + tw, y: bl - 1.3 }, thickness: 0.6, color: col });
+          if (t.st) page.drawLine({ start: { x: x + t.x, y: bl + t.size * 0.3 }, end: { x: x + t.x + tw, y: bl + t.size * 0.3 }, thickness: 0.6, color: col });
+        });
+      };
+      const h = rl.reduce((a, l) => a + l.h, 0);
+      return { h: labH + h, rich: rl, drawLine, labH, drawLab, draw: (x, top) => {
+        drawLab(x, top);
+        let yy = top - labH;
+        rl.forEach((ln) => {
+          drawLine(ln, x, yy);
+          yy -= ln.h;
+        });
+      } };
+    }
     let val = T(it.text);
     let font = F;
     if ((it.kind === "image" || it.kind === "signature") && !pic && it.text) {
@@ -1295,6 +1630,19 @@ async function drawPdf(L, model, imgs = /* @__PURE__ */ new Map()) {
     const w = row.cells.length === 2 || row.cells[0].width === "half" ? halfW : CW;
     const cs = row.cells.map((it) => cell(it, w));
     const h = Math.max(...cs.map((c) => c.h));
+    if (cs.length === 1 && cs[0].rich && h > room()) {
+      const c = cs[0];
+      ensure(c.labH + VALH * 2);
+      c.drawLab(M, y);
+      y -= c.labH;
+      c.rich.forEach((ln) => {
+        if (ln.h > room()) newPage();
+        c.drawLine(ln, M, y);
+        y -= ln.h;
+      });
+      y -= ROWGAP;
+      return;
+    }
     if (cs.length === 1 && cs[0].lines && h > room()) {
       const c = cs[0];
       ensure(c.labH + VALH * 2);
