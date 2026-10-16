@@ -132,12 +132,20 @@ exports.taskChanged = onDocumentWritten('tasks/{taskId}', async (event) => {
     const prefs = await prefsFor(after.assigneeId);
     if (prefs) {
       const tz = safeTz(prefs.tz || 'UTC');
+      const passer = before && after.reassignedAt && after.reassignedAt !== before.reassignedAt && after.reassignedBy && after.reassignedBy !== after.ownerId ? await personName(after.reassignedBy) : '';
       jobs.push(sendTo(after.assigneeId, 'assigned', {
-        title: nameOf(after.ownerName, after.ownerEmail) + ' assigned you a task',
+        title: passer ? passer + ' passed you a task' : nameOf(after.ownerName, after.ownerEmail) + ' assigned you a task',
         body: title + (after.due ? ' · due ' + when(after.due, tz) + (after.time ? ' at ' + clock(after.time) : '') : ''),
         tag: 'assigned-' + event.params.taskId, task: event.params.taskId
       }, prefs));
     }
+  }
+  // a record task given to someone else: noted on the record in the audit trail
+  if (before && after.recordId && (before.assigneeId || null) !== (after.assigneeId || null)) {
+    try {
+      const entry = audit.taskReassignEntry(event.params.taskId, before, after, await who(audit.reassignedBy(before, after)), Date.now());
+      if (entry) jobs.push(db.collection('audit').add(entry));
+    } catch (e) { logger.error('task reassign audit failed', e); }
   }
   // finished by the person it was given to
   if (before && !before.done && after.done && shared(after) && after.doneBy && after.doneBy !== after.ownerId) {

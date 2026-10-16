@@ -176,6 +176,10 @@ echo 'FORMWRIGHT_URL=https://your-formwright-site.web.app' >> functions/.env
 bash deploy.sh firestore:rules,firestore:indexes,functions
 ```
 
+### All mentions, All tasks and Reassign (Formwright → My work)
+
+Administrators may read every `mentions/{id}` and every task linked to a Formwright record (`recordId` set); tasks without a record stay private to their members. **Reassign** is a task update that changes only `assigneeId/Name/Email`, `members`, `updatedAt` and `reassignedBy/At` (= the person doing it), on a record task, by its assignee or an administrator; the owner never changes. `taskChanged` sends the new person "… passed you a task" and notes the change in the audit trail (kind `reassigned`, `audit.js` `taskReassignEntry`). Deploy with `bash deploy.sh firestore:rules,functions`.
+
 ### Word templates (Formwright → a record → Export ▾)
 
 `docTemplates/{id}` (Firestore) describes each Word template and `docTemplates/{formId}/{uid}/…` (Storage) holds the .docx. Anyone who can see the form reads and adds them; the person who added one, or an administrator, renames, replaces or deletes it (`firestore.rules`, `storage.rules`). Filling one in happens in the browser; there's no function. Deploy with `bash deploy.sh firestore:rules,storage`.

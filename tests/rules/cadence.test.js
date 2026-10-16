@@ -5,6 +5,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { before, after, beforeEach, describe, test } from 'node:test';
+import assert from 'node:assert/strict';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
 import { doc, getDoc, setDoc, updateDoc, deleteDoc, collection, query, where, getDocs } from 'firebase/firestore';
 
@@ -350,5 +351,39 @@ describe('private items and push settings', () => {
   test('every other path is closed', async () => {
     await assertFails(setDoc(doc(db('owen'), 'anything', 'x'), { a: 1 }));
     await assertFails(getDoc(doc(db('admin'), 'anything', 'x')));
+  });
+});
+
+describe('Formwright: All tasks and Reassign', () => {
+  const pass = (to, by) => ({ ...(to ? assignedTo(to) : { assigneeId: null, assigneeName: null, assigneeEmail: null }), members: to ? ['owen', to] : ['owen'], reassignedBy: by, reassignedAt: 5, updatedAt: 5 });
+
+  test('administrators read tasks linked to records, not people’s own tasks', async () => {
+    await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'tasks', 't_private'), task('t_private', 'owen')));
+    await assertSucceeds(getDoc(doc(db('admin'), 'tasks', 't_shared')));
+    await assertFails(getDoc(doc(db('admin'), 'tasks', 't_private')), 'a task with no record stays private');
+    await assertSucceeds(getDocs(query(collection(db('admin'), 'tasks'), where('recordId', '!=', null))));
+    await assertFails(getDocs(collection(db('admin'), 'tasks')), 'all tasks, record or not: refused');
+    await assertFails(getDocs(query(collection(db('nora'), 'tasks'), where('recordId', '!=', null))), 'not for members');
+  });
+
+  test('the assignee passes a record task on; the owner stays', async () => {
+    await assertSucceeds(updateDoc(doc(db('bob'), 'tasks', 't_shared'), pass('nora', 'bob')));
+    const t = (await env.withSecurityRulesDisabled(async (ctx) => (await getDoc(doc(ctx.firestore(), 'tasks', 't_shared'))).data()));
+    assert.equal(t.ownerId, 'owen');
+  });
+
+  test('an administrator reassigns; strangers and other changes can’t', async () => {
+    await assertSucceeds(updateDoc(doc(db('admin'), 'tasks', 't_shared'), pass('nora', 'admin')));
+    await assertSucceeds(updateDoc(doc(db('admin'), 'tasks', 't_shared'), pass(null, 'admin')), 'back to the owner');
+    await assertFails(updateDoc(doc(db('nora'), 'tasks', 't_shared'), pass('nora', 'nora')), 'not theirs to pass on');
+    await assertFails(updateDoc(doc(db('admin'), 'tasks', 't_shared'), { ...pass('bob', 'admin'), title: 'Changed' }), 'only who it’s with changes');
+    await assertFails(updateDoc(doc(db('admin'), 'tasks', 't_shared'), pass('bob', 'owen')), 'stamped as yourself');
+    await assertFails(updateDoc(doc(db('admin'), 'tasks', 't_shared'), { ...pass('mia', 'admin') }), 'mia isn’t in the people directory');
+  });
+
+  test('a task without a record can’t be reassigned this way', async () => {
+    await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'tasks', 't_plain'), task('t_plain', 'owen', { ...assignedTo('bob'), members: ['owen', 'bob'] })));
+    await assertFails(updateDoc(doc(db('bob'), 'tasks', 't_plain'), pass('nora', 'bob')));
+    await assertFails(updateDoc(doc(db('admin'), 'tasks', 't_plain'), pass('nora', 'admin')));
   });
 });

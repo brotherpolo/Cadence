@@ -78,12 +78,15 @@ function fieldChanges(before, after, form) {
   const fields = ((form && form.fields) || []).filter((f) => f && f.type !== 'heading' && f.type !== 'formula');
   const known = new Set(fields.map((f) => f.id));
   const out = [];
+  const br = bv._rich || {}, ar = av._rich || {};
   fields.forEach((f) => {
     if (!same(bv[f.id], av[f.id])) out.push({ key: f.id, label: f.label || 'Untitled field', type: f.type, from: auditValue(bv[f.id], f.type), to: auditValue(av[f.id], f.type) });
+    // formatted long text: the words stayed the same, the formatting changed
+    else if (f.type === 'textarea' && (br[f.id] || '') !== (ar[f.id] || '')) out.push({ key: f.id, label: (f.label || 'Untitled field') + ' (formatting)', type: 'text', from: null, to: 'changed' });
   });
   // values for fields no longer on the form (rare): still noted
   new Set([...Object.keys(bv), ...Object.keys(av)]).forEach((k) => {
-    if (known.has(k) || ((form && form.fields) || []).some((f) => f.id === k)) return;
+    if (k === '_rich' || known.has(k) || ((form && form.fields) || []).some((f) => f.id === k)) return;
     if (!same(bv[k], av[k])) out.push({ key: k, label: k, type: 'text', from: auditValue(bv[k]), to: auditValue(av[k]) });
   });
   return out;
@@ -193,4 +196,29 @@ async function restoreRecord(db, callerUid, data, now = Date.now()) {
   return { recordId, formId: snap.formId, parentGone, trimmed: !!a.get('snapshot').trimmed };
 }
 
-module.exports = { recordEntry, formEntry, groupEntry, userEntry, settingsEntry, restoreRecord, auditValue, titleOf, RESTORE_DAYS };
+/**
+ * A record task given to someone else (Formwright's Reassign, the owner, or the assignee handing it
+ * back) → an audit entry on its record, or null. who = { by, byName }; the caller works out who.
+ */
+function taskReassignEntry(taskId, before, after, who, now) {
+  if (!before || !after || !after.recordId) return null;
+  const was = before.assigneeId || null, is = after.assigneeId || null;
+  if (was === is) return null;
+  const owner = after.ownerName || after.ownerEmail || 'the owner';
+  const name = (id, n, e) => (id ? n || e || 'someone' : `${owner} (owner)`);
+  const snap = after.recordSnap || {};
+  return {
+    at: now, by: who.by, byName: who.byName, area: 'record', kind: 'reassigned',
+    recordId: after.recordId, formId: after.formId || null, formName: snap.form || '', title: snap.title || '',
+    changes: [{ key: 'task:' + taskId, label: `Task “${String(after.title || 'Untitled task').slice(0, 200)}”`, type: 'text',
+      from: name(was, before.assigneeName, before.assigneeEmail), to: name(is, after.assigneeName, after.assigneeEmail) }],
+  };
+}
+/** Who changed a task's assignee: the Reassign stamp, else the assignee handing it back, else the owner. */
+function reassignedBy(before, after) {
+  if (after.reassignedBy && after.reassignedAt && after.reassignedAt !== (before.reassignedAt || null)) return after.reassignedBy;
+  if (!after.assigneeId && before.assigneeId) return before.assigneeId;
+  return after.ownerId;
+}
+
+module.exports = { taskReassignEntry, reassignedBy, recordEntry, formEntry, groupEntry, userEntry, settingsEntry, restoreRecord, auditValue, titleOf, RESTORE_DAYS };

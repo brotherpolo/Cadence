@@ -95,3 +95,31 @@ test('restoring a deleted record: same ID, admins only, once, within 90 days', a
   assert.equal((await restoreRecord(db, 'boss', { auditId: 'a2' }, now)).parentGone, true);
   assert.equal(db.m.get('records/r1').parentId, null);
 });
+
+test('formatted long text: only formatting changed is noted, the formatting itself is not a field', () => {
+  const f2 = { ...form, fields: form.fields.concat([{ id: 'nt', type: 'textarea', label: 'Notes' }]) };
+  const a = rec({ nt: 'Hi there' }), b = rec({ nt: 'Hi there', _rich: { nt: '<p>Hi <b>there</b></p>' } });
+  const e = recordEntry('r1', a, b, f2, who, 1);
+  assert.deepEqual(e.changes.map((c) => [c.label, c.to]), [['Notes (formatting)', 'changed']]);
+  const e2 = recordEntry('r1', b, rec({ nt: 'Bye', _rich: { nt: '<p><b>Bye</b></p>' } }), f2, who, 1);
+  assert.deepEqual(e2.changes.map((c) => [c.label, c.from, c.to]), [['Notes', 'Hi there', 'Bye']]);
+});
+
+test('a record task given to someone else', () => {
+  const { taskReassignEntry, reassignedBy } = require('../../functions/audit.js');
+  const base = { title: 'Order tiles', ownerId: 'adam', ownerName: 'Adam', recordId: 'r1', formId: 'f1', recordSnap: { title: 'Lobby', form: 'Projects' } };
+  const before = { ...base, assigneeId: 'sam', assigneeName: 'Sam', members: ['adam', 'sam'] };
+  const after = { ...base, assigneeId: 'kim', assigneeName: 'Kim', members: ['adam', 'kim'], reassignedBy: 'sam', reassignedAt: 5 };
+  const e = taskReassignEntry('t1', before, after, { by: 'sam', byName: 'Sam' }, 9);
+  assert.equal(e.kind, 'reassigned');
+  assert.equal(e.recordId, 'r1');
+  assert.equal(e.title, 'Lobby');
+  assert.deepEqual(e.changes[0], { key: 'task:t1', label: 'Task “Order tiles”', type: 'text', from: 'Sam', to: 'Kim' });
+  assert.equal(reassignedBy(before, after), 'sam', 'the Reassign stamp');
+  const back = { ...base, assigneeId: null, members: ['adam'] };
+  assert.equal(taskReassignEntry('t1', before, back, { by: 'sam', byName: 'Sam' }, 9).changes[0].to, 'Adam (owner)');
+  assert.equal(reassignedBy(before, back), 'sam', 'handed back by the assignee');
+  assert.equal(reassignedBy(before, { ...after, reassignedAt: undefined, reassignedBy: undefined }), 'adam', 'otherwise the owner');
+  assert.equal(taskReassignEntry('t1', before, { ...before }, { by: 'x' }, 1), null, 'no change');
+  assert.equal(taskReassignEntry('t1', { ...before, recordId: null }, { ...after, recordId: null }, { by: 'x' }, 1), null, 'not a record task');
+});

@@ -730,7 +730,7 @@ describe('comments and @mentions', () => {
     await assertSucceeds(updateDoc(doc(db('olivia'), 'mentions', 'm1'), { read: true }));
     await assertFails(updateDoc(doc(db('olivia'), 'mentions', 'm1'), { to: 'alice' }));
     await assertFails(getDoc(doc(db('alice'), 'mentions', 'm1')));
-    await assertFails(getDoc(doc(db('admin'), 'mentions', 'm1')));
+    await assertSucceeds(getDoc(doc(db('admin'), 'mentions', 'm1'))); // administrators see everyone's (All mentions)
     await assertFails(setDoc(doc(db('alice'), 'mentions', 'm2'), { to: 'olivia', by: 'alice', read: false }));
     await assertSucceeds(deleteDoc(doc(db('olivia'), 'mentions', 'm1')));
   });
@@ -763,5 +763,16 @@ describe('Word template files', () => {
     await assertFails(uploadString(ref(as('ned').storage(), p('ned')), 'x', 'raw', DOCX));
     await assertSucceeds(getMetadata(ref(as('alice').storage(), p('vera'))));
     await assertFails(getMetadata(ref(as('ned').storage(), p('vera'))));
+  });
+});
+
+describe('All mentions', () => {
+  test('administrators read everyone’s mentions; only the person mentioned changes them', async () => {
+    await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'mentions', 'm1'), { to: 'olivia', by: 'alice', recordId: 'r_alice', read: false, at: 1 }));
+    await assertSucceeds(getDoc(doc(db('admin'), 'mentions', 'm1')));
+    await assertSucceeds(getDocs(collection(db('admin'), 'mentions')));
+    await assertFails(updateDoc(doc(db('admin'), 'mentions', 'm1'), { read: true }));
+    await assertFails(deleteDoc(doc(db('admin'), 'mentions', 'm1')));
+    await assertFails(getDocs(collection(db('olivia'), 'mentions')), 'members only their own');
   });
 });

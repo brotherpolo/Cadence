@@ -213,7 +213,7 @@ service cloud.firestore {
                'repeat', 'sample', 'spawnedNext', 'spawnedFrom',
                'ownerId', 'ownerName', 'ownerEmail',
                'assigneeId', 'assigneeName', 'assigneeEmail', 'members',
-               'typeSnap', 'levelSnap', 'nodeId', 'moved', 'pushed', 'doneBy',
+               'typeSnap', 'levelSnap', 'nodeId', 'moved', 'pushed', 'doneBy', 'reassignedBy', 'reassignedAt',
                'recordId', 'formId', 'recordSnap'
              ])
           && d.keys().hasAll(['id', 'title', 'done', 'ownerId', 'members'])
@@ -247,6 +247,10 @@ service cloud.firestore {
           // who completed it: yourself, or left as it was
           && (d.get('doneBy', null) == null || d.doneBy == request.auth.uid
               || (resource != null && resource.data.get('doneBy', null) == d.doneBy))
+          // who last passed it on (Formwright's Reassign): yourself, or left as it was
+          && (d.get('reassignedBy', null) == null || d.reassignedBy == request.auth.uid
+              || (resource != null && resource.data.get('reassignedBy', null) == d.reassignedBy))
+          && (!('reassignedAt' in d) || d.reassignedAt == null || d.reassignedAt is number)
           // membership always mirrors owner + assignee
           && d.ownerId is string
           && d.members is list && d.members.size() >= 1 && d.members[0] == d.ownerId
@@ -305,8 +309,11 @@ service cloud.firestore {
     }
 
     match /tasks/{taskId} {
-      // reads (single gets and the app's "members array-contains me" query)
-      allow read: if signedIn() && request.auth.uid in resource.data.members && cadenceOk();
+      // reads (single gets and the app's "members array-contains me" query). Administrators also
+      // read tasks linked to Formwright records (Formwright → My work → All tasks); people's
+      // own tasks without a record link stay private.
+      allow read: if signedIn() && ((request.auth.uid in resource.data.members && cadenceOk())
+                                    || (isAdmin() && resource.data.get('recordId', null) != null));
 
       allow create: if signedIn() && cadenceOk()
         && validTask(request.resource.data, taskId)
@@ -340,6 +347,16 @@ service cloud.firestore {
              && request.resource.data.get('assigneeId', null) == null
              && changed().hasOnly(['assigneeId', 'assigneeName', 'assigneeEmail',
                                    'members', 'updatedAt']))
+          // Reassign (Formwright): on a task linked to a record, the person it's assigned to, or
+          // an administrator, gives it to someone else (or back to the owner). Only who it's
+          // with changes; the owner stays.
+          || ((isAssignee() || isAdmin())
+             && resource.data.get('recordId', null) != null
+             && request.resource.data.ownerId == resource.data.ownerId
+             && request.resource.data.get('reassignedBy', null) == request.auth.uid
+             && changed().hasOnly(['assigneeId', 'assigneeName', 'assigneeEmail',
+                                   'members', 'updatedAt', 'reassignedBy', 'reassignedAt'])
+             && assigneeIsReal(request.resource.data))
         );
 
       allow delete: if signedIn() && cadenceOk()
@@ -540,7 +557,9 @@ service cloud.firestore {
     // @mentions (Formwright → My work → Mentions): written only by the server when someone
     // mentions you in a comment. Only you can read them, mark them read or clear them.
     match /mentions/{mentionId} {
-      allow read, delete: if signedIn() && resource.data.to == request.auth.uid;
+      // administrators see everyone's (My work → All mentions); only you mark yours read or clear them
+      allow read: if signedIn() && (resource.data.to == request.auth.uid || isAdmin());
+      allow delete: if signedIn() && resource.data.to == request.auth.uid;
       allow update: if signedIn() && resource.data.to == request.auth.uid
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read'])
         && request.resource.data.read is bool;
