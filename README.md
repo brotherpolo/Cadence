@@ -1,0 +1,367 @@
+# Cadence
+
+A build-free task app: plain HTML, CSS and JavaScript files. No bundler, no npm install.
+
+- **Tasks**: natural-language quick add, inventory summary, filters, grouping, agenda and table layouts, swipe gestures on phones
+- **Calendar**: month and week views; drag tasks between days or onto "Unscheduled"
+- **Sharing**: assign a task to anyone who has signed in with Google; they see it in their own list
+- **Insights**: completed vs. added per week, on-time rate, streak, a daily activity heatmap, and breakdowns by type, importance, overdue age and shared tasks
+- **Chart builder**: drag fields (type, importance, status, dates, assignee…) onto X axis, Values and Split by to make column, bar, line, area, pie, donut and scatter charts; save favorites to a board
+- **Chart builder extras**: map fields (cluster, branch, node, depth), a sunburst that follows the map's tree, KPI tiles (one number with an 8-week trend and change vs last week), and goal lines that fade the bars that miss
+- **Over time**: Burn-up (added vs. done, and whether your open list is growing) and Flow (done / open / overdue stacked over time)
+- **Reading charts**: compare with the previous period (faint bars or a dashed line), rolling-average or straight-line trends, and a one-sentence summary under every chart
+- **Filters**: narrow any chart by type, importance, map cluster, map branch or person; on Dashboards, one date range can apply to every chart
+- **Treemap and Handoffs**: a treemap sizes boxes by type (or any category) with smaller boxes inside for a second field; Handoffs draws bands from who assigned each task to who's doing it
+- **Exploring**: click a legend entry to show only that series (or highlight one slice), and drag across a time chart to zoom into a stretch of dates (swipe sideways on touch screens)
+- **Export**: download any chart as a PNG picture or its numbers as a CSV file, from the Chart builder or a dashboard chart's ⋯ menu
+- **Table**: list the tasks themselves. Pick the columns (any field, plus time and notes), reorder them, sort by clicking a header, group rows by a category, and filter by status, dates, type, importance, map, person, when it's due (overdue, today, next 7 or 30 days, no date) or words in the title or notes. Tick tasks off or open them right from the table, on dashboards too; export as CSV or PNG
+- **Ask for a chart**: type what you want at the top of the Chart builder ("overdue tasks by branch this month", "average days late per month", "done per week with a goal of 5") and it sets the fields, chart type, filters, dates and goal for you
+- **Rescheduling**: from v19, every time a task's due date moves to another date it's counted, along with how many days it was pushed back. Chart it with Times rescheduled, Days pushed back or the Rescheduled field (never / once / 2–3 / 4+); the task editor shows the count, and the Excel export has a column for it. Only changes made from v19 on are counted
+- **Canvas heat overlay**: color every node by open tasks, overdue tasks, days late, age, % on time or recent completions, optionally rolled up through each branch
+- **Dashboards**: as many as you like, private to you and synced to your account. Each lays out your saved charts and text blocks on a grid 24 squares across: **Edit dashboard**, then drag a chart by its handle to move it or by its corner to resize it (arrow keys work too). One chart can sit on several dashboards. **Set as home** picks the one that opens first. Tap any bar, slice or point to open the tasks behind it; on phones each chart is a small card (tap for its tasks, press and hold for the numbers)
+- **Map: Canvas, Outline, Table**: one mind map shown three ways. The canvas has nodes in eight shapes, colors and fills, connections and dotted flows, fold/focus/tidy for branches, box select, a minimap, a node inspector, undo/redo, and PNG export. The outline is a keyboard-driven indented list with PDF export. The table lets you sort, filter, edit cells inline and change many nodes at once
+- **Tasks on the map**: link any task to a node (in the editor, or with `@node` in quick add). Nodes show their open-task count, the inspector lists their tasks, and the Tasks page can filter by node or group by map cluster
+- **Settings**: task types (name, color, icon, order), importance levels (name, color, rank, default), theme, week start, backup and restore
+
+## Run it
+
+Open `index.html` in a browser, or serve the folder:
+
+```sh
+npx serve .            # or: python3 -m http.server 8080
+```
+
+With no Firebase config, tasks are saved in that browser's local storage.
+
+## Quick-add syntax
+
+| Type this            | You get                                  |
+|----------------------|------------------------------------------|
+| `tomorrow`, `fri`, `next week`, `in 3 days`, `oct 14`, `10/14` | due date |
+| `3pm`, `9:30am`, `15:00`, `noon`, `tonight` | time (a time alone means today) |
+| `#work`              | task type (prefix match on the name)     |
+| `!high`, `!1`, `!!`  | importance (`!1` / `!!` = top level)     |
+| `every week`, `daily`, `every weekday`, `monthly` | repeat |
+| `@garage`, `@q4-roadmap` | link to a map node (prefix match on its name) |
+
+## Keyboard
+
+`N` new task (a new node on map pages) · `/` search · `⌘K` / `Ctrl K` command menu · `1`–`6` Tasks, Calendar, Canvas, Outline, Table, Insights · `←` `→` move the calendar · `T` today · `D` dark mode · `X` complete focused task · `⌘↵` save in the editor
+
+On the canvas: `Tab` add child · `↵` add sibling · `F2` edit · `V` `H` `C` `A` select, pan, connect, flow · hold `Space` to pan · `F` focus branch · `.` fold · arrows nudge · `-` `=` `0` zoom · `⌘Z` / `⌘⇧Z` undo and redo map changes. In the outline: `↵` rename / new sibling, `Tab` / `⇧Tab` indent / outdent, `Alt ↑` `Alt ↓` move, `←` `→` fold, `⌘↵` show on canvas.
+
+## Turn on sign-in and sync (Firebase)
+
+1. Create a project at <https://console.firebase.google.com>.
+2. **Authentication → Sign-in method**: enable **Google** and/or **Email/Password**.
+3. **Firestore Database → Create database** (production mode).
+4. **Project settings → Your apps → Web app (`</>`)**: register an app and copy its config object into `firebase-config.js`.
+5. **Authentication → Settings → Authorized domains**: add the domain you'll host on (`localhost` is there by default).
+6. Deploy the rules (and optionally host the app):
+
+```sh
+npm i -g firebase-tools
+firebase login
+firebase use --add                 # pick your project
+firebase deploy --only firestore:rules
+firebase deploy --only hosting     # optional: hosts this folder
+```
+
+Once configured, the app shows a sign-in screen. Data is stored like this:
+
+```
+tasks/{taskId}               every task; members = [owner] or [owner, assignee]; optional nodeId
+users/{uid}/items/settings   your types, importance levels, defaults (private)
+users/{uid}/items/map        your map: nodes + edges (private)
+users/{uid}/items/board      saved charts and your dashboards (private)
+people/{email}               { uid, name }, so others can assign you tasks by email
+```
+
+`firestore.rules` makes each task visible only to its owner and its assignee, validates the shape and size of every write, and denies all other paths.
+
+## Formwright shares this project
+
+Formwright (the form builder) runs on the same Firebase project, with the same accounts, from its own repo and Hosting site. **This folder holds the rules for both apps**: `firestore.rules`, `storage.rules` and `firestore.indexes.json` cover Cadence's tasks and Formwright's forms, records, groups and uploads. Always deploy rules from here; Formwright's repo deploys only its web pages.
+
+Formwright's data:
+
+```
+forms/{formId}               form designs (admins write; everyone signed in reads)
+records/{id}                 form entries, checked against users/{uid}.access
+groups/{id}                  security groups (admins only)
+users/{uid}                  Formwright account: role, groups, effective access
+profiles/{uid}               display names for "Created by"
+reports/{id}                 saved reports: the owner writes; shared ones readable by members
+imports/{id}                 spreadsheet imports, kept 7 days for undo (admins only)
+imports/{id}/before/{recId}  a record as it was before an import changed it (admins only)
+records/{id}.nums            auto numbers (server only); counters/{id} their counters
+records/{id}/emails/{id}     PDFs emailed from a record (server only; readable with the record)
+audit/{id}                   the audit trail (server only; admins read)
+settings/exports             company name and logo for Formwright's PDF exports (admins write; members read)
+uploads/... (Storage)        files attached to records
+```
+
+`users/{uid}` (Formwright's account document) and `users/{uid}/items/...` (Cadence's private settings, map and board) are separate documents with separate rules. Formwright admins can read the account document, never Cadence's private items.
+
+### Linking tasks to records
+
+A task can link to one Formwright record through `recordId`, `formId` and `recordSnap` (a copy of the record's title and the form's name and colour, so an assignee without access to that form still sees what the task is about).
+
+- Only the task's owner can set, change or clear the link, and only to a record they can see in Formwright.
+- The assignee can't change the link.
+- A repeating task's next occurrence keeps its link, even if the record has since been deleted.
+- Deleting a record leaves its tasks in place.
+
+Using it (version 22):
+
+- **Task editor → On a record**: pick from the records you can see in Formwright, grouped by form. Unlink with ×, or **Open in Formwright**. An assignee sees the record read-only.
+- **Quick add**: `&acme` links the record whose title starts with "acme", like `@node` for the map.
+- **Tasks page**: each linked task shows a chip in its form's color. Tap it to open the record in Formwright or to show only that record's tasks. Form chips in the filter row narrow the list to one form's records, and **Group: Form** groups by form. Search also matches record titles.
+- If a record is deleted in Formwright, its tasks show **Record removed**.
+- Opening one of your linked tasks refreshes the saved copy of the record's title.
+- Formwright can link into Cadence: `?addTaskFor=<recordId>` opens a new task already linked to that record, and `?record=<recordId>` shows that record's tasks.
+
+To open records in Formwright, add its address to `firebase-config.js`:
+
+```js
+window.CADENCE_FORMS_URL = 'https://cadence-forms.web.app/';
+```
+
+Cadence reads Formwright's forms and your Formwright account (`users/{uid}`) to know which records you can see. If you've never opened Formwright, there's nothing to pick from yet.
+
+### Auto numbers (Formwright's Auto number field)
+
+`functions/autonumber.js`: `autoNumberOnCreate` numbers every new record's Auto number fields from a counter (`counters/{formId}__{fieldId}`) in a transaction; `autoNumberFill` (admins) numbers existing records, keeping numbers already typed in; `autoNumberSet` (admins) changes one number, keeps it unique and logs it in `autoLog`. The numbers are in `records/{id}.nums`, which the rules let only the server write. The year option uses `FORMWRIGHT_TZ` (default `America/Toronto`). Deploy with the other functions.
+
+### Audit trail (Formwright → Administration → Audit trail)
+
+`functions/audit.js` and the `audit*` functions in `index.js` write `audit/{id}` whenever a record, form, security group, account (`users/{uid}`) or `settings/*` document changes, with who did it and what changed. Deleted records keep a copy, and `restoreRecord` (admins, within 90 days) puts one back. Writes the server makes itself (auto numbers, removals, restores) are skipped there and noted by the function that made them. Admins read the trail; nobody writes it from the apps. It needs the `audit` indexes:
+
+```sh
+bash deploy.sh firestore:rules,firestore:indexes,functions   # backs up the database first
+```
+
+### Email PDF (Formwright → a record → Email PDF)
+
+`functions/email.js` (`emailRecord`, administrators only) sends a record's PDF through Gmail and logs it in `records/{id}/emails`. It needs, once:
+
+```sh
+echo 'GMAIL_USER=you@gmail.com' >> functions/.env                # the Gmail account it sends from
+firebase functions:secrets:set GMAIL_APP_PASSWORD --project tasks-2ae9d   # paste the Gmail app password
+```
+
+Limits: 10 addresses per email, an 8 MB PDF, 100 emails per person per day (`emailLimits/{uid}`, server only). If Gmail refuses the password, make a new app password and run the `secrets:set` line again, then redeploy the functions.
+
+Each email's log keeps the message too, and the PDF exactly as sent is kept in Storage at `sentEmails/{recordId}/{emailId}.pdf` (written only by the server; `storage.rules` lets anyone who can see the record read it). If keeping the PDF fails, the email still counts as sent and its log says no copy was kept. `deleteSentEmails` (administrators only) deletes one, several or all of a record's sent emails with their PDFs, and notes what was deleted in the audit trail (kind `emaildeleted`). Deploy rules, Storage rules and functions together:
+
+```sh
+bash deploy.sh firestore:rules,storage,functions
+```
+
+
+### Automations (Formwright → Administration → Automations)
+
+`functions/automate.js` (the logic, unit-tested) and `index.js` (`automationOnWrite` on every record write, `automationDaily` at 7:00 a.m. Toronto time, `automationTest` for the editor's Test run, and Email PDF calling them after sending). Automations are in `automations/{id}` (admins only), with `runs/` (the run log, server-written) and `fired/` (date runs done today). Records changed by an automation carry `auto: { depth, id, at, actor }`, written only by the server, used to stop loops (3 in a row). Emails use the same Gmail setup as Email PDF; PDFs are made here with `fwkit.cjs` (built from Formwright, see its README) and `vendor/pdf-lib.min.js`. New Formwright records in a form with a workflow are started at the first stage by `autoStart` (also in `automationOnWrite`, whatever made the record). Workflow notices also run there (`stageNotify`), with the task due on the stage's due date (working days): when a Formwright record arrives at a workflow stage, the previous stage's tasks for it (notes starting "Workflow:") are ticked done and the new assignee (or up to 10 members of the assigned group) gets a task and/or email. The security rules let only a staged record's assignee or an admin change it. Deploy rules and functions together:
+
+```sh
+bash deploy.sh firestore:rules,functions
+```
+
+### Comments and @mentions (Formwright → a record → Comments)
+
+Comments live in `records/{id}/comments/` (anyone who can see the record reads and adds them, as themselves; you edit or delete your own, admins delete any; replies are one level deep). `functions/comments.js` (the logic, unit-tested) and `commentWritten` in `index.js` tell the people a comment @mentions, once each, and only if they can open the record (the same test as the rules): a `mentions/{id}` entry for My work → Mentions (only that person reads it or marks it read), an email through the same Gmail setup as Email PDF, and, when the commenter ticked it, a Cadence task from the commenter to them linked to the record (only people with Cadence). It writes `notified{uid: sent | no-access | gone}` on the comment so the app can say who wasn't told. Removing a comment removes its replies and mentions and notes it in the audit trail (kind `commentdeleted`). To put a link to the record in the email, add Formwright's address once:
+
+```sh
+echo 'FORMWRIGHT_URL=https://your-formwright-site.web.app' >> functions/.env
+bash deploy.sh firestore:rules,firestore:indexes,functions
+```
+
+### Default home dashboard
+
+`settings/home` (`dashboardId`) is the Formwright dashboard Home shows for anyone who hasn't chosen their own: admins write it, everyone let in reads it.
+
+### Form version history
+
+The rules let administrators add versions under `forms/{id}/versions/` (as themselves) and read them; nobody can change or delete one. Deploy with `bash deploy.sh firestore:rules`.
+
+### Removing a person (Formwright → Users → Remove)
+
+`functions/remove.js` (the `removeAccount` callable function) does it, because only the server may delete someone else's sign-in. Only an administrator may call it. It deletes their account, private items, push settings and directory entry, deletes the tasks they own, hands back tasks assigned to them, deletes their private reports, dashboards and list views (shared ones pass to the admin), optionally gives their Formwright records to someone else, keeps their name on `profiles/{uid}` with `removed: true`, then deletes their sign-in. Deploy it with the other functions:
+
+```sh
+(cd functions && npm install)
+firebase deploy --only functions --project tasks-2ae9d
+```
+
+### Deploying rules
+
+From this folder, in Cloud Shell:
+
+```sh
+(cd tests && npm install && npm test)     # rules tests against the emulators (needs Java, which Cloud Shell has)
+(cd tests && npm run test:unit)           # dashboard layout, remove-person, auto-number, email, audit and comment tests (no emulator needed)
+firebase deploy --only firestore:rules,firestore:indexes,storage --project tasks-2ae9d
+```
+
+The first deploy with `storage.rules` asks to let Storage read Firestore. Accept: the upload rules check Formwright access.
+
+`tests/` is for development only. The app itself still has no build step, and `tests/` doesn't need uploading to your web host.
+
+## The map
+
+Canvas, Outline and Table show the same map. It's saved in one private document per account and syncs like your settings. A Firestore document holds up to 1 MB, which is roughly 3,000 nodes; the app warns you as you get close. View state (pan and zoom, folded branches, hidden clusters, table columns) stays on each device.
+
+- **Clusters** are all the nodes that share a color. On map pages the sidebar lists them: click one to select it on the canvas or to filter the outline and table, use the eye to hide it on the canvas, and right-click to recolor the whole cluster. The sidebar collapses to an icon rail (the button next to the logo) to give the canvas more room.
+- **Linking tasks.** In the task editor, **On the map** picks a node. Deleting a node doesn't delete its tasks. They stay on your list, and Undo puts the node and the links back. Only tasks you own link to your map; a task someone assigned you points at their map, so it shows no node for you.
+- **Moving from Workmap.** In Workmap choose **Export → Download backup (.json)**, then in Cadence open **Settings → Map → Import a Workmap backup** (or use the button on the empty canvas). That replaces the map, and Workmap's tasks become Cadence tasks linked to the same nodes, with their due dates, completion and notes. Importing the same file again won't duplicate tasks. If both apps run on the same domain, Cadence also offers to bring the board in straight from the browser.
+- The Workmap board was one board shared by everyone who signed in to it. In Cadence each account has its own map.
+
+## Push notifications
+
+Cadence can send reminders and updates as push notifications to any browser or phone you turn them on for:
+
+- **Due-time reminders**: at a task's time (or 5–60 minutes before), for tasks you're doing
+- **Morning summary**: at a time you pick, tasks due today with no time and anything overdue
+- **Assigned to me**: when someone gives you a task
+- **My shared task is done**: when the person you gave a task to finishes it
+
+How it fits together: the app asks for permission and saves this device's push token to `notify/{uid}/devices/…`; Cloud Functions in `functions/` watch tasks and run every 5 minutes, then send through Firebase Cloud Messaging; `firebase-messaging-sw.js` shows the notification and opens the task when it's tapped.
+
+### One-time setup
+
+1. **Switch the project to the Blaze plan.** Firebase console → ⚙ → *Usage and billing* → *Details & settings* → *Modify plan*. Cloud Functions need it. A personal setup stays well inside the free allowance (reminders run 288 times a day). Set a budget alert (for example $1) on the same page so nothing surprises you.
+2. **Create the Web Push key.** ⚙ *Project settings* → *Cloud Messaging* → *Web configuration* → *Web Push certificates* → **Generate key pair**. Copy the key and add one line to your `firebase-config.js`:
+   ```js
+   window.CADENCE_VAPID_KEY = 'BEl62…the key you copied…';
+   ```
+3. **Match the functions to your database's region.** Firebase console → *Firestore Database* shows the location next to the database. Put the matching region in `functions/.env` (`nam5` → `us-central1`, `northamerica-northeast1` → `northamerica-northeast1`, and so on).
+4. **Deploy** from this folder (the first line installs what the functions need; run it again whenever `functions/package.json` changes):
+   ```sh
+   (cd functions && npm install)
+   firebase deploy --only firestore:rules,firestore:indexes,functions
+   ```
+   The first functions deploy turns on several Google Cloud APIs and can take a few minutes. If it stops with a permissions or "service agent" error, wait two or three minutes and run it again. The new index (`tasks`: members + due) also takes a few minutes to build; reminders start once it's ready.
+5. **Upload the app files** wherever you host it (Firebase Hosting, GitHub Pages…). It must be served over **https**, and `firebase-messaging-sw.js`, `push.js`, `manifest.webmanifest` and the icon PNGs must sit in the same folder as `index.html`.
+
+### Turning it on, on each device
+
+Open **Settings → Notifications → Turn on for this device**, allow notifications, then press **Send a test**. Do this on every computer and phone you want notifications on.
+
+- **iPhone and iPad** (iOS 16.4 or later): web notifications only work from an installed app. In Safari, tap **Share → Add to Home Screen**, open Cadence from the new icon, sign in, and turn notifications on there.
+- **Android**: works in Chrome. Installing it (menu → *Add to Home screen*) gives it its own icon, but isn't required.
+- If you turned notifications down by mistake, allow them again in the browser's site settings and reload.
+
+### If something doesn't arrive
+
+- `firebase functions:log` shows what the functions did, including failed sends.
+- "Firestore refused to save this device" means the rules from this version aren't deployed yet.
+- Reminders can arrive up to 5 minutes late (that's how often the check runs). Times use the time zone of the device you last turned notifications on from, shown in Settings.
+- Notifications include task names, which can show on a locked screen.
+
+## Assigning tasks
+
+In the task editor, **Assigned to** shows "Me", the people you've worked with recently, and an email box. Type someone's email and press **Assign**.
+
+- The person must have signed in to Cadence once. Signing in lists their email in the `people` directory. Directory entries can be looked up one exact email at a time, never listed, and only verified addresses can claim one. Every Google account is verified; email/password users need to verify their address first.
+- **The owner** can change anything, reassign, or delete.
+- **The assignee** can complete the task, change its date and time, and edit the checklist and notes. Title, type, importance and repeat are read-only for them. They can't delete it, but they can **Hand back** the task to the owner.
+- The assignee sees the owner's type and importance names and colors, even if their own settings differ.
+- Completing a repeating task as the assignee creates the next occurrence for the same owner and assignee.
+- The app shows a notice when someone assigns you a task, and when an assignee completes or hands back one of yours. Use the **Assigned to me** / **Assigned to others** filters on the Tasks page to see just those.
+- **Version 25** makes Cadence **by approval**: a new account sees only a blocking screen ("You don't have access yet. Please contact an administrator.", the email it's signed in with, and Sign out) until a Formwright admin switches on **Can use Cadence** for it under Users (admins always can). It opens by itself once approved, and closes at once if access is taken away, and the rules refuse Cadence data to anyone not approved. Its sign-in also creates the same starting account record Formwright does, so new people show up there to approve. The site now runs scripts only from itself and Google's sign-in, Firebase and App Check services (the old inline redirect is `boot.js`). **Order matters:** install Formwright's update, approve everyone who uses Cadence, then upload these files, and deploy the new `firestore.rules` last.
+- **Version 24** turns the Board into **Dashboards**: several per person, each a grid you arrange by dragging and resizing. **Deploy the new `firestore.rules` before uploading the new files**: the old rules reject a board that holds dashboards. Your existing board opens as a dashboard called "My board" (sections become headings; small, medium and wide cards become 8, 12 and 24 squares across). Nothing is saved in the new shape until you change something, so nothing is lost if you go back. New charts from the Chart builder go on the dashboard you last opened.
+- **Version 22** links tasks to Formwright records (see "Linking tasks to records"). **Deploy the new `firestore.rules` before uploading the new files**: the old rules reject tasks with a record link.
+- **Version 16** adds burn-up and flow charts, period comparison, trend lines, chart summaries, chart filters and a Board-wide date range. No rules change.
+- **Version 15** adds the sunburst, KPI tiles, goals and the canvas heat overlay. No rules change.
+- **Version 14 syncs the Board.** Saved charts used to live in one browser. Now they're saved to your account, private to you, and follow you to every device. The first time each browser opens version 14, its saved charts are added to your account's board (duplicates are skipped). Deploy the new `firestore.rules` first, or the board can't be saved.
+- **Version 13 adds the map. Deploy the new `firestore.rules` before uploading the new files**: the old rules reject the map document and any task with a `nodeId`.
+- Version 8 moves tasks from the old `users/{uid}/items/{taskId}` location to `tasks/` automatically the first time each person signs in. **Deploy the new rules before uploading the new files**, or the move fails (nothing is lost; the app says so and offers Retry). After the move, the old location no longer accepts task writes, so an outdated open tab gets a sync error until it reloads.
+
+The Firebase web config values are public identifiers, not secrets. Access control comes from the rules. For extra protection against abuse, turn on **App Check** in the console.
+
+If a user had tasks in the browser before signing in for the first time, they are uploaded to that user's new, empty account. A different account signing in on the same browser starts fresh. Signing out clears the local copy.
+
+## Files
+
+The app's files sit in one folder, so it uploads to GitHub as-is. Two subfolders aren't part of the app: `functions/` is the push notification server code, deployed with the Firebase CLI, and `tests/` holds the rules tests. Neither needs uploading to your web host.
+
+```
+index.html
+tokens.css            color, type and spacing tokens (light + dark)
+app.css               layout and components
+icons.js              inline SVG icons
+utils.js              dates, formatting, quick-add parser, recurrence
+store.js              state, local cache, sync engine
+firebase-config.js    your Firebase config (empty = local only)
+firebase-sync.js      sign-in screen + Firestore connection
+push.js               push notifications: permission, device token, Settings → Notifications
+records.js            Formwright records: loads the ones you can see, the record picker and chips
+firebase-messaging-sw.js  service worker: shows pushes, opens the task when tapped
+manifest.webmanifest  install as an app (needed for notifications on iPhone)
+*.png                 app icons
+toast.js              notifications with Undo
+drag.js               drag & drop for mouse and touch
+editor.js             task editor
+palette.js            command menu
+map.js                map data, history, clusters, popovers, Workmap import
+map.css               map pages, popovers, sidebar groups and compact rail
+list.js               Tasks page
+calendar.js           Calendar page
+canvas.js             Canvas page (the map as a board)
+outline.js            Outline page (the map as a list)
+maptable.js           Table page (the map as a table)
+insights.js           Insights page (charts)
+dashgrid.js           dashboard layout: positions, moving, resizing, turning the old board into a dashboard
+charts.js             Chart builder and Dashboards pages
+settings.js           Settings page
+app.js                app shell, routing, shortcuts
+boot.js               forwards the old GitHub Pages address (kept out of index.html so inline scripts can be refused)
+firestore.rules       Firestore security rules (Cadence and Formwright)
+storage.rules         Storage security rules (Formwright uploads, kept PDFs of sent emails)
+firestore.indexes.json  indexes: reminders, and tasks linked to a record
+firebase.json         Firebase CLI config (rules, indexes, functions, hosting)
+functions/            Cloud Functions: notifications (index.js), removing a person (remove.js), auto numbers (autonumber.js), Email PDF (email.js), audit trail (audit.js), comments and @mentions (comments.js), automations (automate.js, fwkit.cjs, vendor/pdf-lib.min.js), package.json, .env
+tests/                rules tests (development only; run with npm test inside tests/)
+```
+
+Scripts load in the order listed in `index.html`; keep that order if you add files.
+
+## Storage meter
+
+A Firestore record holds at most 1 MB. Tasks are saved one per record, so they have no such limit, but the map and the Board are each saved as **one** record.
+
+- **Sidebar meter:** shows how full the map is and roughly how many more nodes fit at your current average node size. It adds a Board line once the Board passes 50%. It turns amber at 70% and red at 90%, with words as well as colour.
+- **Hiding it:** **×** hides it on this device. **Settings → Map → Storage** shows the full picture and has **Show in sidebar / Hide from sidebar**.
+- **When it shows:** only when you're signed in, since the limit applies to synced data.
+
+## Backups
+
+- **Automatic:** Firestore keeps a daily backup (7 days) and a weekly one (Sundays, 8 weeks). Photos and files are copied nightly to `gs://tasks-2ae9d-file-backups` (kept for good; deletions recoverable for 30 days).
+- **Before every deploy:** the deploy workflows (Formwright's and Cadence's) first export the whole database to `gs://tasks-2ae9d-db-exports/before-deploy/<date>-<app>-<commit>` with `scripts/backup-db.mjs`, and stop without deploying if that fails. Cloud Shell deploys do the same with `bash deploy.sh <what>` in the Cadence folder. These copies are deleted after 90 days by a rule on the bucket.
+- **Any time:** `gcloud firestore export gs://tasks-2ae9d-db-exports/$(date +%Y-%m-%d-%H%M) --project=tasks-2ae9d` makes a copy that's kept until you delete it.
+- **Restoring** overwrites live documents with the same IDs, so plan it first (one collection or everything, into this database or a new one).
+- The deploy account needs **Cloud Datastore Import Export Admin** on the project and **Storage Legacy Bucket Writer** on the `tasks-2ae9d-db-exports` bucket only.
+
+## Hosting
+
+Cadence is served from Firebase Hosting at its own site (for example `https://cadence-tasks.web.app/`), in the same project as Formwright.
+
+- `.github/workflows/deploy.yml` publishes the web pages on every push to `main`. It needs a `FIREBASE_SERVICE_ACCOUNT` secret (a `tasks-2ae9d` service account key with **Firebase Hosting Admin**) and a `FIREBASE_HOSTING_SITE` variable (the site name, without `.web.app`).
+- `firebase.json` names the site `cadence` as a hosting target, and leaves rules, tests, functions and this README off the site.
+- `index.html` sends visitors on the old GitHub Pages address to the Firebase address, keeping `?task=`, `?record=` and `?addTaskFor=` links. If you change the site name, change it in that script too.
+- Pages and the manifest are served with `no-cache`, so an upload shows up on the next reload.
+
+## Updating the app
+
+**Don't overwrite your `firebase-config.js`.** Update zips from here leave it out, so your filled-in copy on GitHub stays as it is.
+
+`index.html` loads every file with a version tag (`app.js?v=20`). When you change any file, bump the number in `index.html` (and `C.VERSION` in `utils.js`) so browsers fetch the new copies instead of cached ones. Settings → Your data shows the version each device is running.
+
+### Security settings
+
+- **Approval:** Cadence is for approved accounts only (`users/{uid}.cadence`, set by a Formwright admin on the Users screen; admins always can). See Version 25.
+- **Scripts:** the Content Security Policy in `firebase.json` allows scripts only from this site, `www.gstatic.com` (Firebase), `apis.google.com` (Google sign-in) and `www.google.com` (App Check). There are no inline scripts.
+
+- **App Check** (optional, recommended): add `window.CADENCE_APPCHECK_KEY = '<reCAPTCHA Enterprise site key>';` to `firebase-config.js`. Cadence then proves to Firebase that requests come from this site. Nothing changes until the key is set.
+- **What gets published:** Hosting publishes this folder except tests, functions, rules, docs and any `.json`, `.md`, `.env`, `.pem`, `.key`, `.csv`, `.sql`, `.log` or service-account file, so a key file added by mistake is never served.
+- **Headers:** the site can't be framed by other sites, and sends no-sniff, strict referrer and permissions headers.

@@ -689,3 +689,49 @@ describe('upload file types', () => {
     await assertFails(uploadString(ref(st, path('f_jobs', 'alice', 'a.js')), 'x', 'raw', { contentType: 'text/javascript; charset=utf-8' }));
   });
 });
+
+describe('comments and @mentions', () => {
+  const c = (by, extra = {}) => ({ by, byName: by, at: 1, text: 'Looks good @olivia', mentions: [{ uid: 'olivia', name: 'olivia' }], parent: null, task: false, ...extra });
+  const path = (d, rid, id) => doc(d, 'records', rid, 'comments', id);
+
+  test('anyone who can see the record can comment, view-only included', async () => {
+    await assertSucceeds(setDoc(path(db('alice'), 'r_alice', 'c1'), c('alice')));
+    await assertSucceeds(setDoc(path(db('vera'), 'r_alice', 'c2'), c('vera')));
+    await assertSucceeds(getDocs(collection(db('vera'), 'records', 'r_alice', 'comments')));
+    await assertFails(setDoc(path(db('bob'), 'r_alice', 'c3'), c('bob')), 'bob cannot see the record');
+    await assertFails(getDocs(collection(db('bob'), 'records', 'r_alice', 'comments')));
+    await assertFails(setDoc(path(db('alice'), 'r_alice', 'c4'), c('olivia')), 'must be written as yourself');
+    await assertFails(setDoc(path(db('alice'), 'r_alice', 'c5'), c('alice', { notified: { olivia: 'sent' } })), 'notified is the server’s');
+    await assertFails(setDoc(path(db('alice'), 'r_alice', 'c6'), c('alice', { text: '' })));
+    await assertFails(setDoc(path(db('alice'), 'r_alice', 'c7'), c('alice', { text: 'x'.repeat(5001) })));
+  });
+
+  test('replies are one level deep', async () => {
+    await assertSucceeds(setDoc(path(db('alice'), 'r_alice', 'c1'), c('alice')));
+    await assertSucceeds(setDoc(path(db('olivia'), 'r_alice', 'r1'), c('olivia', { parent: 'c1' })));
+    await assertFails(setDoc(path(db('olivia'), 'r_alice', 'r2'), c('olivia', { parent: 'r1' })));
+  });
+
+  test('you can edit and remove your own; admins can remove any', async () => {
+    await assertSucceeds(setDoc(path(db('alice'), 'r_alice', 'c1'), c('alice')));
+    await assertSucceeds(updateDoc(path(db('alice'), 'r_alice', 'c1'), { text: 'Changed', mentions: [], editedAt: 2 }));
+    await assertFails(updateDoc(path(db('alice'), 'r_alice', 'c1'), { at: 5 }));
+    await assertFails(updateDoc(path(db('olivia'), 'r_alice', 'c1'), { text: 'Mine now', editedAt: 3 }));
+    await assertFails(deleteDoc(path(db('olivia'), 'r_alice', 'c1')));
+    await assertSucceeds(deleteDoc(path(db('admin'), 'r_alice', 'c1')));
+    await assertSucceeds(setDoc(path(db('alice'), 'r_alice', 'c2'), c('alice')));
+    await assertSucceeds(deleteDoc(path(db('alice'), 'r_alice', 'c2')));
+  });
+
+  test('mentions belong to the person mentioned', async () => {
+    await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'mentions', 'm1'), { to: 'olivia', by: 'alice', recordId: 'r_alice', read: false, at: 1 }));
+    await assertSucceeds(getDoc(doc(db('olivia'), 'mentions', 'm1')));
+    await assertSucceeds(getDocs(query(collection(db('olivia'), 'mentions'), where('to', '==', 'olivia'))));
+    await assertSucceeds(updateDoc(doc(db('olivia'), 'mentions', 'm1'), { read: true }));
+    await assertFails(updateDoc(doc(db('olivia'), 'mentions', 'm1'), { to: 'alice' }));
+    await assertFails(getDoc(doc(db('alice'), 'mentions', 'm1')));
+    await assertFails(getDoc(doc(db('admin'), 'mentions', 'm1')));
+    await assertFails(setDoc(doc(db('alice'), 'mentions', 'm2'), { to: 'olivia', by: 'alice', read: false }));
+    await assertSucceeds(deleteDoc(doc(db('olivia'), 'mentions', 'm1')));
+  });
+});

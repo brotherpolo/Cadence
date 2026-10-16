@@ -474,6 +474,52 @@ service cloud.firestore {
         allow read: if signedIn() && canViewRecord(get(/databases/$(database)/documents/records/$(recordId)).data);
         allow write: if false;
       }
+
+      // Comments: anyone who can see the record can read and add them (view-only too).
+      // You can change or remove your own; admins can remove any. Replies are one level deep.
+      // The server writes "notified" (who it told about an @mention) and removes the replies
+      // of a removed comment.
+      match /comments/{commentId} {
+        allow read: if signedIn() && seesRecord(recordId);
+        allow create: if signedIn() && seesRecord(recordId)
+          && validComment(request.resource.data)
+          && request.resource.data.by == request.auth.uid
+          && !('notified' in request.resource.data)
+          && !('editedAt' in request.resource.data)
+          && (request.resource.data.parent == null
+              || get(/databases/$(database)/documents/records/$(recordId)/comments/$(request.resource.data.parent)).data.parent == null);
+        allow update: if signedIn() && seesRecord(recordId)
+          && resource.data.by == request.auth.uid
+          && validComment(request.resource.data)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text', 'mentions', 'editedAt']);
+        allow delete: if isAdmin() || (signedIn() && resource.data.by == request.auth.uid);
+      }
+    }
+
+    function seesRecord(recordId) {
+      let r = get(recordPath(recordId)).data;
+      return canViewRecord(r) || PersonResponsible(r);
+    }
+    function validComment(d) {
+      return d.keys().hasOnly(['by', 'byName', 'at', 'text', 'mentions', 'parent', 'task', 'editedAt', 'notified'])
+        && d.keys().hasAll(['by', 'at', 'text', 'mentions', 'parent'])
+        && d.text is string && d.text.size() > 0 && d.text.size() <= 5000
+        && d.mentions is list && d.mentions.size() <= 20
+        && (d.parent == null || (d.parent is string && d.parent.size() <= 100))
+        && d.at is number
+        && optString(d, 'byName', 120)
+        && (!('task' in d) || d.task is bool)
+        && (!('editedAt' in d) || d.editedAt is number);
+    }
+
+    // @mentions (Formwright → My work → Mentions): written only by the server when someone
+    // mentions you in a comment. Only you can read them, mark them read or clear them.
+    match /mentions/{mentionId} {
+      allow read, delete: if signedIn() && resource.data.to == request.auth.uid;
+      allow update: if signedIn() && resource.data.to == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read'])
+        && request.resource.data.read is bool;
+      allow create: if false;
     }
 
     // Automations (Formwright → Administration → Automations): admins set them up; the server

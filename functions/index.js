@@ -16,6 +16,10 @@
  *                 Email PDF, and as a dry run from the editor (automationTest) (automate.js)
  *   audit*        Formwright → Audit trail: records, forms, groups, accounts and settings as
  *                 they change; restoreRecord brings a deleted record back (audit.js)
+ *   commentWritten Formwright record comments: tells the people @mentioned (My work → Mentions,
+ *                 an email, and a Cadence task when asked) if they can open the record; tidies
+ *                 up and notes it in the audit trail when a comment is removed (comments.js).
+ *                 Set FORMWRIGHT_URL in functions/.env to put a link to the record in the email.
  *
  * Each person's choices live in notify/{uid}; their devices' push tokens in
  * notify/{uid}/devices/{deviceId}. Times are worked out in that person's own
@@ -32,6 +36,7 @@ const { removeAccount } = require('./remove');
 const autonumber = require('./autonumber');
 const { sendRecordEmail, deleteSentEmails, emailLine } = require('./email');
 const audit = require('./audit');
+const cm = require('./comments');
 const automate = require('./automate');
 const fw = require('./fwkit.cjs');
 const { FieldValue } = require('firebase-admin/firestore');
@@ -632,6 +637,94 @@ exports.automationOnWrite = onDocumentWrittenWithAuthContext({ document: 'record
   const actor = depth ? (after.auto && after.auto.actor) || null : (String(after.updatedBy || '').startsWith('auto:') ? null : after.updatedBy || uidOf(event) || null);
   await runAutomations(before ? 'changed' : 'created', { recordId: event.params.recordId, before, after, actor, depth });
 });
+
+/* ---------- Formwright → Comments and @mentions ---------- */
+// Someone mentioned in a comment gets a My work → Mentions entry, an email from the company
+// Gmail, and (when the commenter ticked it) a Cadence task. Only people who can open the record
+// are told; the comment's "notified" says what happened for each, so the app can show
+// "Sam can't see this record and wasn't notified". Removing a comment removes its replies and
+// mentions, and notes the removal in the audit trail.
+exports.commentWritten = onDocumentWrittenWithAuthContext({ document: 'records/{recordId}/comments/{commentId}', secrets: [GMAIL_APP_PASSWORD], timeoutSeconds: 120 }, async (event) => {
+  const { recordId, commentId } = event.params;
+  const [before, after] = docs(event);
+  if (!after) {
+    if (!before) return;
+    try { await commentRemoved(event, recordId, commentId, before); } catch (e) { logger.error('comment removal tidy-up failed', e); }
+    return;
+  }
+  if (!cm.toNotify(after).length) return;
+  try { await commentNotify(recordId, commentId); } catch (e) { logger.error('comment mention failed', e); }
+});
+
+async function commentNotify(recordId, commentId) {
+  const ref = db.collection('records').doc(recordId).collection('comments').doc(commentId);
+  const rec = recData(await db.collection('records').doc(recordId).get());
+  if (!rec) return;
+  const now = Date.now();
+  // claim the new mentions in one step, so an edit made at the same moment can't send twice
+  const plan = await db.runTransaction(async (tx) => {
+    const cur = await tx.get(ref);
+    if (!cur.exists) return null;
+    const c = cur.data();
+    const todo = cm.toNotify(c);
+    if (!todo.length) return null;
+    const users = await tx.getAll(...todo.map((m) => db.collection('users').doc(m.uid)));
+    const out = todo.map((m, i) => {
+      const u = users[i].exists ? users[i].data() : null;
+      return { ...m, user: u, state: !u ? 'gone' : cm.canSee(u, rec, m.uid) ? 'sent' : 'no-access' };
+    });
+    const args = [];
+    out.forEach((m) => args.push(new admin.firestore.FieldPath('notified', m.uid), m.state));
+    tx.update(ref, ...args);
+    return { c, out };
+  });
+  if (!plan) return;
+  const { c, out } = plan;
+  const forms = await allForms();
+  const form = forms.find((f) => f.id === rec.formId) || {};
+  const k = fw.makeKit({ forms, records: [rec] });
+  const title = k.recTitle(rec, form);
+  const item = fw.itemName(form);
+  const people = await allPeople();
+  const owner = { uid: c.by, name: c.byName || people.get(c.by)?.name || '', email: people.get(c.by)?.email || '' };
+  const link = cm.recordLink(process.env.FORMWRIGHT_URL, recordId);
+  const g = gmail();
+  const brand = g.ready ? (await db.collection('settings').doc('exports').get()).data() || {} : {};
+  for (const m of out.filter((x) => x.state === 'sent')) {
+    const p = people.get(m.uid) || {};
+    await db.collection('mentions').add(cm.mentionDoc({ to: m.uid, comment: c, commentId, recordId, formId: rec.formId, recordTitle: title, formName: form.name || '', now }));
+    if (c.task && cm.usesCadence(m.user) && owner.uid) {
+      const tref = db.collection('tasks').doc();
+      await tref.set(cm.mentionTask({ id: tref.id, owner, assignee: { uid: m.uid, name: p.name || m.name, email: p.email || m.user.email || '' }, comment: c, recordId, formId: rec.formId, recordTitle: title, formName: form.name || '', item, color: fw.COLORS[(form.color ?? 0) % fw.COLORS.length], now }));
+    }
+    const to = p.email || String(m.user.email || '').toLowerCase();
+    if (g.ready && to) {
+      const mail = cm.mentionEmail({ byName: owner.name, item, title, text: c.text, link, reply: !!c.parent });
+      try {
+        await mailer.sendMail({ from: { name: brand.companyName || g.user, address: g.user }, replyTo: owner.email || undefined, to, subject: mail.subject, text: mail.text, html: mail.html });
+      } catch (e) { logger.error('mention email failed', e); }
+    }
+  }
+}
+
+async function commentRemoved(event, recordId, commentId, before) {
+  // its mentions go from everyone's My work
+  const ms = await db.collection('mentions').where('commentId', '==', commentId).get();
+  for (const d of ms.docs) if (d.get('recordId') === recordId) await d.ref.delete();
+  // a comment's replies go with it
+  let replies = 0;
+  if (!before.parent) {
+    const rs = await db.collection('records').doc(recordId).collection('comments').where('parent', '==', commentId).get();
+    replies = rs.size;
+    for (const d of rs.docs) await d.ref.delete();
+  }
+  if (bySystem(event)) return; // replies removed above, or the record being removed
+  const uid = uidOf(event);
+  const rec = recData(await db.collection('records').doc(recordId).get());
+  if (!rec) return;
+  const form = await formInfo(rec.formId);
+  await db.collection('audit').add(cm.deletedEntry({ recordId, rec, form, title: audit.titleOf(rec, form), comment: before, commentId, who: await who(uid), replies, now: Date.now() }));
+}
 
 // every morning: automations on a date (on it, or days before or after)
 exports.automationDaily = onSchedule({ schedule: '0 7 * * *', timeZone: TZ, secrets: [GMAIL_APP_PASSWORD], memory: '512MiB', timeoutSeconds: 540, retryCount: 0 }, async () => {
