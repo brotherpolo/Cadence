@@ -98,6 +98,11 @@ describe('records: view and edit mine only', () => {
     await assertFails(updateDoc(doc(db('alice'), 'records', 'r_alice'), { formId: 'f_other', updatedBy: 'alice' }));
   });
 
+  test('administrators give a record to another real account', async () => {
+    await assertSucceeds(updateDoc(doc(db('admin'), 'records', 'r_bob'), { ownerId: 'alice', updatedBy: 'admin' }));
+    await assertFails(updateDoc(doc(db('admin'), 'records', 'r_alice'), { ownerId: 'nobody_here', updatedBy: 'admin' }));
+  });
+
   test('must stamp updatedBy with their own id', async () => {
     await assertFails(updateDoc(doc(db('alice'), 'records', 'r_alice'), { values: {}, updatedBy: 'bob' }));
   });

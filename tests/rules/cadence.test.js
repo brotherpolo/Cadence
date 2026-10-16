@@ -170,6 +170,13 @@ describe('record links: setting them', () => {
     await assertFails(setDoc(doc(db('mia'), 'tasks', 't2'), task('t2', 'mia', link('r_acme'))));
   });
 
+  test('"own" access: a record at a workflow step they are responsible for', async () => {
+    await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'records', 'r_wf'), { ...record('f_clients', 'owen'), stage: 's1', assignee: 'mia' }));
+    await assertSucceeds(setDoc(doc(db('mia'), 'tasks', 't1'), task('t1', 'mia', link('r_wf'))));
+    await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'records', 'r_wf'), { ...record('f_clients', 'owen'), stage: 's2', assignee: 'owen' }));
+    await assertFails(setDoc(doc(db('mia'), 'tasks', 't2'), task('t2', 'mia', link('r_wf'))));
+  });
+
   test('someone who never opened Formwright can’t link records', async () => {
     await assertFails(setDoc(doc(db('nora'), 'tasks', 't1'), task('t1', 'nora', link('r_acme'))));
   });

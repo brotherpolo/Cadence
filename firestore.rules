@@ -190,7 +190,9 @@ service cloud.firestore {
       return d.get('recordId', null) == null
           || (exists(recordPath(d.recordId))
               && get(recordPath(d.recordId)).data.formId == d.formId
-              && canViewRecord(get(recordPath(d.recordId)).data));
+              && (canViewRecord(get(recordPath(d.recordId)).data)
+                  // whoever is responsible for its current workflow step can open it, so can add tasks
+                  || PersonResponsible(get(recordPath(d.recordId)).data)));
     }
 
     function taskPath(id) {
@@ -467,7 +469,9 @@ service cloud.firestore {
         && validRecord(request.resource.data)
         && canEditNow(resource.data)
         && request.resource.data.formId == resource.data.formId
-        && request.resource.data.ownerId == resource.data.ownerId
+        // only administrators give a record to someone else, and only to a real account
+        && (request.resource.data.ownerId == resource.data.ownerId
+            || (isAdmin() && exists(/databases/$(database)/documents/users/$(request.resource.data.ownerId))))
         && request.resource.data.createdBy == resource.data.createdBy
         && request.resource.data.get('nums', null) == resource.data.get('nums', null)
         && request.resource.data.get('autoLog', null) == resource.data.get('autoLog', null)
