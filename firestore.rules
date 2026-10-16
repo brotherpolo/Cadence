@@ -21,7 +21,7 @@ rules_version = '2';
 //   users/{uid}                  Formwright account: role, groups, effective access.
 //                                (Cadence's private items sit under it, in
 //                                users/{uid}/items, with their own rules below.)
-//   profiles/{uid}               display names for "Created by"
+//   profiles/{uid}               display names for "Created by", and each person's own sign-in email (for assigning tasks)
 //   reports/{id}                 saved reports: owner writes; shared ones readable by members
 //   listViews/{id}               saved list views: yours are private; admins share them
 //   reportDefs/{id}              saved reports (one chart, table, pivot or KPI each)
@@ -522,7 +522,9 @@ service cloud.firestore {
     match /profiles/{userId} {
       allow read: if isMember() || (signedIn() && userId == request.auth.uid);
       allow create, update: if signedIn() && userId == request.auth.uid
-        && request.resource.data.keys().hasOnly(['displayName', 'photoURL', 'homeDashboard'])
+        && request.resource.data.keys().hasOnly(['displayName', 'photoURL', 'homeDashboard', 'email'])
+        // email: your own sign-in address, so others can give you Cadence tasks from Formwright
+        && (!('email' in request.resource.data) || request.resource.data.email == request.auth.token.get('email', ''))
         && request.resource.data.displayName is string
         && request.resource.data.displayName.size() <= 120
         && optString(request.resource.data, 'homeDashboard', 100);

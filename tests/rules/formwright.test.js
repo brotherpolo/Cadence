@@ -500,6 +500,9 @@ describe('saved reports and dashboards', () => {
     await assertSucceeds(setDoc(doc(db('bob'), 'profiles', 'bob'), { homeDashboard: '' }, { merge: true }));
     await assertFails(setDoc(doc(db('bob'), 'profiles', 'alice'), { displayName: 'A', homeDashboard: 'x' }));
     await assertFails(setDoc(doc(db('bob'), 'profiles', 'bob'), { displayName: 'Bob', homeDashboard: 'x'.repeat(101) }));
+    // your own sign-in email, so others can give you tasks from Formwright; never someone else's
+    await assertSucceeds(setDoc(doc(db('bob'), 'profiles', 'bob'), { email: 'bob@example.com' }, { merge: true }));
+    await assertFails(setDoc(doc(db('bob'), 'profiles', 'bob'), { email: 'alice@example.com' }, { merge: true }));
   });
 });
 
