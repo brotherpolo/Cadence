@@ -512,6 +512,31 @@ service cloud.firestore {
         && (!('editedAt' in d) || d.editedAt is number);
     }
 
+    // Word templates (Formwright → a record → Export ▾): anyone who can see the form can add one
+    // and use it; whoever added it, or an administrator, can rename, replace or delete it.
+    // The .docx is in Storage at docTemplates/{formId}/{uid}/… (storage.rules).
+    function seesForm(formId) { return isAdmin() || (hasAccount() && viewLevel(formId) != 'none'); }
+    function validTemplate(d) {
+      return d.keys().hasOnly(['formId', 'name', 'path', 'url', 'size', 'by', 'byName', 'at', 'updatedAt', 'tags', 'problems'])
+        && d.keys().hasAll(['formId', 'name', 'path', 'by'])
+        && d.formId is string && d.formId.size() > 0 && d.formId.size() <= 100
+        && d.name is string && d.name.size() > 0 && d.name.size() <= 120
+        && d.path is string && d.path.matches('docTemplates/' + d.formId + '/' + d.by + '/[^/]{1,200}')
+        && optString(d, 'url', 2000) && optString(d, 'byName', 120)
+        && (!('size' in d) || d.size is number);
+    }
+    match /docTemplates/{templateId} {
+      allow read: if signedIn() && seesForm(resource.data.formId);
+      allow create: if signedIn() && validTemplate(request.resource.data)
+        && request.resource.data.by == request.auth.uid
+        && seesForm(request.resource.data.formId);
+      allow update: if signedIn() && validTemplate(request.resource.data)
+        && (resource.data.by == request.auth.uid || isAdmin())
+        && request.resource.data.formId == resource.data.formId
+        && request.resource.data.by == resource.data.by;
+      allow delete: if signedIn() && (resource.data.by == request.auth.uid || isAdmin());
+    }
+
     // @mentions (Formwright → My work → Mentions): written only by the server when someone
     // mentions you in a comment. Only you can read them, mark them read or clear them.
     match /mentions/{mentionId} {

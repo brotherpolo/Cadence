@@ -176,6 +176,10 @@ echo 'FORMWRIGHT_URL=https://your-formwright-site.web.app' >> functions/.env
 bash deploy.sh firestore:rules,firestore:indexes,functions
 ```
 
+### Word templates (Formwright → a record → Export ▾)
+
+`docTemplates/{id}` (Firestore) describes each Word template and `docTemplates/{formId}/{uid}/…` (Storage) holds the .docx. Anyone who can see the form reads and adds them; the person who added one, or an administrator, renames, replaces or deletes it (`firestore.rules`, `storage.rules`). Filling one in happens in the browser; there's no function. Deploy with `bash deploy.sh firestore:rules,storage`.
+
 ### Default home dashboard
 
 `settings/home` (`dashboardId`) is the Formwright dashboard Home shows for anyone who hasn't chosen their own: admins write it, everyone let in reads it.

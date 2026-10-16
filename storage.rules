@@ -41,6 +41,18 @@ service firebase.storage {
       allow delete: if signedIn() && (ownerId == request.auth.uid || isAdmin());
     }
 
+    // Word templates (Formwright → Export ▾): anyone who can see the form reads and adds them;
+    // the person who added one, or an administrator, deletes it.
+    match /docTemplates/{formId}/{ownerId}/{fileName} {
+      allow read: if signedIn() && (isAdmin() || level(formId).get('view', 'none') != 'none');
+      allow create: if signedIn()
+        && ownerId == request.auth.uid
+        && (isAdmin() || level(formId).get('view', 'none') != 'none')
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      allow delete: if signedIn() && (ownerId == request.auth.uid || isAdmin());
+    }
+
     // Email PDF: the PDF as it was sent, kept by the server (sentEmails/{recordId}/{emailId}.pdf).
     // Anyone who can see the record can open it, like the Sent emails list. Only the server
     // writes or deletes these (Delete and Delete all go through deleteSentEmails).

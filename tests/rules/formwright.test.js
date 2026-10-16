@@ -735,3 +735,33 @@ describe('comments and @mentions', () => {
     await assertSucceeds(deleteDoc(doc(db('olivia'), 'mentions', 'm1')));
   });
 });
+
+describe('Word templates', () => {
+  const t = (by, extra = {}) => ({ formId: 'f_jobs', name: 'Quote', path: `docTemplates/f_jobs/${by}/1-quote.docx`, url: 'https://x', size: 100, by, byName: by, at: 1, updatedAt: 1, tags: 3, problems: 0, ...extra });
+  test('anyone who can see the form adds and uses them; the uploader or an admin changes them', async () => {
+    await assertSucceeds(setDoc(doc(db('vera'), 'docTemplates', 't1'), t('vera')));
+    await assertSucceeds(getDocs(query(collection(db('alice'), 'docTemplates'), where('formId', '==', 'f_jobs'))));
+    await assertFails(getDocs(query(collection(db('ned'), 'docTemplates'), where('formId', '==', 'f_jobs'))), 'no access');
+    await assertFails(setDoc(doc(db('ned'), 'docTemplates', 't2'), t('ned')));
+    await assertFails(setDoc(doc(db('alice'), 'docTemplates', 't3'), t('vera')), 'as yourself');
+    await assertFails(setDoc(doc(db('alice'), 'docTemplates', 't4'), t('alice', { path: 'docTemplates/f_other/alice/x.docx' })), 'the file must be in its form’s folder');
+    await assertSucceeds(updateDoc(doc(db('vera'), 'docTemplates', 't1'), { name: 'Quote v2' }));
+    await assertFails(updateDoc(doc(db('alice'), 'docTemplates', 't1'), { name: 'Mine' }));
+    await assertSucceeds(updateDoc(doc(db('admin'), 'docTemplates', 't1'), { name: 'Admin' }));
+    await assertFails(deleteDoc(doc(db('alice'), 'docTemplates', 't1')));
+    await assertSucceeds(deleteDoc(doc(db('vera'), 'docTemplates', 't1')));
+  });
+});
+
+describe('Word template files', () => {
+  const DOCX = { contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' };
+  const p = (owner) => `docTemplates/f_jobs/${owner}/1-quote.docx`;
+  test('view access is enough to add and read one; only Word files', async () => {
+    await assertSucceeds(uploadString(ref(as('vera').storage(), p('vera')), 'x', 'raw', DOCX));
+    await assertFails(uploadString(ref(as('vera').storage(), p('alice')), 'x', 'raw', DOCX), 'your own folder');
+    await assertFails(uploadString(ref(as('vera').storage(), p('vera') + '.html'), 'x', 'raw', { contentType: 'text/html' }));
+    await assertFails(uploadString(ref(as('ned').storage(), p('ned')), 'x', 'raw', DOCX));
+    await assertSucceeds(getMetadata(ref(as('alice').storage(), p('vera'))));
+    await assertFails(getMetadata(ref(as('ned').storage(), p('vera'))));
+  });
+});
