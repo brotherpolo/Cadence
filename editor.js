@@ -3,11 +3,18 @@
   const C = window.Cadence;
   const { D, esc, icon } = C;
   let open = null;
-  // People shown as one-tap pills under "Assigned to" (emails in lowercase)
-  const QUICK_ASSIGN = [
-    { name: 'Adam', email: 'adampollack@gmail.com' },
-    { name: 'Farren', email: 'farrenapplebaum@gmail.com' }
-  ];
+  // People shown as one-tap pills under "Assigned to": everyone with an account (Formwright's people
+  // list, profiles/{uid} with their sign-in email), A–Z. Loaded once per visit; emails in lowercase.
+  let directory = null, directoryLoading = null;
+  function loadDirectory() {
+    const fb = C.firebaseSync;
+    if (directory || directoryLoading || !fb || !fb.listPeople) return directoryLoading;
+    directoryLoading = fb.listPeople().then((list) => { directory = list; return list; })
+      .catch((e) => { console.warn('Could not load the people list:', e && (e.code || e.message)); directory = []; return directory; })
+      .finally(() => { directoryLoading = null; });
+    return directoryLoading;
+  }
+  const QUICK = () => directory || [];
 
   C.openEditor = function (idOrPreset) {
     const S = C.store;
@@ -51,6 +58,8 @@
       '<button type="submit" class="btn primary">' + (existing ? 'Save' : bulk ? 'Add ' + bulk.length + ' tasks' : 'Add task') + '</button>' +
       '</div></form>';
     root.appendChild(wrap);
+    // the people list arrives after the sheet opens: draw the pills again then
+    if (!directory && sharing && !ro) { const l = loadDirectory(); if (l) l.then(() => { if (wrap.isConnected && body.querySelector('#ed-title')) { sync(); render(); } }); }
     const form = wrap.querySelector('form');
     const body = wrap.querySelector('.sheet-body');
 
@@ -153,10 +162,10 @@
     function assignField() {
       const me = S.me() || {};
       const recent = S.people();
-      // quick-assign pills, minus whoever is signed in (they already have "Me")
-      const favs = QUICK_ASSIGN.filter((f) => f.email !== me.email).map((f) => {
+      // everyone else with an account, minus whoever is signed in (they already have "Me")
+      const favs = QUICK().filter((f) => f.email !== me.email && f.uid !== S.state.owner).map((f) => {
         const known = recent.find((p) => (p.email || '').toLowerCase() === f.email);
-        return { uid: known ? known.uid : '', name: f.name, email: f.email };
+        return { uid: known ? known.uid : '', name: f.name || f.email, email: f.email };
       });
       const isFav = (p) => favs.some((f) => (p.email && p.email.toLowerCase() === f.email) || (f.uid && p.uid === f.uid));
       const people = recent.filter((p) => p.uid !== S.state.owner && !isFav(p));
@@ -187,7 +196,7 @@
         const p = await S.findPerson(e);
         if (!wrap.isConnected) return;
         if (p && p.uid) {
-          const fav = QUICK_ASSIGN.find((f) => f.email === e);
+          const fav = QUICK().find((f) => f.email === e);
           keepRole = false; assignee = Object.assign({}, p, { name: p.name || (fav && fav.name) || '' });
           if (!fromPill) assignQuery = '';
           assignMsg = '';

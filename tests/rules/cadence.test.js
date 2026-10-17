@@ -423,3 +423,13 @@ describe('roles: tasks given to a role', () => {
     await assertSucceeds(updateDoc(doc(db('bob'), 'tasks', 't_r'), { ...assignedTo('bob'), assigneeRole: null, assigneeRoleName: null, members: ['owen', 'bob'], reassignedBy: 'bob', reassignedAt: 3, updatedAt: 3 }));
   });
 });
+
+describe('people list for Cadence’s Assigned to', () => {
+  test('Cadence users read everyone’s name and email; people without Cadence or groups don’t', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => { await setDoc(doc(ctx.firestore(), 'profiles', 'owen'), { displayName: 'Owen', email: email('owen') }); });
+    await assertSucceeds(getDocs(collection(db('nora'), 'profiles')));
+    await assertFails(getDocs(collection(db('stan'), 'profiles')));
+    await assertSucceeds(setDoc(doc(db('nora'), 'profiles', 'nora'), { displayName: 'Nora', email: email('nora') }));
+    await assertFails(setDoc(doc(db('nora'), 'profiles', 'nora'), { displayName: 'Nora', email: email('owen') }));
+  });
+});

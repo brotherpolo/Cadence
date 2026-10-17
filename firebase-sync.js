@@ -106,6 +106,23 @@
         .then(() => { FB.listed = true; })
         .catch((e) => console.warn('Could not publish directory entry:', e));
     }
+    // Be on that list too (profiles/{uid}.email), so people who only use Cadence can be picked.
+    // An existing name chosen in Formwright is left alone.
+    if (me.email && me.verified) {
+      const pref = db.collection('profiles').doc(uid);
+      pref.get().then((x) => {
+        if (!x.exists) return pref.set({ displayName: String(me.name || me.email.split('@')[0]).slice(0, 120), email: user.email });
+        if (!x.get('email')) return pref.set({ email: user.email }, { merge: true });
+        return null;
+      }).catch((e) => console.warn('Could not add you to the people list:', e && e.code));
+    }
+    // Everyone with an account (Formwright's people list): for the "Assigned to" pills.
+    FB.listPeople = async () => {
+      const snap = await db.collection('profiles').get();
+      return snap.docs.map((d) => { const x = d.data() || {}; return { uid: d.id, name: String(x.displayName || '').trim(), email: String(x.email || '').trim().toLowerCase(), removed: !!x.removed }; })
+        .filter((p) => p.email && !p.removed)
+        .sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email));
+    };
     FB.findPerson = async (email) => {
       email = String(email || '').trim().toLowerCase();
       if (!email) return null;

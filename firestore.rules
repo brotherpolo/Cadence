@@ -688,7 +688,8 @@ service cloud.firestore {
     }
 
     match /profiles/{userId} {
-      allow read: if isMember() || (signedIn() && userId == request.auth.uid);
+      // Formwright members, and Cadence users (its "Assigned to" lists everyone), read the names
+      allow read: if isMember() || cadenceOk() || (signedIn() && userId == request.auth.uid);
       allow create, update: if signedIn() && userId == request.auth.uid
         && request.resource.data.keys().hasOnly(['displayName', 'photoURL', 'homeDashboard', 'email'])
         // email: your own sign-in address, so others can give you Cadence tasks from Formwright
