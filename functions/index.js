@@ -36,6 +36,7 @@ const { removeAccount } = require('./remove');
 const autonumber = require('./autonumber');
 const { sendRecordEmail, deleteSentEmails, emailLine } = require('./email');
 const audit = require('./audit');
+const overdue = require('./overdue');
 const cm = require('./comments');
 const automate = require('./automate');
 const fw = require('./fwkit.cjs');
@@ -705,6 +706,138 @@ async function stageNotify(recordId, before, after) {
     }
   }
 }
+
+/* ---------- Formwright → a dashboard → Email schedule ---------- */
+// dashMails/{dashboardId}: { on, freq, day, hour, to: { people, roles, addresses } }, set by administrators.
+// Checked at the top of every hour (Formwright's time zone); each slot is sent once (lastSlot).
+// The numbers are worked out from every record, as an administrator sees them.
+async function dashMailBuild(dashboardId, schedule) {
+  const dash = recData(await db.collection('dashboards').doc(dashboardId).get());
+  if (!dash) return null;
+  const ids = [...new Set((dash.tiles || []).map((t) => t.report).filter(Boolean))];
+  const reps = ids.length ? await db.getAll(...ids.map((id) => db.collection('reportDefs').doc(id))) : [];
+  const reports = new Map(reps.filter((d) => d.exists).map((d) => [d.id, d.data()]));
+  const forms = await allForms();
+  const records = (await db.collection('records').get()).docs.map(recData);
+  const people = await allPeople();
+  const k = fw.makeKit({ forms, records });
+  const profiles = Object.fromEntries([...people.entries()].map(([u, p]) => [u, { displayName: p.name, email: p.email }]));
+  const c = { forms, records, profiles, formById: k.formById, recById: k.recById, valOf: (f, r, form) => k.valOf(f, r, form), fmt: (f, v) => k.fmt(f, v), recTitle: (r) => k.recTitle(r, k.formById(r.formId)) };
+  const base = String(process.env.FORMWRIGHT_URL || '').trim().replace(/#.*$/, '').replace(/\/+$/, '');
+  const brand = (await db.collection('settings').doc('exports').get()).data() || {};
+  const prevTz = process.env.TZ; process.env.TZ = TZ; // "this month" and the date in Formwright's time zone
+  try {
+    return { mail: fw.dashEmail(c, dash, reports, { now: Date.now(), link: /^https?:\/\//i.test(base) ? `${base}/#/dashboard/${encodeURIComponent(dashboardId)}` : '', schedule, company: brand.companyName || '' }), people, brand };
+  } finally { if (prevTz === undefined) delete process.env.TZ; else process.env.TZ = prevTz; }
+}
+const holdersOf = async (roleIds) => {
+  const m = new Map();
+  for (const r of roleIds.slice(0, 10)) m.set(r, (await db.collection('users').where('roles', 'array-contains', r).get()).docs.map((d) => d.id));
+  return (r) => m.get(r) || [];
+};
+exports.dashMailer = onSchedule({ schedule: '0 * * * *', timeZone: TZ, secrets: [GMAIL_APP_PASSWORD], memory: '1GiB', timeoutSeconds: 540, retryCount: 0 }, async () => {
+  const parts = fw.partsIn(Date.now(), TZ);
+  const s = await db.collection('dashMails').where('on', '==', true).get();
+  for (const d of s.docs) {
+    const sch = d.data();
+    const slot = fw.dueSlot(sch, parts);
+    if (!slot) continue;
+    // claim the slot first, so a retry or an overlapping run can't send twice
+    const claimed = await db.runTransaction(async (tx) => { const cur = await tx.get(d.ref); if (!cur.exists || cur.get('lastSlot') === slot) return false; tx.update(d.ref, { lastSlot: slot }); return true; });
+    if (!claimed) continue;
+    let status = 'sent', to = [];
+    try {
+      const g = gmail();
+      if (!g.ready) throw Object.assign(new Error('Gmail isn’t set up'), { quiet: true });
+      const built = await dashMailBuild(d.id, sch);
+      if (!built) { status = 'the dashboard was deleted'; }
+      else {
+        to = fw.recipients(sch, built.people, await holdersOf((sch.to && sch.to.roles) || []));
+        if (!to.length) status = 'nobody to send to';
+        else await mailer.sendMail({ from: { name: built.brand.companyName || g.user, address: g.user }, bcc: to, subject: built.mail.subject, text: built.mail.text, html: built.mail.html });
+      }
+    } catch (e) { status = 'not sent: ' + (e.message || 'error').slice(0, 120); if (!e.quiet) logger.error('dashboard email failed', d.id, e); }
+    await d.ref.update({ lastAt: Date.now(), lastStatus: status, lastTo: to.slice(0, 50) });
+  }
+});
+// "Send a test to me" (administrators): the dashboard as it would be emailed, to the caller only
+exports.dashMailTest = onCall({ region: 'us-central1', timeoutSeconds: 120, memory: '1GiB', secrets: [GMAIL_APP_PASSWORD] }, async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError('unauthenticated', 'Sign in first.');
+  const me = await db.collection('users').doc(uid).get();
+  if (!me.exists || me.get('role') !== 'admin') throw new HttpsError('permission-denied', 'Only administrators can email dashboards.');
+  const id = request.data && request.data.dashboardId;
+  if (typeof id !== 'string' || !id) throw new HttpsError('invalid-argument', 'Say which dashboard.');
+  const g = gmail();
+  if (!g.ready) throw new HttpsError('failed-precondition', 'Gmail isn’t set up for Formwright yet (GMAIL_USER and the app password).');
+  try {
+    const sch = (await db.collection('dashMails').doc(id).get()).data() || null;
+    const built = await dashMailBuild(id, sch && sch.on ? sch : null);
+    if (!built) throw new HttpsError('not-found', 'That dashboard was deleted.');
+    const to = String(me.get('email') || request.auth.token.email || '').toLowerCase();
+    if (!to) throw new HttpsError('failed-precondition', 'Your account has no email address.');
+    await mailer.sendMail({ from: { name: built.brand.companyName || g.user, address: g.user }, to, subject: '[Test] ' + built.mail.subject, text: built.mail.text, html: built.mail.html });
+    return { to };
+  } catch (e) {
+    if (e instanceof HttpsError) throw e;
+    logger.error('dashboard email test failed', e);
+    throw new HttpsError('internal', 'The test didn’t send. Try again.');
+  }
+});
+
+/* ---------- workflows: overdue stages (a reminder, then telling someone else) ---------- */
+// Each working-day morning at 7:30. Settings are per stage in the form designer (stage.overdue);
+// what was sent for each arrival at a stage is kept in stageOverdue/{recordId} (server only).
+exports.stageOverdue = onSchedule({ schedule: '30 7 * * 1-5', timeZone: TZ, secrets: [GMAIL_APP_PASSWORD], memory: '512MiB', timeoutSeconds: 540, retryCount: 0 }, async () => {
+  const today = fw.dayKey(Date.now(), TZ);
+  const forms = (await allForms()).filter((f) => fw.wfOn(f) && (f.workflow.stages || []).some((s) => s.overdue && (s.overdue.remind || s.overdue.escalateDays != null)));
+  if (!forms.length) return;
+  const g = gmail();
+  if (!g.ready) { logger.warn('overdue: Gmail isn’t set up, so no emails'); return; }
+  const people = await allPeople();
+  const brand = (await db.collection('settings').doc('exports').get()).data() || {};
+  const emailsOf = (uids) => [...new Set(uids.map((u) => people.get(u)?.email).filter(Boolean))];
+  const usersWhere = async (field, op, v) => (await db.collection('users').where(field, op, v).get()).docs.map((d) => d.id);
+  for (const form of forms) {
+    const recs = (await db.collection('records').where('formId', '==', form.id).get()).docs.map(recData).filter((r) => r.stage && r.stageAt);
+    const k = fw.makeKit({ forms: await allForms(), records: recs });
+    for (const rec of recs) {
+      try {
+        const st = (form.workflow.stages || []).find((s) => s.id === rec.stage);
+        if (!st || !st.overdue) continue;
+        const ref = db.collection('stageOverdue').doc(rec.id);
+        const mark = (await ref.get()).data() || null;
+        const step = fw.overdueStep(st, fw.dayKey(rec.stageAt, TZ), today, overdue.sentFor(mark, rec));
+        if (!step.remind && !step.escalate) continue;
+        // who has it now
+        let holders = rec.assignee ? [rec.assignee] : [];
+        let roleName = '', groupName = '';
+        if (!holders.length && rec.assigneeGroup) { holders = await usersWhere('groups', 'array-contains', rec.assigneeGroup); groupName = ((await db.collection('groups').doc(rec.assigneeGroup).get()).data() || {}).name || 'a group'; }
+        if (!holders.length && rec.assigneeRole) { holders = await usersWhere('roles', 'array-contains', rec.assigneeRole); roleName = ((await db.collection('roles').doc(rec.assigneeRole).get()).data() || {}).name || 'a role'; }
+        const holder = overdue.holderText({ person: rec.assignee ? people.get(rec.assignee)?.name || people.get(rec.assignee)?.email : '', roleName, groupName });
+        const base = { item: fw.itemName(form), title: k.recTitle(rec, form), stage: st.name || 'its stage', due: step.due, late: fw.daysOverdue(step.due, today), link: cm.recordLink(process.env.FORMWRIGHT_URL, rec.id) };
+        const send = async (to, mail) => { if (to.length) await mailer.sendMail({ from: { name: brand.companyName || g.user, address: g.user }, to: to.slice(0, 20), subject: mail.subject, text: mail.text, html: mail.html }); };
+        const fresh = !mark || mark.stage !== rec.stage || (mark.stageAt || 0) !== (rec.stageAt || 0);
+        const out = fresh ? { stage: rec.stage, stageAt: rec.stageAt, remindedAt: null, escalatedAt: null } : { ...mark };
+        if (step.remind) {
+          const to = emailsOf(holders.slice(0, 20));
+          await send(to, overdue.reminderEmail(base));
+          out.remindedAt = Date.now();
+          await db.collection('audit').add(overdue.auditEntry({ recordId: rec.id, rec, formName: form.name, title: base.title, stage: base.stage, kind: 'remind', to, now: Date.now() }));
+        }
+        if (step.escalate) {
+          const e = st.overdue.escalateTo || { type: 'admins' };
+          const uids = e.type === 'role' && e.role ? await usersWhere('roles', 'array-contains', e.role) : e.type === 'person' && e.person ? [e.person] : await usersWhere('role', '==', 'admin');
+          const to = emailsOf(uids.slice(0, 20));
+          await send(to, overdue.escalationEmail({ ...base, holder }));
+          out.escalatedAt = Date.now();
+          await db.collection('audit').add(overdue.auditEntry({ recordId: rec.id, rec, formName: form.name, title: base.title, stage: base.stage, kind: 'escalate', to, now: Date.now() }));
+        }
+        await ref.set(out);
+      } catch (e) { logger.error('overdue check failed', rec.id, e); }
+    }
+  }
+});
 
 exports.automationOnWrite = onDocumentWrittenWithAuthContext({ document: 'records/{recordId}', secrets: [GMAIL_APP_PASSWORD], memory: '512MiB', timeoutSeconds: 120 }, async (event) => {
   const [before, after] = docs(event);

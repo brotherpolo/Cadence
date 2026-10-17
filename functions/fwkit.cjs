@@ -23,15 +23,22 @@ __export(entry_exports, {
   ACTION_LABEL: () => ACTION_LABEL,
   COLORS: () => COLORS,
   assigneeFor: () => assigneeFor,
+  dashEmail: () => dashEmail,
   dayKey: () => dayKey,
+  daysOverdue: () => daysOverdue,
   drawPdf: () => drawPdf,
+  dueSlot: () => dueSlot,
   fileName: () => fileName,
   fillTemplate: () => fillTemplate,
   firstStage: () => firstStage,
   itemName: () => itemName,
   makeKit: () => makeKit,
   opOf: () => opOf,
+  overdueStep: () => overdueStep,
+  partsIn: () => partsIn,
+  recipients: () => recipients,
   ruleFires: () => ruleFires,
+  scheduleText: () => scheduleText,
   stageDue: () => stageDue,
   testCond: () => testCond,
   wfOn: () => wfOn
@@ -321,7 +328,7 @@ function fieldKind(type) {
   return "text";
 }
 var fsize = (n) => n < 1024 ? n + " B" : n < 1048576 ? (n / 1024).toFixed(0) + " KB" : (n / 1048576).toFixed(1) + " MB";
-function fieldItem(f, v, text) {
+function fieldItem(f, v, text, rich = null) {
   const kind = fieldKind(f.type);
   const width = f.width === "half" && kind !== "long" ? "half" : "full";
   const empty = v == null || v === "" || Array.isArray(v) && !v.length;
@@ -342,7 +349,7 @@ function fieldItem(f, v, text) {
     case "color":
       return { ...base, hex: /^#[0-9a-f]{6}$/i.test(String(v)) ? String(v) : "", text: String(v) };
     default:
-      return base;
+      return kind === "long" && rich && rich.length ? { ...base, rich } : base;
   }
 }
 function fieldRows(items) {
@@ -532,6 +539,114 @@ function planTable(cols, rows, measure, { spaces, sizes = [9.5, 8.5, 7.5, 7], pa
   const sp = spaces[spaces.length - 1], size = sizes[sizes.length - 1];
   const widths = colWidths(cols.map((c) => ({ label: c.label })), rows, (t, b) => measure(size, b)(t), sp.avail, { min: 30, cap, pad });
   return { size, widths, landscape: !!sp.landscape, broken: true };
+}
+function layoutRich(blocks, width, measure, { size = 10.5, lh = 14 } = {}) {
+  const STY = { p: { size, lh, b: false, gap: 4 }, h3: { size: size * 1.3, lh: lh * 1.3, b: true, gap: 4, before: 4 }, h4: { size: size * 1.08, lh: lh * 1.08, b: true, gap: 3, before: 2 }, quote: { size, lh, b: false, gap: 4, indent: 11, mute: true }, li: { size, lh, b: false, gap: 2, indent: 15 } };
+  const out = [];
+  (blocks || []).forEach((bk, bi) => {
+    const st = STY[bk.t] || STY.p;
+    const indent = st.indent || 0, avail = Math.max(20, width - indent);
+    const next = blocks[bi + 1];
+    const gap = !next ? 0 : bk.t === "li" && next.t === "li" ? st.gap : (STY[bk.t] || STY.p).gap + 1;
+    const lines = [];
+    let line = { items: [], w: 0 };
+    const push = () => {
+      lines.push(line);
+      line = { items: [], w: 0 };
+    };
+    const fk = (r) => (r.b || st.b) && r.i ? "bi" : r.b || st.b ? "b" : r.i ? "i" : "r";
+    const put = (s, r) => {
+      const font = fk(r), w = measure(font, st.size, s);
+      const last = line.items[line.items.length - 1];
+      const same = last && last.font === font && last.c === r.c && last.hl === r.h && !!last.u === !!(r.u || r.a) && !!last.st === !!r.x && last.a === r.a;
+      if (same) {
+        last.s += s;
+        last.w += w;
+      } else line.items.push({ s, x: indent + line.w, w, font, size: st.size, c: r.c || "", hl: r.h || "", u: !!(r.u || r.a), st: !!r.x, a: r.a || "", mute: !!st.mute });
+      line.w += w;
+    };
+    bk.runs.forEach((r) => {
+      String(r.s).split(/(\n| +)/).forEach((tok) => {
+        if (!tok) return;
+        if (tok === "\n") {
+          push();
+          return;
+        }
+        if (/^ +$/.test(tok)) {
+          if (line.items.length) put(tok, r);
+          return;
+        }
+        let w = measure(fk(r), st.size, tok);
+        if (line.w + w > avail && line.items.length) {
+          const l = line.items[line.items.length - 1];
+          const t = l.s.replace(/ +$/, "");
+          if (t !== l.s) {
+            const cut = measure(l.font, st.size, l.s) - measure(l.font, st.size, t);
+            l.s = t;
+            l.w -= cut;
+            line.w -= cut;
+            if (!l.s) line.items.pop();
+          }
+          push();
+        }
+        let rest = tok;
+        while (w > avail && rest.length > 1) {
+          let n = rest.length - 1;
+          while (n > 1 && measure(fk(r), st.size, rest.slice(0, n)) > avail - line.w) n--;
+          put(rest.slice(0, n), r);
+          push();
+          rest = rest.slice(n);
+          w = measure(fk(r), st.size, rest);
+        }
+        put(rest, r);
+      });
+    });
+    push();
+    lines.forEach((l, i) => {
+      const first = i === 0, lastL = i === lines.length - 1;
+      const top = first && bi > 0 ? st.before || 0 : 0;
+      out.push({
+        h: st.lh + top + (lastL ? gap : 0),
+        base: top + st.size * 0.82 + (st.lh - st.size) / 2,
+        items: l.items,
+        bar: bk.t === "quote",
+        barH: st.lh,
+        prefix: first && bk.t === "li" ? { s: bk.list === "ol" ? `${bk.n || 1}.` : "\u2022", size: st.size } : null
+      });
+    });
+  });
+  return out;
+}
+
+// src/fieldnames.js
+var lc = (s) => String(s ?? "").trim().toLowerCase();
+var sysOf = (f) => String(f?.sysName || "").trim() || String(f?.label || "").trim();
+function fieldByName(form, name) {
+  const n = lc(name);
+  const fs = (form?.fields || []).filter((f) => f.type !== "heading");
+  return fs.find((f) => lc(sysOf(f)) === n) || fs.find((f) => f.id === name) || (() => {
+    const c = fs.filter((f) => lc(f.label) === n);
+    return c.length === 1 ? c[0] : void 0;
+  })();
+}
+function sharedCaptions(fields) {
+  const n = /* @__PURE__ */ new Map();
+  (fields || []).forEach((f) => {
+    if (f.type !== "heading") n.set(lc(f.label), (n.get(lc(f.label)) || 0) + 1);
+  });
+  return new Set([...n].filter(([, c]) => c > 1).map(([k]) => k));
+}
+function shownName(form, f) {
+  const label = String(f?.label || "Untitled field");
+  if (!sharedCaptions(form?.fields).has(lc(label))) return label;
+  let h = null;
+  for (const x of form.fields || []) {
+    if (x.type === "heading") h = x;
+    if (x.id === f.id) break;
+  }
+  const sys = sysOf(f);
+  const why = lc(sys) !== lc(label) ? sys : h ? h.label : "";
+  return why ? `${label} (${why})` : label;
 }
 
 // src/foldlogic.js
@@ -757,6 +872,235 @@ function once(rules, fields, byId, under, look) {
 var sameSet = (a, b) => a.size === b.size && [...a].every((x) => b.has(x));
 var NO_RULES = { hidden: /* @__PURE__ */ new Set(), hiddenFields: /* @__PURE__ */ new Set(), cleared: /* @__PURE__ */ new Set(), required: (f) => !!(f && f.required && holdsValue(f)), fired: /* @__PURE__ */ new Map(), blank: /* @__PURE__ */ new Set() };
 
+// src/richtext.js
+var RICH_KEY = "_rich";
+var ENT = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: "\xA0" };
+var decode = (s) => s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e) => {
+  if (e[0] === "#") {
+    const n = e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+    return Number.isFinite(n) && n > 0 && n < 1114112 ? String.fromCodePoint(n) : "";
+  }
+  return ENT[e.toLowerCase()] ?? m;
+});
+function cleanColor(v) {
+  const s = String(v || "").trim().toLowerCase();
+  let m = /^#([0-9a-f]{3})$/.exec(s);
+  if (m) return "#" + [...m[1]].map((c) => c + c).join("");
+  if (/^#[0-9a-f]{6}$/.test(s)) return s;
+  m = /^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*(?:,\s*([\d.]+)\s*)?\)$/.exec(s);
+  if (m) {
+    if (m[4] !== void 0 && Number(m[4]) === 0) return "";
+    return "#" + [m[1], m[2], m[3]].map((n) => Math.min(255, Number(n)).toString(16).padStart(2, "0")).join("");
+  }
+  return "";
+}
+function cleanHref(v) {
+  const s = String(v || "").trim();
+  if (/^(https?:|mailto:|tel:)/i.test(s)) return s.slice(0, 2e3);
+  if (/^www\./i.test(s)) return "https://" + s.slice(0, 2e3);
+  return "";
+}
+function attrs(src) {
+  const a = {};
+  const re = /([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*(?:=\s*("([^"]*)"|'([^']*)'|([^\s"'>]+)))?/g;
+  let m;
+  while (m = re.exec(src)) a[m[1].toLowerCase()] = decode(m[3] ?? m[4] ?? m[5] ?? "");
+  return a;
+}
+function styleOf(css) {
+  const o = {};
+  String(css || "").split(";").forEach((d) => {
+    const i = d.indexOf(":");
+    if (i > 0) o[d.slice(0, i).trim().toLowerCase()] = d.slice(i + 1).trim().toLowerCase();
+  });
+  return o;
+}
+var BLOCKS = /* @__PURE__ */ new Set(["p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "li", "ul", "ol", "tr", "pre", "section", "article", "header", "footer", "table", "dl", "dt", "dd"]);
+var SKIP = /* @__PURE__ */ new Set(["script", "style", "head", "title", "template", "noscript", "iframe", "object", "svg", "math", "xml"]);
+var VOID = /* @__PURE__ */ new Set(["br", "img", "hr", "input", "meta", "link", "col", "wbr", "area", "base", "source"]);
+function parseRich(html) {
+  const blocks = [];
+  const ctx = [];
+  let cur = null;
+  const fmtNow = () => {
+    const f = {};
+    ctx.forEach((c) => {
+      if (c.fmt) Object.assign(f, c.fmt);
+    });
+    return f;
+  };
+  const typeNow = () => {
+    let li = null, quote = false, head = "";
+    ctx.forEach((c) => {
+      if (c.tag === "li") li = c;
+      if (c.tag === "blockquote") quote = true;
+      if (/^h[1-6]$/.test(c.tag)) head = +c.tag[1] <= 3 ? "h3" : "h4";
+    });
+    if (li) return { t: "li", list: li.list };
+    if (head) return { t: head };
+    return { t: quote ? "quote" : "p" };
+  };
+  const flush = () => {
+    if (!cur) return;
+    const last = cur.runs[cur.runs.length - 1];
+    if (last && last.s.endsWith("\n")) {
+      last.s = last.s.slice(0, -1);
+      if (!last.s) cur.runs.pop();
+    }
+    if (cur.runs.length) {
+      cur.runs[0].s = cur.runs[0].s.replace(/^ +/, "");
+      const l = cur.runs[cur.runs.length - 1];
+      l.s = l.s.replace(/ +$/, "");
+      cur.runs = cur.runs.filter((r) => r.s);
+    }
+    blocks.push(cur);
+    cur = null;
+  };
+  const start = () => {
+    if (!cur) cur = { ...typeNow(), runs: [], _open: true };
+  };
+  const add = (s) => {
+    if (!s) return;
+    start();
+    const f = fmtNow();
+    const prev = cur.runs[cur.runs.length - 1];
+    if (prev && sameFmt(prev, f)) prev.s += s;
+    else cur.runs.push({ s, ...f });
+  };
+  const listOf = () => {
+    for (let i = ctx.length - 1; i >= 0; i--) if (ctx[i].tag === "ul" || ctx[i].tag === "ol") return ctx[i].tag;
+    return "ul";
+  };
+  const re = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<![^>]*>|<\?[^>]*>|<(\/?)([a-zA-Z][a-zA-Z0-9]*)([^>]*?)(\/?)>|[^<]+|</g;
+  const src = String(html ?? "");
+  let m, skip = "";
+  while (m = re.exec(src)) {
+    const [all, close, rawTag, rest, selfClose] = m;
+    if (!rawTag) {
+      if (skip || all[0] === "<" && all.length > 1) continue;
+      const t = decode(all.replace(/[ \t\r\n\f]+/g, " ")).replace(/ /g, " ");
+      if (t === " " && !cur) continue;
+      add(t);
+      continue;
+    }
+    const tag = rawTag.toLowerCase();
+    if (skip) {
+      if (close && tag === skip) skip = "";
+      continue;
+    }
+    if (SKIP.has(tag)) {
+      if (!close && !selfClose) skip = tag;
+      continue;
+    }
+    if (close) {
+      let i = ctx.length - 1;
+      while (i >= 0 && ctx[i].tag !== tag) i--;
+      if (i < 0) continue;
+      const wasBlock = ctx.slice(i).some((c) => c.block);
+      ctx.length = i;
+      if (wasBlock) flush();
+      continue;
+    }
+    if (tag === "br") {
+      add("\n");
+      continue;
+    }
+    if (tag === "td" || tag === "th") {
+      if (cur && cur.runs.length) add(" ");
+      continue;
+    }
+    if (VOID.has(tag)) continue;
+    const a = attrs(rest);
+    const st = styleOf(a.style);
+    const fmt = {};
+    if (tag === "b" || tag === "strong") fmt.b = true;
+    if (tag === "i" || tag === "em") fmt.i = true;
+    if (tag === "u" || tag === "ins") fmt.u = true;
+    if (tag === "s" || tag === "strike" || tag === "del") fmt.x = true;
+    if (tag === "a") {
+      const h = cleanHref(a.href);
+      if (h) fmt.a = h;
+    }
+    if (tag === "font" && a.color) {
+      const c = cleanColor(a.color);
+      if (c) fmt.c = c;
+    }
+    if (st["font-weight"] && (st["font-weight"] === "bold" || st["font-weight"] === "bolder" || Number(st["font-weight"]) >= 600)) fmt.b = true;
+    if (st["font-weight"] && (st["font-weight"] === "normal" || Number(st["font-weight"]) && Number(st["font-weight"]) < 600)) fmt.b = false;
+    if (st["font-style"] === "italic") fmt.i = true;
+    if (st["font-style"] === "normal") fmt.i = false;
+    const deco = st["text-decoration"] || st["text-decoration-line"] || "";
+    if (/underline/.test(deco)) fmt.u = true;
+    if (/line-through/.test(deco)) fmt.x = true;
+    if (st.color) {
+      const c = cleanColor(st.color);
+      if (c) fmt.c = c;
+    }
+    const bg = st["background-color"] || st.background;
+    if (bg) {
+      const c = cleanColor(bg);
+      if (c && c !== "#ffffff") fmt.h = c;
+    }
+    const block = BLOCKS.has(tag);
+    const entry = { tag, fmt: Object.keys(fmt).length ? fmt : null, block };
+    if (tag === "li") entry.list = listOf();
+    if (block) flush();
+    if (!selfClose) ctx.push(entry);
+  }
+  flush();
+  const out = [];
+  blocks.forEach((b) => {
+    delete b._open;
+    b.runs = b.runs.map(tidyRun).filter((r) => r.s);
+    if (b.t !== "li") delete b.list;
+    const prev = out[out.length - 1];
+    if (!b.runs.length && b.t !== "p") b.t = "p";
+    if (!b.runs.length && prev && !prev.runs.length) return;
+    out.push(b);
+  });
+  while (out.length && !out[0].runs.length) out.shift();
+  while (out.length && !out[out.length - 1].runs.length) out.pop();
+  number(out);
+  return out;
+}
+function tidyRun(r) {
+  const o = { s: r.s };
+  ["b", "i", "u", "x"].forEach((k) => {
+    if (r[k]) o[k] = true;
+  });
+  if (r.a) o.a = r.a;
+  if (r.c && r.c !== "#141826" && r.c !== "#000000") o.c = r.c;
+  if (r.h) o.h = r.h;
+  return o;
+}
+function sameFmt(a, b) {
+  return ["b", "i", "u", "x", "a", "c", "h"].every((k) => (a[k] || false) === (b[k] || false));
+}
+function number(blocks) {
+  let n = 0, prev = null;
+  blocks.forEach((b) => {
+    if (b.t === "li" && b.list === "ol") {
+      n = prev && prev.t === "li" && prev.list === "ol" ? n + 1 : 1;
+      b.n = n;
+    } else delete b.n;
+    prev = b;
+  });
+}
+function toText(blocks) {
+  return (blocks || []).map((b) => {
+    const s = b.runs.map((r) => r.s).join("");
+    if (b.t === "li") return (b.list === "ol" ? `${b.n || 1}. ` : "\u2022 ") + s;
+    return s;
+  }).join("\n");
+}
+var norm = (s) => String(s ?? "").replace(/\r\n?/g, "\n").replace(/ /g, " ").replace(/[ \t]+\n/g, "\n").trim();
+function richBlocks(values, fid) {
+  const html = values?.[RICH_KEY]?.[fid];
+  if (!html || typeof html !== "string") return null;
+  const b = parseRich(html);
+  return norm(toText(b)) === norm(values[fid]) ? b : null;
+}
+
 // src/workflow.js
 var STAGE_FIELD = "_stage";
 var wfOn = (form) => !!(form?.workflow?.on && (form.workflow.stages || []).length);
@@ -792,11 +1136,13 @@ function stageView(form, stageId) {
 }
 function assigneeFor(stage, rec, moverId) {
   const a = stage?.assign || { type: "owner" };
-  if (a.type === "person" && a.person) return { assignee: a.person, assigneeGroup: null };
-  if (a.type === "group" && a.group) return { assignee: null, assigneeGroup: a.group };
-  if (a.type === "mover") return { assignee: moverId || rec?.ownerId || null, assigneeGroup: null };
-  if (a.type === "keep" && rec && (rec.assignee || rec.assigneeGroup)) return { assignee: rec.assignee || null, assigneeGroup: rec.assigneeGroup || null };
-  return { assignee: rec?.ownerId || moverId || null, assigneeGroup: null };
+  const one = (assignee, assigneeGroup = null, assigneeRole = null) => ({ assignee, assigneeGroup, assigneeRole });
+  if (a.type === "person" && a.person) return one(a.person);
+  if (a.type === "group" && a.group) return one(null, a.group);
+  if (a.type === "role" && a.role) return one(null, null, a.role);
+  if (a.type === "mover") return one(moverId || rec?.ownerId || null);
+  if (a.type === "keep" && rec && (rec.assignee || rec.assigneeGroup || rec.assigneeRole)) return one(rec.assignee || null, rec.assigneeGroup || null, rec.assigneeRole || null);
+  return one(rec?.ownerId || moverId || null);
 }
 var DAY = 864e5;
 var keyOf = (d) => d.toISOString().slice(0, 10);
@@ -819,12 +1165,34 @@ function stageDue(stage, arrivedKey) {
 function dayKey(ms, timeZone) {
   return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(ms));
 }
+function overdueStep(stage, arrivedKey, todayKey, sent = {}) {
+  const od = stage && stage.overdue;
+  const due = stageDue(stage, arrivedKey);
+  if (!od || !due || todayKey <= due) return { remind: false, escalate: false, due };
+  const escalateOn = od.escalateDays != null && od.escalateDays !== "" ? addWorkdays(addWorkdays(due, 1), Math.max(0, Math.round(+od.escalateDays) || 0)) : "";
+  return {
+    remind: !!od.remind && !sent.remind,
+    escalate: !!escalateOn && todayKey >= escalateOn && !sent.escalate,
+    due,
+    escalateOn
+  };
+}
+function daysOverdue(dueKey, todayKey) {
+  if (!dueKey || todayKey <= dueKey) return 0;
+  let n = 0, k = dueKey;
+  while (n < 400) {
+    k = addWorkdays(k, 1);
+    if (k > todayKey) break;
+    n++;
+  }
+  return n;
+}
 
 // src/server/recordkit.js
 var POPUP = /* @__PURE__ */ new Set(["textarea", "file", "image", "signature", "location", "multiselect"]);
 var COLORS = ["#3346c8", "#0f7b6c", "#b4531a", "#8a3fb8", "#b42367", "#3d6b1f", "#56607a", "#0b6aa2"];
 var isEmpty2 = (v) => v == null || v === "" || Array.isArray(v) && !v.length || typeof v === "object" && !Array.isArray(v) && !Object.values(v).some((x) => x != null && x !== "");
-var lc = (s) => String(s || "").trim().toLowerCase();
+var lc2 = (s) => String(s || "").trim().toLowerCase();
 var itemName = (f) => (f?.itemName || "").trim() || (f?.name || "Record").replace(/s$/i, "");
 function makeKit({ forms = [], records = [], locale = "en-CA", timeZone = "America/Toronto" } = {}) {
   const formMap = new Map(forms.map((f) => [f.id, f]));
@@ -839,7 +1207,7 @@ function makeKit({ forms = [], records = [], locale = "en-CA", timeZone = "Ameri
   const formById = (id) => formMap.get(id);
   const recById = (id) => recMap.get(id);
   const childrenOf = (id, formId) => (kids.get(id) || []).filter((r) => !formId || r.formId === formId);
-  const titleFieldOf = (form) => {
+  const titleFieldOf2 = (form) => {
     const fs = form?.fields || [];
     return fs.find((f) => f.id === form.titleField) || fs.find((f) => ["text", "email", "phone", "url"].includes(f.type)) || fs.find((f) => f.type !== "heading");
   };
@@ -912,10 +1280,6 @@ function makeKit({ forms = [], records = [], locale = "en-CA", timeZone = "Ameri
       return String(v);
     }
   }
-  const fieldByName = (form, name) => {
-    const n = lc(name);
-    return (form?.fields || []).find((f) => f.type !== "heading" && (lc(f.label) === n || f.id === name));
-  };
   function rawFor(f, rec, form, depth) {
     if (f.type === "formula") return evalFormula(form, f, rec, depth + 1);
     const v = f.type === "autonumber" ? rec.nums?.[f.id] : rec.values?.[f.id];
@@ -946,7 +1310,7 @@ function makeKit({ forms = [], records = [], locale = "en-CA", timeZone = "Ameri
           if (!pg) throw FX.E("bad parent field");
           return rawFor(pg, p, pf, depth);
         }
-        const cf = forms.find((x) => lc(x.name) === lc(a[0]));
+        const cf = forms.find((x) => lc2(x.name) === lc2(a[0]));
         if (!cf) throw FX.E("bad form");
         const ks = rec.id ? childrenOf(rec.id, cf.id) : [];
         if (fn === "CHILDCOUNT") return ks.length;
@@ -975,7 +1339,7 @@ function makeKit({ forms = [], records = [], locale = "en-CA", timeZone = "Ameri
   function recTitle(rec, form) {
     form = form || formById(rec.formId);
     if (!form) return "Untitled";
-    const f = titleFieldOf(form);
+    const f = titleFieldOf2(form);
     const t = f ? fmt(f, valOf(f, rec, form)) : "";
     return t || "Untitled " + itemName(form).toLowerCase();
   }
@@ -1013,7 +1377,7 @@ function makeKit({ forms = [], records = [], locale = "en-CA", timeZone = "Ameri
     const rs = rulesFor(form, rec), sv = stageView(form, rec.stage);
     const items = (form.fields || []).filter((f) => !rs.hiddenFields.has(f.id) && !rs.hidden.has("f:" + f.id) && !sv.hide.has(f.id) && !sv.keys.has("f:" + f.id)).map((f) => {
       const v = f.type === "heading" || rs.cleared.has(f.id) ? null : valOf(f, rec, form);
-      const it = fieldItem(f, v, f.type === "heading" ? "" : f.type === "rating" ? isEmpty2(v) ? "" : `${v} of ${f.max || 5}` : text(form, { ...rec, values: { ...rec.values, [f.id]: v } }, f));
+      const it = fieldItem(f, v, f.type === "heading" ? "" : f.type === "rating" ? isEmpty2(v) ? "" : `${v} of ${f.max || 5}` : text(form, { ...rec, values: { ...rec.values, [f.id]: v } }, f), f.type === "textarea" && v != null && !f.plain ? richBlocks(rec.values, f.id) : null);
       return it;
     });
     const sections = [];
@@ -1057,7 +1421,7 @@ function makeKit({ forms = [], records = [], locale = "en-CA", timeZone = "Ameri
           empty: `No ${cf.name.toLowerCase()}.`
         });
       } else {
-        const tf = titleFieldOf(cf);
+        const tf = titleFieldOf2(cf);
         const cols = usable.filter((f) => f.inList && f.id !== tf?.id && !POPUP.has(f.type)).slice(0, 4);
         sections.push({
           title: cf.name,
@@ -1078,7 +1442,7 @@ function makeKit({ forms = [], records = [], locale = "en-CA", timeZone = "Ameri
     ].filter(Boolean);
     return { accent: COLORS[(form.color ?? 0) % COLORS.length], formName: form.name, title: recTitle(rec, form), meta, parent: parent && pform ? `${pform.name}: ${recTitle(parent, pform)}` : null, items, sections, stamp };
   }
-  return { formById, recById, childrenOf, titleFieldOf, fmt, fmtCalc, valOf, recTitle, text, fieldText, getter, rulesFor, look, pdfModel };
+  return { formById, recById, childrenOf, titleFieldOf: titleFieldOf2, fmt, fmtCalc, valOf, recTitle, text, fieldText, getter, rulesFor, look, pdfModel };
 }
 
 // src/pdfdraw.js
@@ -1111,9 +1475,11 @@ async function drawPdf(L, model, imgs = /* @__PURE__ */ new Map()) {
   const F = await pdf.embedFont(StandardFonts.Helvetica);
   const B = await pdf.embedFont(StandardFonts.HelveticaBold);
   const I = await pdf.embedFont(StandardFonts.HelveticaOblique);
+  const BI = await pdf.embedFont(StandardFonts.HelveticaBoldOblique);
+  const FONT = { r: F, b: B, i: I, bi: BI };
   const chars = new Set(F.getCharacterSet());
   const T = (s) => safeText(s, (cp) => chars.has(cp));
-  const INK = rgb(0.1, 0.11, 0.14), MUTE = rgb(0.4, 0.43, 0.49), RULE = rgb(0.84, 0.85, 0.88);
+  const INK2 = rgb(0.1, 0.11, 0.14), MUTE = rgb(0.4, 0.43, 0.49), RULE = rgb(0.84, 0.85, 0.88);
   const FAINT = rgb(0.955, 0.96, 0.968), ACC = hexRgb(rgb, model.accent, rgb(0.2, 0.27, 0.78));
   const title = T(model.title || "Untitled");
   const brandName = T(model.brand?.name || "");
@@ -1136,7 +1502,7 @@ async function drawPdf(L, model, imgs = /* @__PURE__ */ new Map()) {
     while (s.length > 1 && font.widthOfTextAtSize(s + "\u2026", size) > w) s = s.slice(0, -1);
     return s.trimEnd() + "\u2026";
   };
-  const text = (s, x, yy, font, size, color = INK) => {
+  const text = (s, x, yy, font, size, color = INK2) => {
     if (s) page.drawText(s, { x, y: yy, font, size, color });
   };
   const rule = (yy, color = RULE, x = M, w = CW, t = 0.6) => page.drawLine({ start: { x, y: yy }, end: { x: x + w, y: yy }, thickness: t, color });
@@ -1171,7 +1537,7 @@ async function drawPdf(L, model, imgs = /* @__PURE__ */ new Map()) {
       const x = logo ? M + lw + 14 : M;
       const nm = one(brandName, B, size, CW - (x - M));
       const mid = logo ? TOP - lh / 2 - size * 0.35 : TOP - size;
-      text(nm, x, mid, B, size, INK);
+      text(nm, x, mid, B, size, INK2);
       lh = Math.max(lh, logo ? 0 : size + 2);
     }
     y = TOP - lh - 14;
@@ -1185,7 +1551,7 @@ async function drawPdf(L, model, imgs = /* @__PURE__ */ new Map()) {
   }
   wrapText(title, CW, widthOf(B, 20)).forEach((ln, i) => {
     if (i) y -= 24;
-    text(ln, M, y, B, 20, INK);
+    text(ln, M, y, B, 20, INK2);
   });
   y -= 18;
   const meta = T((model.meta || []).filter(Boolean).join("   \xB7   "));
@@ -1197,7 +1563,7 @@ async function drawPdf(L, model, imgs = /* @__PURE__ */ new Map()) {
     const p = T(model.parent);
     const lab = "Belongs to  ";
     text(lab, M, y, F, 9, MUTE);
-    text(one(p, B, 9, CW - F.widthOfTextAtSize(lab, 9)), M + F.widthOfTextAtSize(lab, 9), y, B, 9, INK);
+    text(one(p, B, 9, CW - F.widthOfTextAtSize(lab, 9)), M + F.widthOfTextAtSize(lab, 9), y, B, 9, INK2);
     y -= 13;
   }
   y -= 14;
@@ -1206,7 +1572,7 @@ async function drawPdf(L, model, imgs = /* @__PURE__ */ new Map()) {
     ensure(SEC + 70);
     if (y < TOP - 40) y -= 10;
     const lab = one(label, B, SEC, CW - 60);
-    text(lab, M, y, B, SEC, INK);
+    text(lab, M, y, B, SEC, INK2);
     if (extra) text(T(extra), M + B.widthOfTextAtSize(lab, SEC) + 8, y, F, 10, MUTE);
     y -= 8;
     page.drawRectangle({ x: M, y: y - 0.4, width: 26, height: 1.6, color: ACC });
@@ -1263,7 +1629,34 @@ async function drawPdf(L, model, imgs = /* @__PURE__ */ new Map()) {
       return { h: labH + VALH, draw: (x, top) => {
         drawLab(x, top);
         page.drawRectangle({ x, y: top - labH - 11, width: 11, height: 11, color: hexRgb(rgb, it.hex, MUTE), borderColor: RULE, borderWidth: 0.5 });
-        text(T(it.text), x + 16, top - labH - 10, F, VAL, INK);
+        text(T(it.text), x + 16, top - labH - 10, F, VAL, INK2);
+      } };
+    }
+    if (it.kind === "long" && it.rich) {
+      const blocks = it.rich.map((b) => ({ ...b, runs: b.runs.map((r) => ({ ...r, s: T(r.s) })) }));
+      const rl = layoutRich(blocks, w, (k, size, s) => FONT[k].widthOfTextAtSize(s, size), { size: VAL, lh: VALH });
+      const LINK = rgb(0.2, 0.27, 0.78);
+      const drawLine = (ln, x, top) => {
+        const bl = top - ln.base;
+        if (ln.bar) page.drawRectangle({ x: x + 1, y: top - ln.barH, width: 2, height: ln.barH, color: RULE });
+        if (ln.prefix) text(ln.prefix.s, x + 2, bl, F, ln.prefix.size, INK2);
+        ln.items.forEach((t) => {
+          const f = FONT[t.font], tw = f.widthOfTextAtSize(t.s, t.size);
+          const col = t.c ? hexRgb(rgb, t.c, INK2) : t.a ? LINK : t.mute ? MUTE : INK2;
+          if (t.hl) page.drawRectangle({ x: x + t.x, y: bl - t.size * 0.24, width: tw, height: t.size * 1.12, color: hexRgb(rgb, t.hl, FAINT) });
+          text(t.s, x + t.x, bl, f, t.size, col);
+          if (t.u) page.drawLine({ start: { x: x + t.x, y: bl - 1.3 }, end: { x: x + t.x + tw, y: bl - 1.3 }, thickness: 0.6, color: col });
+          if (t.st) page.drawLine({ start: { x: x + t.x, y: bl + t.size * 0.3 }, end: { x: x + t.x + tw, y: bl + t.size * 0.3 }, thickness: 0.6, color: col });
+        });
+      };
+      const h = rl.reduce((a, l) => a + l.h, 0);
+      return { h: labH + h, rich: rl, drawLine, labH, drawLab, draw: (x, top) => {
+        drawLab(x, top);
+        let yy = top - labH;
+        rl.forEach((ln) => {
+          drawLine(ln, x, yy);
+          yy -= ln.h;
+        });
       } };
     }
     let val = T(it.text);
@@ -1275,7 +1668,7 @@ async function drawPdf(L, model, imgs = /* @__PURE__ */ new Map()) {
     const lines = val ? wrapText(val, w, widthOf(font, VAL)) : [""];
     return { h: labH + lines.length * VALH, lines, labH, font, drawLab, draw: (x, top) => {
       drawLab(x, top);
-      lines.forEach((ln, i) => text(ln, x, top - labH - VAL - i * VALH + 1, font, VAL, INK));
+      lines.forEach((ln, i) => text(ln, x, top - labH - VAL - i * VALH + 1, font, VAL, INK2));
     } };
   }
   const halfW = (CW - GUTTER) / 2;
@@ -1287,6 +1680,19 @@ async function drawPdf(L, model, imgs = /* @__PURE__ */ new Map()) {
     const w = row.cells.length === 2 || row.cells[0].width === "half" ? halfW : CW;
     const cs = row.cells.map((it) => cell(it, w));
     const h = Math.max(...cs.map((c) => c.h));
+    if (cs.length === 1 && cs[0].rich && h > room()) {
+      const c = cs[0];
+      ensure(c.labH + VALH * 2);
+      c.drawLab(M, y);
+      y -= c.labH;
+      c.rich.forEach((ln) => {
+        if (ln.h > room()) newPage();
+        c.drawLine(ln, M, y);
+        y -= ln.h;
+      });
+      y -= ROWGAP;
+      return;
+    }
     if (cs.length === 1 && cs[0].lines && h > room()) {
       const c = cs[0];
       ensure(c.labH + VALH * 2);
@@ -1294,7 +1700,7 @@ async function drawPdf(L, model, imgs = /* @__PURE__ */ new Map()) {
       y -= c.labH;
       c.lines.forEach((ln) => {
         if (VALH > room()) newPage();
-        text(ln, M, y - VAL + 1, c.font, VAL, INK);
+        text(ln, M, y - VAL + 1, c.font, VAL, INK2);
         y -= VALH;
       });
       y -= ROWGAP;
@@ -1330,7 +1736,7 @@ async function drawPdf(L, model, imgs = /* @__PURE__ */ new Map()) {
     const wrapRow = (r, font) => r.map((c, i) => wrapText(c, Math.max(8, widths[i] - PX * 2), widthOf(font, size)));
     const head = wrapRow(cols.map((c) => T(c.label)), B);
     const headH = Math.max(...head.map((l) => l.length)) * lh + PY * 2;
-    const drawRowCells = (lines, font, top, color = INK) => {
+    const drawRowCells = (lines, font, top, color = INK2) => {
       let x = M;
       lines.forEach((ls, i) => {
         ls.forEach((ln, j) => {
@@ -1415,20 +1821,733 @@ function fillTemplate(tpl, ctx) {
     return m;
   }).replace(/[ \t]+\n/g, "\n").replace(/ {2,}/g, " ");
 }
+
+// src/reportlogic.js
+var GRID = 12;
+var MAX_ROWS = 4;
+var SYSTEM = [
+  { id: "_created", label: "Created on", type: "date", system: true },
+  { id: "_updated", label: "Last edited", type: "date", system: true },
+  { id: "_owner", label: "Created by", type: "owner", system: true }
+];
+function titleFieldOf(form) {
+  const fs = form.fields || [];
+  return fs.find((f) => f.id === form.titleField) || fs.find((f) => ["text", "email", "phone", "url"].includes(f.type)) || fs.find((f) => f.type !== "heading");
+}
+function reportFields(form) {
+  const own = (form.fields || []).filter((f) => !["heading", "signature"].includes(f.type));
+  return own.concat(SYSTEM);
+}
+function fieldOf(ctx, ref) {
+  if (!ref) return null;
+  const form = ctx.formById(ref.form);
+  if (!form) return null;
+  return reportFields(form).find((f) => f.id === ref.id) || null;
+}
+function kindOf2(f, form) {
+  if (!f) return "none";
+  if (["number", "decimal", "currency", "percent", "range", "rating"].includes(f.type)) return "num";
+  if (f.type === "formula") return f.format === "text" ? "other" : "num";
+  if (["date", "datetime"].includes(f.type)) return "date";
+  if (form && !f.system) {
+    const t = titleFieldOf(form);
+    if (t && t.id === f.id) return "key";
+  }
+  if (["select", "radio", "multiselect", "checkbox", "text", "relation", "owner", "color"].includes(f.type)) return "group";
+  return "other";
+}
+function parentsOf(ctx, formId) {
+  return ctx.forms.filter((f) => (f.children || []).some((c) => c.formId === formId)).map((f) => f.id);
+}
+function chainOf(ctx, formId) {
+  const out = [formId];
+  for (let i = 0; i < out.length; i++) parentsOf(ctx, out[i]).forEach((p) => {
+    if (!out.includes(p)) out.push(p);
+  });
+  return out;
+}
+function valueOf(ctx, rec, ref) {
+  let r = rec, guard = 0;
+  while (r && r.formId !== ref.form && guard++ < 10) r = r.parentId ? ctx.recById(r.parentId) : null;
+  if (!r) return void 0;
+  if (ref.id === "_created") return r.createdAt;
+  if (ref.id === "_updated") return r.updatedAt || r.createdAt;
+  if (ref.id === "_owner") return r.ownerId;
+  const form = ctx.formById(ref.form);
+  const f = form && (form.fields || []).find((x) => x.id === ref.id);
+  if (!f) return void 0;
+  if (f.type === "formula") {
+    const saved = r.values && r.values[f.id];
+    if (saved !== void 0 && saved !== null && saved !== "") return saved;
+    return ctx.valOf ? ctx.valOf(f, r, form) : void 0;
+  }
+  return r.values ? r.values[f.id] : void 0;
+}
+function timeOf(v) {
+  if (v == null || v === "") return null;
+  if (typeof v === "number") return v;
+  const s = String(v);
+  const t = new Date(s.length === 10 ? s + "T00:00" : s).getTime();
+  return isNaN(t) ? null : t;
+}
+function isEmptyVal(v) {
+  return v == null || v === "" || Array.isArray(v) && !v.length;
+}
+function textOf(ctx, f, v) {
+  if (f.type === "owner") return ctx.profiles && ctx.profiles[v] && ctx.profiles[v].displayName || (v ? "Someone" : "");
+  if (f.id === "_created" || f.id === "_updated") return v ? new Date(v).toLocaleDateString(void 0, { year: "numeric", month: "short", day: "numeric" }) : "";
+  if (isEmptyVal(v)) return "";
+  if (f.type === "checkbox") return v ? "Yes" : "No";
+  try {
+    return ctx.fmt ? String(ctx.fmt(f, v) ?? "") : String(v);
+  } catch (e) {
+    return String(v);
+  }
+}
+function measureOf(ctx, w, list2) {
+  const m = w.measure || { fn: "count" };
+  if (m.fn === "count" || !m.ref) return list2.length;
+  const nums = list2.map((r) => Number(valueOf(ctx, r, m.ref))).filter((n) => !isNaN(n) && n !== null);
+  const vals = list2.map((r) => valueOf(ctx, r, m.ref)).filter((v) => v !== null && v !== void 0 && v !== "" && !isNaN(Number(v))).map(Number);
+  const sum = vals.reduce((a, b) => a + b, 0);
+  if (m.fn === "avg") return vals.length ? sum / vals.length : null;
+  return nums.length ? sum : 0;
+}
+var INTERVALS = ["week", "month", "quarter", "year"];
+var MAX_BUCKETS = 400;
+var LAST_N = { week: 26, month: 12, quarter: 8, year: 5 };
+function periodStart(t, iv) {
+  const d = new Date(t), y = d.getFullYear(), m = d.getMonth();
+  if (iv === "week") return new Date(y, m, d.getDate() - (d.getDay() + 6) % 7).getTime();
+  if (iv === "quarter") return new Date(y, m - m % 3, 1).getTime();
+  if (iv === "year") return new Date(y, 0, 1).getTime();
+  return new Date(y, m, 1).getTime();
+}
+function periodNext(t, iv, k = 1) {
+  const d = new Date(t), y = d.getFullYear(), m = d.getMonth();
+  if (iv === "week") return new Date(y, m, d.getDate() + 7 * k).getTime();
+  if (iv === "quarter") return new Date(y, m + 3 * k, 1).getTime();
+  if (iv === "year") return new Date(y + k, 0, 1).getTime();
+  return new Date(y, m + k, 1).getTime();
+}
+function bucketsOf(ctx, w, list2, now, range) {
+  const iv = INTERVALS.includes(w.interval) ? w.interval : "week";
+  const times = list2.map((r) => timeOf(valueOf(ctx, r, w.time)));
+  const known = times.filter((t) => t != null);
+  const lo = known.length ? Math.min(...known) : null, hi = known.length ? Math.max(...known) : null;
+  let from = null, to = null;
+  if (range) {
+    from = range.from;
+    to = Math.min(range.to - 1, Math.max(now, range.from));
+  } else if (w.span === "custom") {
+    from = w.from ? timeOf(w.from) : lo;
+    to = w.to ? timeOf(w.to) + 864e5 - 1 : hi;
+  } else if (w.span === "fit") {
+    from = lo;
+    to = hi;
+  }
+  if (from == null || to == null || from > to) {
+    to = now;
+    from = periodNext(periodStart(now, iv), iv, -(LAST_N[iv] - 1));
+  }
+  const starts = [];
+  for (let s = periodStart(from, iv); s <= to && starts.length < 2e4; s = periodNext(s, iv)) starts.push(s);
+  const keep = starts.slice(-MAX_BUCKETS);
+  const out = keep.map((s) => ({ start: s, end: periodNext(s, iv), date: new Date(s), rows: [] }));
+  list2.forEach((r, i) => {
+    const t = times[i];
+    if (t == null || !out.length || t < out[0].start || t >= out[out.length - 1].end) return;
+    let a = 0, b = out.length - 1;
+    while (a < b) {
+      const mid = a + b + 1 >> 1;
+      if (out[mid].start <= t) a = mid;
+      else b = mid - 1;
+    }
+    out[a].rows.push(r);
+  });
+  return out.map(({ rows, ...x }) => ({ ...x, value: measureOf(ctx, w, rows) || 0 }));
+}
+function refLabel(ctx, ref, baseForm) {
+  const f = fieldOf(ctx, ref);
+  if (!f) return "Removed field";
+  const form = ctx.formById(ref.form);
+  const name = form ? shownName(form, f) : f.label;
+  if (ref.form === baseForm) return name;
+  return (form ? form.name : "?") + " \u203A " + name;
+}
+function dims(type) {
+  return type === "kpi" ? { cols: 3, rows: 1 } : type === "table" ? { cols: 12, rows: 3 } : { cols: 6, rows: 2 };
+}
+function defaultColumns(ctx, formId) {
+  const form = ctx.formById(formId);
+  if (!form) return [];
+  const t = titleFieldOf(form);
+  const cols = [];
+  if (t) cols.push({ form: formId, id: t.id });
+  const parent = parentsOf(ctx, formId)[0];
+  if (parent) {
+    const pt = titleFieldOf(ctx.formById(parent));
+    if (pt) cols.push({ form: parent, id: pt.id });
+  }
+  (form.fields || []).filter((f) => (!t || f.id !== t.id) && ["num", "group", "date"].includes(kindOf2(f, form)) && f.type !== "multiselect").slice(0, 5 - cols.length).forEach((f) => cols.push({ form: formId, id: f.id }));
+  return cols;
+}
+var clampCols = (c) => Math.min(GRID, Math.max(3, Math.round(c || 6)));
+var clampRows = (r) => Math.min(MAX_ROWS, Math.max(1, Math.round(r || 1)));
+function layout(widgets, pinned) {
+  const out = {};
+  const rows = [];
+  let cur = [], used = 0;
+  const close = () => {
+    if (cur.length) rows.push(cur);
+    cur = [];
+    used = 0;
+  };
+  widgets.forEach((w) => {
+    const c = clampCols(w.cols || dims(w.type).cols);
+    if (used + c > GRID) close();
+    cur.push({ w, c });
+    used += c;
+  });
+  close();
+  let r0 = 0;
+  rows.forEach((row, ri) => {
+    const left = GRID - row.reduce((a, x) => a + x.c, 0);
+    if (left > 0) {
+      const takers = row.filter((x) => x.w.id !== pinned);
+      const pool = takers.length ? takers : row;
+      const total = pool.reduce((a, x) => a + x.c, 0);
+      const shares = pool.map((x) => ({ x, exact: x.c / total * left }));
+      shares.forEach((s) => {
+        s.add = Math.floor(s.exact);
+      });
+      let rest = left - shares.reduce((a, s) => a + s.add, 0);
+      shares.slice().sort((a, b) => b.exact - b.add - (a.exact - a.add)).forEach((s) => {
+        if (rest > 0) {
+          s.add++;
+          rest--;
+        }
+      });
+      shares.forEach((s) => {
+        s.x.c += s.add;
+      });
+    }
+    const h = Math.max(...row.map((x) => clampRows(x.w.rows || dims(x.w.type).rows)));
+    let c0 = 0;
+    row.forEach((x) => {
+      out[x.w.id] = { c0, c: x.c, r0, h, row: ri };
+      c0 += x.c;
+    });
+    r0 += h;
+  });
+  out._rows = r0;
+  return out;
+}
+
+// src/dashlogic.js
+var PERIODS = [["all", "All time"], ["month", "This month"], ["30d", "Last 30 days"], ["quarter", "This quarter"], ["year", "This year"]];
+var MAX_PIVOT_ROWS = 30;
+var MAX_PIVOT_COLS = 12;
+function chainFields(ctx, formId) {
+  const out = [];
+  chainOf(ctx, formId).forEach((fid) => {
+    const form = ctx.formById(fid);
+    if (form) reportFields(form).forEach((f) => out.push({ ref: { form: fid, id: f.id }, f, form, kind: kindOf2(f, form) }));
+  });
+  return out;
+}
+var sameRef = (a, b) => !!a && !!b && a.form === b.form && a.id === b.id;
+function keysOf(ctx, f, v) {
+  if (f.type === "multiselect") return Array.isArray(v) && v.length ? v.map(String) : ["(blank)"];
+  if (f.type === "relation") {
+    const t2 = v && ctx.recById(v);
+    return [t2 ? ctx.recTitle(t2) : "(blank)"];
+  }
+  const t = textOf(ctx, f, v);
+  return [t || "(blank)"];
+}
+function condHit(ctx, rec, cond) {
+  const f = fieldOf(ctx, cond.ref);
+  if (!f) return true;
+  const v = valueOf(ctx, rec, cond.ref);
+  let hit;
+  if (cond.value === "(blank)") hit = isEmptyVal(v);
+  else hit = keysOf(ctx, f, v).includes(String(cond.value));
+  return cond.op === "not" ? !hit : hit;
+}
+function dateRefOf(ctx, def) {
+  if (["line", "area"].includes(def.type) && def.time && fieldOf(ctx, def.time)) return def.time;
+  if (def.dateRef && fieldOf(ctx, def.dateRef)) return def.dateRef;
+  if (def.time && fieldOf(ctx, def.time)) return def.time;
+  const form = ctx.formById(def.form);
+  const d = form && (form.fields || []).find((f) => f.type === "date" || f.type === "datetime");
+  return d ? { form: def.form, id: d.id } : { form: def.form, id: "_created" };
+}
+function filterReaches(ctx, def, ref) {
+  return !!ref && chainOf(ctx, def.form).includes(ref.form);
+}
+function rowsFor(ctx, def, extra = {}) {
+  let list2 = ctx.records.filter((r) => r.formId === def.form);
+  const conds = (def.conditions || []).filter((c) => c && c.ref && fieldOf(ctx, c.ref) && c.value !== void 0 && c.value !== "");
+  if (conds.length) {
+    list2 = list2.filter((r) => def.join === "or" ? conds.some((c) => condHit(ctx, r, c)) : conds.every((c) => condHit(ctx, r, c)));
+  }
+  (extra.fields || []).forEach((ff) => {
+    if (!ff || !ff.values || !ff.values.length || !filterReaches(ctx, def, ff.ref)) return;
+    list2 = list2.filter((r) => ff.values.some((v) => condHit(ctx, r, { ref: ff.ref, op: "is", value: v })));
+  });
+  if (extra.range) {
+    const dref = dateRefOf(ctx, def);
+    list2 = list2.filter((r) => {
+      const t = timeOf(valueOf(ctx, r, dref));
+      return t != null && t >= extra.range.from && t < extra.range.to;
+    });
+  }
+  return list2;
+}
+function periodRange(key, now) {
+  const d = new Date(now);
+  const y = d.getFullYear(), m = d.getMonth();
+  const at = (yy, mm, dd = 1) => new Date(yy, mm, dd).getTime();
+  switch (key) {
+    case "month":
+      return { from: at(y, m), to: at(y, m + 1), prevFrom: at(y, m - 1), prevTo: at(y, m), label: "this month", prevLabel: "last month" };
+    case "30d": {
+      const to = new Date(y, m, d.getDate() + 1).getTime();
+      const day2 = 864e5;
+      return { from: to - 30 * day2, to, prevFrom: to - 60 * day2, prevTo: to - 30 * day2, label: "the last 30 days", prevLabel: "the 30 days before" };
+    }
+    case "quarter": {
+      const q = Math.floor(m / 3) * 3;
+      return { from: at(y, q), to: at(y, q + 3), prevFrom: at(y, q - 3), prevTo: at(y, q), label: "this quarter", prevLabel: "last quarter" };
+    }
+    case "year":
+      return { from: at(y, 0), to: at(y + 1, 0), prevFrom: at(y - 1, 0), prevTo: at(y, 0), label: "this year", prevLabel: "last year" };
+    default:
+      return null;
+  }
+}
+function kpiOf(ctx, def, extra, now) {
+  const range = extra.range ? periodRange(extra.periodKey, now) : null;
+  const cur = rowsFor(ctx, def, extra);
+  const value = measureOf(ctx, def, cur);
+  if (!def.compare) return { value, n: cur.length };
+  const r = range || periodRange("month", now);
+  const curRows = range ? cur : rowsFor(ctx, def, { ...extra, range: { from: r.from, to: r.to } });
+  const prevRows = rowsFor(ctx, def, { ...extra, range: { from: r.prevFrom, to: r.prevTo } });
+  const a = measureOf(ctx, def, curRows), b = measureOf(ctx, def, prevRows);
+  const delta = b ? (a - b) / Math.abs(b) * 100 : null;
+  return { value: range ? value : a, n: curRows.length, prev: b, delta, label: r.label, prevLabel: r.prevLabel };
+}
+function orderKeys(f, keys, totals) {
+  if (f.options && f.options.length) {
+    const pos = (k) => {
+      const i = f.options.indexOf(k);
+      return i < 0 ? 999 : i;
+    };
+    return keys.sort((a, b) => pos(a) - pos(b) || (totals.get(b) || 0) - (totals.get(a) || 0) || a.localeCompare(b));
+  }
+  if (f.type === "date" || f.type === "datetime" || f.id === "_created" || f.id === "_updated") return keys.sort();
+  return keys.sort((a, b) => (totals.get(b) || 0) - (totals.get(a) || 0) || a.localeCompare(b));
+}
+var BYS = [["week", "Week"], ["month", "Month"], ["quarter", "Quarter"], ["year", "Year"]];
+var BY_IDS = BYS.map((b) => b[0]);
+var MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+var groupable = (x) => ["group", "key", "num", "date"].includes(x.kind) && x.f.type !== "color";
+var isDateField = (f) => kindOf2(f) === "date";
+function bucketOf(t, by) {
+  const d = new Date(t);
+  const y = d.getFullYear(), m = d.getMonth();
+  if (by === "year") return { k: String(y), s: new Date(y, 0, 1).getTime() };
+  if (by === "quarter") {
+    const q = Math.floor(m / 3);
+    return { k: `Q${q + 1} ${y}`, s: new Date(y, q * 3, 1).getTime() };
+  }
+  if (by === "week") {
+    const st = new Date(y, m, d.getDate() - (d.getDay() + 6) % 7);
+    return { k: `Week of ${MON[st.getMonth()]} ${st.getDate()}, ${st.getFullYear()}`, s: st.getTime() };
+  }
+  return { k: `${MON[m]} ${y}`, s: new Date(y, m, 1).getTime() };
+}
+function groupKeys(ctx, f, v, ref) {
+  if (isDateField(f)) {
+    const t = timeOf(v);
+    if (t == null) return [{ k: "(blank)" }];
+    if (BY_IDS.includes(ref && ref.by)) return [bucketOf(t, ref.by)];
+    return [{ k: textOf(ctx, f, v) || "(blank)", s: t }];
+  }
+  if (kindOf2(f) === "num") {
+    const n = typeof v === "number" ? v : v == null || v === "" ? null : Number(v);
+    if (n == null || Number.isNaN(n)) return [{ k: "(blank)" }];
+    return [{ k: textOf(ctx, f, n) || String(n), s: n }];
+  }
+  return keysOf(ctx, f, v).map((k) => ({ k }));
+}
+function groupLabel(ctx, ref) {
+  const f = fieldOf(ctx, ref);
+  if (!f) return "";
+  const by = isDateField(f) && BYS.find((b) => b[0] === ref.by);
+  return f.label + (by ? " by " + by[1].toLowerCase() : "");
+}
+function groupRows(ctx, def, ref, list2) {
+  const f = fieldOf(ctx, ref);
+  if (!f) return [];
+  const m = /* @__PURE__ */ new Map(), sorts = /* @__PURE__ */ new Map();
+  list2.forEach((r) => groupKeys(ctx, f, valueOf(ctx, r, ref), ref).forEach(({ k, s }) => {
+    if (!m.has(k)) m.set(k, []);
+    m.get(k).push(r);
+    if (s != null && !sorts.has(k)) sorts.set(k, s);
+  }));
+  const totals = new Map([...m.entries()].map(([k, rs]) => [k, measureOf(ctx, def, rs) || 0]));
+  const keys = [...m.keys()];
+  const ordered = isDateField(f) || kindOf2(f) === "num" ? keys.sort((a, b) => (sorts.has(a) ? 0 : 1) - (sorts.has(b) ? 0 : 1) || (sorts.get(a) ?? 0) - (sorts.get(b) ?? 0) || a.localeCompare(b)) : orderKeys(f, keys, totals);
+  return ordered.map((k) => ({ key: k, rows: m.get(k), value: totals.get(k) }));
+}
+function slicesOf(ctx, def, list2, max = 8) {
+  const f = fieldOf(ctx, def.group);
+  const ordered = !!f && (kindOf2(f) === "num" || isDateField(f));
+  let items = groupRows(ctx, def, def.group, list2).map(({ key, value, rows }) => ({ key, value, rows, keys: [key] }));
+  const notOne = (def.conditions || []).filter((c) => c.op === "not" && sameRef(c.ref, def.group)).map((c) => String(c.value));
+  if (notOne.length) items = items.filter((x) => !notOne.includes(x.key));
+  const lim = def.limit === "all" ? Infinity : [8, 12, 20].includes(+def.limit) ? +def.limit : max;
+  const cap = ordered && def.type === "bar" ? Math.max(lim, 60) : lim;
+  if (items.length > cap) {
+    const rest = items.slice(cap - 1);
+    const rows = [...new Set(rest.flatMap((x) => x.rows))];
+    items = items.slice(0, cap - 1).concat([{ key: "Other (" + rest.length + ")", value: measureOf(ctx, def, rows) || 0, rows, keys: rest.map((x) => x.key), other: true }]);
+  }
+  return items.map(({ rows, ...x }) => x);
+}
+function pivotOf(ctx, def, list2) {
+  const rf = fieldOf(ctx, def.group), cf = fieldOf(ctx, def.col);
+  if (!rf || !cf) return null;
+  const rows = groupRows(ctx, def, def.group, list2);
+  const cols = groupRows(ctx, def, def.col, list2);
+  const colKeys = cols.slice(0, MAX_PIVOT_COLS).map((c) => c.key);
+  const out = rows.slice(0, MAX_PIVOT_ROWS).map((r) => {
+    const byCol = new Map(colKeys.map((k) => [k, []]));
+    r.rows.forEach((rec) => groupKeys(ctx, cf, valueOf(ctx, rec, def.col), def.col).forEach(({ k }) => {
+      if (byCol.has(k)) byCol.get(k).push(rec);
+    }));
+    return { key: r.key, cells: colKeys.map((k) => byCol.get(k).length ? measureOf(ctx, def, byCol.get(k)) : null), total: r.value };
+  });
+  return {
+    cols: colKeys,
+    rows: out,
+    colTotals: cols.slice(0, MAX_PIVOT_COLS).map((c) => c.value),
+    grand: measureOf(ctx, def, list2),
+    moreRows: Math.max(0, rows.length - MAX_PIVOT_ROWS),
+    moreCols: Math.max(0, cols.length - MAX_PIVOT_COLS)
+  };
+}
+function sortKey(ctx, rec, ref, depth = 0) {
+  const f = fieldOf(ctx, ref);
+  const v = valueOf(ctx, rec, ref);
+  if (!f) return null;
+  if (["date", "datetime"].includes(f.type) || ref.id === "_created" || ref.id === "_updated") return timeOf(v);
+  if (typeof v === "number") return v;
+  if (f.type === "relation") {
+    const t2 = v && ctx.recById(v);
+    return t2 ? titleKey(ctx, t2, depth) : null;
+  }
+  const t = textOf(ctx, f, v);
+  return t ? t.toLowerCase() : null;
+}
+function titleKey(ctx, rec, depth = 0) {
+  const form = rec && ctx.formById(rec.formId);
+  const tf = form && titleFieldOf(form);
+  if (!tf || depth > 4) return rec && ctx.recTitle ? String(ctx.recTitle(rec) || "").toLowerCase() || null : null;
+  return sortKey(ctx, rec, { form: form.id, id: tf.id }, depth + 1);
+}
+var natural = (a, b) => typeof a === "number" && typeof b === "number" ? a - b : String(a).localeCompare(String(b), void 0, { numeric: true, sensitivity: "base" });
+function sortRecs(ctx, list2, ref, dir) {
+  if (!ref) return list2;
+  return list2.map((r) => ({ r, k: sortKey(ctx, r, ref) })).sort((a, b) => {
+    if (a.k == null || b.k == null) return a.k == null && b.k == null ? 0 : a.k == null ? 1 : -1;
+    return natural(a.k, b.k) * (dir < 0 ? -1 : 1);
+  }).map((x) => x.r);
+}
+function normalizeDef(ctx, def0) {
+  const def = JSON.parse(JSON.stringify(def0 || {}));
+  if (!ctx.formById(def.form)) return def;
+  const fields = chainFields(ctx, def.form);
+  const pick = (kinds, avoid) => (fields.find((x) => kinds.includes(x.kind) && !x.f.system && !sameRef(x.ref, avoid)) || fields.find((x) => kinds.includes(x.kind) && !sameRef(x.ref, avoid)) || {}).ref || null;
+  def.measure = def.measure && (def.measure.fn === "count" || fieldOf(ctx, def.measure.ref)) ? def.measure : { fn: "count" };
+  def.conditions = Array.isArray(def.conditions) ? def.conditions : [];
+  def.join = def.join === "or" ? "or" : "and";
+  const t = def.type || "table";
+  const canSplit = (ref) => {
+    const x = fields.find((y) => sameRef(y.ref, ref));
+    return !!x && groupable(x);
+  };
+  const withBy = (ref) => {
+    if (!ref) return ref;
+    const x = fields.find((y) => sameRef(y.ref, ref));
+    if (x && x.kind === "date") return { form: ref.form, id: ref.id, by: BY_IDS.includes(ref.by) ? ref.by : "month" };
+    return { form: ref.form, id: ref.id };
+  };
+  if (!(def.limit === "all" || [8, 12, 20].includes(+def.limit))) delete def.limit;
+  else if (def.limit !== "all") def.limit = +def.limit;
+  if (["bar", "donut", "grouped", "pivot"].includes(t)) {
+    if (!canSplit(def.group)) def.group = pick(["group", "key"]);
+    def.group = withBy(def.group);
+  }
+  if (t === "pivot") {
+    if (!canSplit(def.col) || sameRef(def.col, def.group) && (def.col.by || "") === (def.group?.by || "")) def.col = pick(["group"], def.group);
+    def.col = withBy(def.col);
+  }
+  if (["line", "area"].includes(t)) {
+    if (!fieldOf(ctx, def.time)) {
+      const own = fields.find((x) => x.kind === "date" && !x.f.system && x.ref.form === def.form);
+      def.time = own ? own.ref : { form: def.form, id: "_created" };
+    }
+    def.interval = ["week", "month", "quarter", "year"].includes(def.interval) ? def.interval : "month";
+    def.span = ["fit", "last", "custom"].includes(def.span) ? def.span : "fit";
+    ["from", "to"].forEach((k) => {
+      if (!(typeof def[k] === "string" && /^\d{4}-\d{2}-\d{2}$/.test(def[k]))) delete def[k];
+    });
+  }
+  if (["table", "grouped"].includes(t)) {
+    def.columns = (def.columns || []).filter((r) => fieldOf(ctx, r));
+    if (!def.columns.length) def.columns = defaultColumns(ctx, def.form);
+  }
+  return def;
+}
+var CANVAS_COLS = 24;
+var MIN_W = 3;
+var minH = (t) => t && (t.text || t.link) ? 2 : 3;
+var clampTile = (t) => {
+  const w = Math.max(MIN_W, Math.min(CANVAS_COLS, Math.round(t.w ?? 12)));
+  return { ...t, w, h: Math.max(minH(t), Math.min(80, Math.round(t.h ?? 8))), x: Math.max(0, Math.min(CANVAS_COLS - w, Math.round(t.x || 0))), y: Math.max(0, Math.round(t.y || 0)) };
+};
+function placedRaw(tiles) {
+  const list2 = tiles || [];
+  if (list2.every((t) => t.x != null && t.y != null)) return list2.map((t) => ({ ...t }));
+  const L = layout(list2.map((t) => ({ ...t, cols: t.cols || t.w || 6, rows: t.rows || 2 })));
+  return list2.map((t) => t.x != null && t.y != null ? { ...t } : { ...t, x: L[t.id].c0, y: L[t.id].r0 * 2, w: L[t.id].c, h: L[t.id].h * 2 });
+}
+var strip = ({ cols, rows, ...rest }) => rest;
+function canvasTiles(tiles) {
+  return placedRaw(tiles).map(clampTile).map(strip);
+}
+function readingOrder(tiles) {
+  return tiles.slice().sort((a, b) => a.y - b.y || a.x - b.x);
+}
+function pluralWord(s) {
+  if (/s$/i.test(s)) return s;
+  if (/[^aeiou]y$/i.test(s)) return s.slice(0, -1) + "ies";
+  if (/(x|z|ch|sh)$/i.test(s)) return s + "es";
+  return s + "s";
+}
+function nounOf(form, n) {
+  const one = String(form?.itemName || "").trim(), name = String(form?.name || "").trim();
+  if (n === 1) return (one || name.replace(/s$/i, "") || "record").toLowerCase();
+  if (one && name && name.toLowerCase() !== one.toLowerCase()) return name.toLowerCase();
+  return pluralWord(one || name || "record").toLowerCase();
+}
+
+// src/dashfmt.js
+function measureField(c, def) {
+  const m = def.measure || { fn: "count" };
+  return m.fn !== "count" && m.ref ? fieldOf(c, m.ref) : null;
+}
+function fmtMeasure(c, def, v) {
+  if (v == null || typeof v === "number" && isNaN(v)) return "\u2013";
+  const f = measureField(c, def);
+  if (!f) return Math.round(v).toLocaleString();
+  if (f.type === "rating") return (Math.round(v * 10) / 10).toLocaleString() + " \u2605";
+  const val = def.measure.fn === "avg" ? Math.round(v * 100) / 100 : v;
+  if (f.type === "currency" || f.type === "formula" && f.format === "currency") {
+    try {
+      return new Intl.NumberFormat(void 0, { style: "currency", currency: String(f.currency || "CAD").toUpperCase(), maximumFractionDigits: Math.abs(val) >= 100 ? 0 : 2 }).format(val);
+    } catch (e) {
+      return String(val);
+    }
+  }
+  if (f.type === "percent" || f.type === "formula" && f.format === "percent") return (Math.round(val * 10) / 10).toLocaleString() + "%";
+  if (f.type === "range") return Math.round(val * 10) / 10 + (f.suffix || "");
+  return Number(val).toLocaleString(void 0, { maximumFractionDigits: def.measure.fn === "avg" ? 2 : 1 });
+}
+function measureLabel(c, def) {
+  const m = def.measure || { fn: "count" };
+  const form = c.formById(def.form);
+  if (m.fn === "count" || !m.ref) return "Number of " + (form ? nounOf(form, 2) : "records");
+  const f = fieldOf(c, m.ref);
+  return (m.fn === "avg" ? "Average " : "Total ") + (f ? f.label.toLowerCase() : "value");
+}
+function cellText(c, ref, rec) {
+  const f = fieldOf(c, ref);
+  if (!f) return "";
+  const v = valueOf(c, rec, ref);
+  if (f.type === "relation") {
+    const t = v && c.recById(v);
+    return t ? c.recTitle(t) : "";
+  }
+  return textOf(c, f, v);
+}
+var isNumRef = (c, r) => {
+  const f = fieldOf(c, r);
+  return !!f && kindOf2(f) === "num";
+};
+
+// src/dashmail.js
+var DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+var hourText = (h) => {
+  const n = (+h % 24 + 24) % 24;
+  return `${n % 12 || 12}:00 ${n < 12 ? "AM" : "PM"}`;
+};
+var ord = (n) => n + (n % 10 === 1 && n !== 11 ? "st" : n % 10 === 2 && n !== 12 ? "nd" : n % 10 === 3 && n !== 13 ? "rd" : "th");
+function scheduleText(s) {
+  if (!s) return "";
+  const at = " at " + hourText(s.hour ?? 8);
+  if (s.freq === "weekly") return "Every " + DAYS[(+s.day || 0) % 7] + at;
+  if (s.freq === "monthly") return "On the " + ord(Math.min(28, Math.max(1, +s.day || 1))) + " of every month" + at;
+  if (s.freq === "daily") return "Every day" + at;
+  return "Every weekday" + at;
+}
+function partsIn(ms, timeZone) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23", weekday: "short" }).formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+  return { key: `${p.year}-${p.month}-${p.day}`, hour: +p.hour % 24, dow: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(p.weekday), dom: +p.day };
+}
+function dueSlot(s, parts) {
+  if (!s || !s.on || parts.hour !== (+s.hour || 0)) return "";
+  const ok = s.freq === "daily" ? true : s.freq === "weekly" ? parts.dow === (+s.day || 0) % 7 : s.freq === "monthly" ? parts.dom === Math.min(28, Math.max(1, +s.day || 1)) : parts.dow >= 1 && parts.dow <= 5;
+  const slot = `${parts.key}T${String(parts.hour).padStart(2, "0")}`;
+  return ok && s.lastSlot !== slot ? slot : "";
+}
+function recipients(s, people, roleHolders = () => []) {
+  const to = s && s.to ? s.to : {};
+  const list2 = [];
+  (to.people || []).forEach((u) => list2.push(people.get(u)?.email || ""));
+  (to.roles || []).forEach((r) => roleHolders(r).forEach((u) => list2.push(people.get(u)?.email || "")));
+  String(to.addresses || "").split(/[,;\s]+/).forEach((a) => list2.push(a));
+  return [...new Set(list2.map((x) => String(x).trim().toLowerCase()).filter((x) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x)))].slice(0, 50);
+}
+var esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+var INK = "#141826";
+var MUTED = "#5a6174";
+var LINE = "#e3e5ec";
+var BAR = "#3346c8";
+var SOFT = "#f3f4f7";
+var COLORS2 = ["#3346c8", "#0f7b6c", "#c2410c", "#8a55d6", "#d23f6e", "#0e8fa8", "#a16207", "#5a6174"];
+var td = (s, x = "") => `<td style="padding:6px 8px;border-bottom:1px solid ${LINE};font-size:13px;color:${INK};${x}">${s}</td>`;
+var th = (s, x = "") => `<th style="padding:6px 8px;border-bottom:2px solid ${LINE};font-size:12px;color:${MUTED};text-align:left;font-weight:600;${x}">${s}</th>`;
+var table = (rows, head = "") => `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse">${head}${rows}</table>`;
+var barCell = (v, max, color = BAR) => {
+  const w = Math.max(1, Math.round((max > 0 ? Math.max(0, v) / max : 0) * 100));
+  return `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse"><tr><td style="width:${w}%;height:10px;background:${color};border-radius:3px;font-size:0;line-height:0">&nbsp;</td>${w < 100 ? `<td style="width:${100 - w}%;font-size:0;line-height:0">&nbsp;</td>` : ""}</tr></table>`;
+};
+var more = (n, what) => n > 0 ? `<p style="margin:6px 0 0;font-size:12px;color:${MUTED}">and ${n} more ${what}</p>` : "";
+function periodLabel(iv, d) {
+  if (iv === "week") return "Week of " + d.toLocaleDateString("en-CA", { month: "short", day: "numeric" });
+  if (iv === "month") return d.toLocaleDateString("en-CA", { month: "short", year: "numeric" });
+  if (iv === "quarter") return "Q" + (Math.floor(d.getMonth() / 3) + 1) + " " + d.getFullYear();
+  return String(d.getFullYear());
+}
+function reportBlock(c, def, extra, now) {
+  const form = c.formById(def.form);
+  if (!form) return { html: `<p style="color:${MUTED};font-size:13px">This report\u2019s form isn\u2019t available.</p>`, text: "(form not available)" };
+  if (def.type === "kpi") {
+    const k = kpiOf(c, def, extra, now);
+    const v = fmtMeasure(c, def, k.value);
+    const cmp = def.compare && k.delta != null ? `${k.delta >= 0 ? "\u25B2 +" : "\u25BC "}${Math.round(k.delta)}% vs ${esc(k.prevLabel)} (${esc(fmtMeasure(c, def, k.prev))})` : "";
+    return { html: `<div style="font-size:30px;font-weight:700;color:${INK};line-height:1.15">${esc(v)}</div><div style="font-size:13px;color:${MUTED};margin-top:4px">${esc(measureLabel(c, def))}${cmp ? " \xB7 " + cmp : ""}</div>`, text: `${measureLabel(c, def)}: ${v}${cmp ? " (" + cmp.replace(/<[^>]+>/g, "") + ")" : ""}` };
+  }
+  const list2 = rowsFor(c, def, extra);
+  if (!list2.length) return { html: `<p style="color:${MUTED};font-size:13px;margin:0">No records match this report.</p>`, text: "No records match." };
+  if (def.type === "bar" || def.type === "donut") {
+    const items = slicesOf(c, def, list2).filter((x) => def.type === "bar" || x.value > 0);
+    const shown2 = items.slice(0, 15);
+    const max = Math.max(0, ...shown2.map((x) => x.value)) || 1, total = items.reduce((a, b) => a + b.value, 0) || 1;
+    const rows = shown2.map((x, i) => `<tr>${td(esc(x.key), "width:34%")}${td(barCell(x.value, def.type === "donut" ? total : max, def.type === "donut" ? COLORS2[i % COLORS2.length] : BAR), "width:44%")}${td(esc(fmtMeasure(c, def, x.value)) + (def.type === "donut" ? ` <span style="color:${MUTED}">${Math.round(x.value / total * 100)}%</span>` : ""), "text-align:right;white-space:nowrap")}</tr>`).join("");
+    return { html: table(rows) + more(items.length - shown2.length, "groups"), text: shown2.map((x) => `${x.key}: ${fmtMeasure(c, def, x.value)}`).join("; ") };
+  }
+  if (def.type === "line" || def.type === "area") {
+    if (!fieldOf(c, def.time)) return { html: "", text: "" };
+    const iv = def.interval || "month";
+    const b = bucketsOf(c, def, list2, now, extra.range).slice(-12);
+    const max = Math.max(0, ...b.map((x) => x.value)) || 1;
+    const rows = b.map((x) => `<tr>${td(esc(periodLabel(iv, x.date)), "width:34%;white-space:nowrap")}${td(barCell(x.value, max), "width:44%")}${td(esc(fmtMeasure(c, def, x.value)), "text-align:right;white-space:nowrap")}</tr>`).join("");
+    return { html: table(rows), text: b.map((x) => `${periodLabel(iv, x.date)}: ${fmtMeasure(c, def, x.value)}`).join("; ") };
+  }
+  if (def.type === "pivot") {
+    const p = pivotOf(c, def, list2);
+    if (!p) return { html: "", text: "" };
+    const cols2 = p.cols.slice(0, 8), rows = p.rows.slice(0, 20);
+    const head2 = `<tr>${th(esc(groupLabel(c, def.group) || ""))}${cols2.map((k) => th(esc(k), "text-align:right")).join("")}${th("Total", "text-align:right")}</tr>`;
+    const body2 = rows.map((r) => `<tr>${td(esc(r.key))}${r.cells.slice(0, 8).map((v) => td(v == null ? "\u2013" : esc(fmtMeasure(c, def, v)), "text-align:right")).join("")}${td("<b>" + esc(fmtMeasure(c, def, r.total)) + "</b>", "text-align:right")}</tr>`).join("");
+    const tot = `<tr>${td("<b>Total</b>", `background:${SOFT}`)}${p.colTotals.slice(0, 8).map((v) => td("<b>" + esc(fmtMeasure(c, def, v)) + "</b>", `text-align:right;background:${SOFT}`)).join("")}${td("<b>" + esc(fmtMeasure(c, def, p.grand)) + "</b>", `text-align:right;background:${SOFT}`)}</tr>`;
+    return { html: table(body2 + tot, head2) + more(p.rows.length - rows.length + p.moreRows, "rows"), text: `${p.rows.length} rows, total ${fmtMeasure(c, def, p.grand)}` };
+  }
+  if (def.type === "grouped") {
+    const groups = groupRows(c, def, def.group, list2);
+    const shown2 = groups.slice(0, 20);
+    const rows = shown2.map((g) => `<tr>${td(esc(g.key))}${td(String(g.rows.length), `text-align:right;color:${MUTED}`)}${td(esc(fmtMeasure(c, def, g.value)), "text-align:right")}</tr>`).join("");
+    const head2 = `<tr>${th(esc(groupLabel(c, def.group) || "Group"))}${th("Records", "text-align:right")}${th(esc(measureLabel(c, def)), "text-align:right")}</tr>`;
+    const tot = `<tr>${td("<b>Total</b>", `background:${SOFT}`)}${td("<b>" + list2.length + "</b>", `text-align:right;background:${SOFT}`)}${td("<b>" + esc(fmtMeasure(c, def, measureOf(c, def, list2))) + "</b>", `text-align:right;background:${SOFT}`)}</tr>`;
+    return { html: table(rows + tot, head2) + more(groups.length - shown2.length, "groups"), text: shown2.map((g) => `${g.key}: ${fmtMeasure(c, def, g.value)}`).join("; ") };
+  }
+  const cols = (def.columns || []).filter((r) => fieldOf(c, r)).slice(0, 6);
+  if (!cols.length) return { html: "", text: "" };
+  const sref = def.sort && cols[def.sort.i] || cols[0];
+  const sorted = sortRecs(c, list2, sref, def.sort?.dir || 1);
+  const shown = sorted.slice(0, 15);
+  const head = `<tr>${cols.map((r) => th(esc(refLabel(c, r, def.form)), isNumRef(c, r) ? "text-align:right" : "")).join("")}</tr>`;
+  const body = shown.map((rec) => `<tr>${cols.map((r) => td(esc(cellText(c, r, rec) || "\u2013"), isNumRef(c, r) ? "text-align:right;white-space:nowrap" : "")).join("")}</tr>`).join("");
+  return { html: table(body, head) + more(sorted.length - shown.length, "records"), text: `${sorted.length} records` };
+}
+function dashEmail(c, dash, reports, { now = Date.now(), link = "", schedule = null, company = "" } = {}) {
+  const periodKey = dash.filters?.period || "all";
+  const range = periodRange(periodKey, now);
+  const extra = { periodKey, range: range ? { from: range.from, to: range.to } : null, fields: [] };
+  const date = new Date(now).toLocaleDateString("en-CA", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+  const periodName = (PERIODS.find((p) => p[0] === periodKey) || PERIODS[0])[1];
+  const parts = [], text = [`${dash.name || "Dashboard"} \xB7 ${periodName} \xB7 ${date}`, ""];
+  readingOrder(canvasTiles(dash.tiles || []).filter((t) => t.report || t.text)).forEach((t) => {
+    if (t.text) {
+      parts.push(`<tr><td style="padding:14px 0 6px">${t.text.title ? `<div style="font-size:15px;font-weight:700;color:${INK}">${esc(t.text.title)}</div>` : ""}${String(t.text.body || "").split(/\n{2,}/).filter(Boolean).map((p) => `<p style="margin:6px 0 0;font-size:13px;color:${INK}">${esc(p)}</p>`).join("")}</td></tr>`);
+      if (t.text.title || t.text.body) text.push([t.text.title, t.text.body].filter(Boolean).join(": "));
+      return;
+    }
+    const r = reports.get(t.report);
+    if (!r || !r.def) return;
+    const def = normalizeDef(c, r.def);
+    const b = reportBlock(c, def, extra, now);
+    parts.push(`<tr><td style="padding:14px 16px;border:1px solid ${LINE};border-radius:10px;background:#ffffff"><div style="font-size:15px;font-weight:700;color:${INK};margin-bottom:8px">${esc(r.name || "Report")}</div>${b.html}</td></tr><tr><td style="height:12px;font-size:0;line-height:0">&nbsp;</td></tr>`);
+    text.push(`${r.name || "Report"}: ${b.text}`);
+  });
+  if (!parts.length) parts.push(`<tr><td style="font-size:13px;color:${MUTED}">This dashboard has no reports yet.</td></tr>`);
+  const foot = `${schedule ? esc(scheduleText(schedule)) + ". " : ""}Sent by Formwright${company ? " for " + esc(String(company).replace(/\.$/, "")) : ""}. An administrator can change who gets this on the dashboard (Email schedule).`;
+  const html = `<!doctype html><html><body style="margin:0;padding:0;background:${SOFT}"><table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;background:${SOFT}"><tr><td align="center" style="padding:20px 12px">
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;max-width:680px;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
+      <tr><td style="padding:0 0 14px"><div style="font-size:22px;font-weight:700;color:${INK}">${esc(dash.name || "Dashboard")}</div><div style="font-size:13px;color:${MUTED};margin-top:2px">${esc(periodName)} \xB7 ${esc(date)}${link ? ` \xB7 <a href="${esc(link)}" style="color:${BAR}">Open the dashboard</a>` : ""}</div></td></tr>
+      ${parts.join("")}
+      <tr><td style="padding:10px 0 0;font-size:12px;color:${MUTED}">${foot}</td></tr>
+    </table></td></tr></table></body></html>`;
+  if (link) text.push("", "Open the dashboard: " + link);
+  return { subject: `${dash.name || "Dashboard"} \xB7 ${new Date(now).toLocaleDateString("en-CA", { month: "short", day: "numeric" })}`.slice(0, 200), html, text: text.join("\n") };
+}
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   ACTION_LABEL,
   COLORS,
   assigneeFor,
+  dashEmail,
   dayKey,
+  daysOverdue,
   drawPdf,
+  dueSlot,
   fileName,
   fillTemplate,
   firstStage,
   itemName,
   makeKit,
   opOf,
+  overdueStep,
+  partsIn,
+  recipients,
   ruleFires,
+  scheduleText,
   stageDue,
   testCond,
   wfOn

@@ -19,7 +19,7 @@ const people = {
   bob: { role: 'member', access: { '*': OWN } },
   olivia: { role: 'member', access: { '*': ALL } }, // office: everything
   vera: { role: 'member', access: { '*': READ } }, // viewer: read only
-  ned: { role: 'member', access: { '*': NONE } }, // no access
+  ned: { role: 'member', access: { '*': NONE }, roles: ['r_acc'] }, // no access (but holds the Accounts role)
   mixed: { role: 'member', access: { '*': NONE, f_jobs: { view: 'all', edit: 'own' } } },
 };
 
@@ -251,7 +251,24 @@ describe('workflows', () => {
     await env.withSecurityRulesDisabled(async (ctx) => {
       await setDoc(doc(ctx.firestore(), 'records', 'r_wf'), record('alice', { stage: 's1', assignee: 'bob', assigneeGroup: null, stageAt: 1 }));
       await setDoc(doc(ctx.firestore(), 'records', 'r_grp'), record('alice', { stage: 's1', assignee: null, assigneeGroup: 'g_staff', stageAt: 1 }));
+      await setDoc(doc(ctx.firestore(), 'records', 'r_role'), record('alice', { stage: 's1', assignee: null, assigneeGroup: null, assigneeRole: 'r_acc', stageAt: 1 }));
     });
+  });
+  test('roles: anyone holding the role can see and move it, credited as the role; others can’t claim it', async () => {
+    await assertSucceeds(getDoc(doc(db('ned'), 'records', 'r_role')));
+    await assertSucceeds(getDocs(query(collection(db('ned'), 'records'), where('assigneeRole', '==', 'r_acc'))));
+    await assertFails(updateDoc(doc(db('olivia'), 'records', 'r_role'), { values: { title: 'x' }, updatedBy: 'olivia' }));
+    await assertFails(move('olivia', 'r_wf', { stage: 's3', assignee: 'alice', stageAt: 2 }, { asRole: 'r_acc', asRoleName: 'Accounts' }));
+    await assertSucceeds(move('ned', 'r_role', { stage: 's2', assignee: null, assigneeRole: 'r_acc', stageAt: 2 }, { asRole: 'r_acc', asRoleName: 'Accounts', assigneeRole: 'r_acc', assigneeRoleName: 'Accounts' }));
+  });
+  test('roles: everyone reads them; only administrators manage them', async () => {
+    await assertSucceeds(setDoc(doc(db('admin'), 'roles', 'r_acc'), { name: 'Accounts', description: '', createdAt: 1, updatedAt: 1 }));
+    await assertFails(setDoc(doc(db('admin'), 'roles', 'r_bad'), { name: '', createdAt: 1 }));
+    await assertFails(setDoc(doc(db('olivia'), 'roles', 'r_x'), { name: 'Mine', createdAt: 1 }));
+    await assertSucceeds(getDocs(collection(db('olivia'), 'roles')));
+    await assertFails(updateDoc(doc(db('olivia'), 'users', 'olivia'), { roles: ['r_acc'] }));
+    await assertSucceeds(updateDoc(doc(db('admin'), 'users', 'olivia'), { roles: ['r_acc'] }));
+    await assertSucceeds(deleteDoc(doc(db('admin'), 'roles', 'r_acc')));
   });
   test('the assignee can see and move it, even with “mine only” access; the owner can’t change it now', async () => {
     await assertSucceeds(getDoc(doc(db('bob'), 'records', 'r_wf')));
@@ -779,5 +796,22 @@ describe('All mentions', () => {
     await assertFails(updateDoc(doc(db('admin'), 'mentions', 'm1'), { read: true }));
     await assertFails(deleteDoc(doc(db('admin'), 'mentions', 'm1')));
     await assertFails(getDocs(collection(db('olivia'), 'mentions')), 'members only their own');
+  });
+});
+
+describe('dashboards emailed on a schedule', () => {
+  const sch = (by, x = {}) => ({ dashboardId: 'd1', on: true, freq: 'weekly', day: 1, hour: 8, to: { people: ['admin'], roles: [], addresses: '' }, createdAt: 1, updatedAt: 1, updatedBy: by, ...x });
+  test('administrators set them; members can’t see or set them', async () => {
+    await assertSucceeds(setDoc(doc(db('admin'), 'dashMails', 'd1'), sch('admin')));
+    await assertFails(setDoc(doc(db('admin'), 'dashMails', 'd2'), sch('admin')));
+    await assertFails(setDoc(doc(db('admin'), 'dashMails', 'd1'), sch('admin', { freq: 'hourly' })));
+    await assertFails(setDoc(doc(db('admin'), 'dashMails', 'd1'), sch('alice')));
+    await assertFails(setDoc(doc(db('olivia'), 'dashMails', 'd1'), sch('olivia')));
+    await assertFails(getDoc(doc(db('olivia'), 'dashMails', 'd1')));
+    await assertSucceeds(deleteDoc(doc(db('admin'), 'dashMails', 'd1')));
+  });
+  test('overdue markers are the server’s', async () => {
+    await assertFails(getDoc(doc(db('admin'), 'stageOverdue', 'r1')));
+    await assertFails(setDoc(doc(db('admin'), 'stageOverdue', 'r1'), { stage: 's' }));
   });
 });

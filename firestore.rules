@@ -659,6 +659,26 @@ service cloud.firestore {
       }
     }
 
+    // Dashboards emailed on a schedule (Formwright → a dashboard → Email schedule): administrators
+    // set them; the server sends them and notes when (lastSlot, lastAt, lastStatus, lastTo).
+    match /dashMails/{dashboardId} {
+      allow read, delete: if isAdmin();
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasOnly(['dashboardId', 'on', 'freq', 'day', 'hour', 'to', 'createdAt', 'updatedAt', 'updatedBy', 'lastSlot', 'lastAt', 'lastStatus', 'lastTo'])
+        && request.resource.data.dashboardId == dashboardId
+        && request.resource.data.on is bool
+        && request.resource.data.freq in ['weekdays', 'weekly', 'monthly', 'daily']
+        && request.resource.data.hour is int && request.resource.data.hour >= 0 && request.resource.data.hour <= 23
+        && request.resource.data.day is int && request.resource.data.day >= 0 && request.resource.data.day <= 28
+        && request.resource.data.to is map
+        && request.resource.data.updatedBy == request.auth.uid;
+    }
+
+    // Workflows: which overdue emails went out for a record's current stage (server only)
+    match /stageOverdue/{recordId} {
+      allow read, write: if false;
+    }
+
     // Audit trail (Formwright → Administration): written only by the server; admins read it.
     match /audit/{entryId} {
       allow read: if isAdmin();
