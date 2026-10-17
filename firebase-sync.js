@@ -130,15 +130,20 @@
       },
       // one combined stream: the private settings doc + every task this person is a member of
       listen(next, err) {
-        let s = null, m = null, bd = null, t = null, dead = false, u1 = null, u2 = null, u3 = null, u4 = null;
-        const stop = () => { [u1, u2, u3, u4].forEach((u) => { if (u) u(); }); };
+        let s = null, m = null, bd = null, t = null, dead = false, u1 = null, u2 = null, u3 = null, u4 = null, u5 = null;
+        // tasks given to a role this person holds (Formwright → Roles): one listener per role
+        const roleSubs = new Map(), roleDocs = new Map();
+        const stopRoles = () => { roleSubs.forEach((u) => u()); roleSubs.clear(); roleDocs.clear(); };
+        const stop = () => { [u1, u2, u3, u4, u5].forEach((u) => { if (u) u(); }); stopRoles(); };
         const fire = () => {
           if (dead || !s || !m || !bd || !t) return;
           const docs = [];
           if (s.exists) docs.push({ id: 'settings', data: () => s.data() });
           if (m.exists) docs.push({ id: 'map', data: () => m.data() });
           if (bd.exists) docs.push({ id: 'board', data: () => bd.data() });
-          t.docs.forEach((d) => docs.push(d));
+          const seen = new Set();
+          t.docs.forEach((d) => { seen.add(d.id); docs.push(d); });
+          roleDocs.forEach((list) => list.forEach((d) => { if (!seen.has(d.id)) { seen.add(d.id); docs.push(d); } }));
           next({ docs, empty: !docs.length, metadata: { fromCache: s.metadata.fromCache || m.metadata.fromCache || bd.metadata.fromCache || t.metadata.fromCache } });
         };
         const fail = (e) => { if (dead) return; dead = true; stop(); err(e); };
@@ -146,6 +151,16 @@
         u4 = boardRef.onSnapshot({ includeMetadataChanges: true }, (x) => { bd = x; fire(); }, fail);
         u3 = mapRef.onSnapshot({ includeMetadataChanges: true }, (x) => { m = x; fire(); }, fail);
         u2 = tasksCol.where('members', 'array-contains', uid).onSnapshot({ includeMetadataChanges: true }, (x) => { t = x; fire(); }, fail);
+        u5 = db.collection('users').doc(uid).onSnapshot((x) => {
+          const want = new Set(((x.exists && x.get('roles')) || []).filter((r) => typeof r === 'string').slice(0, 20));
+          roleSubs.forEach((u, r) => { if (!want.has(r)) { u(); roleSubs.delete(r); roleDocs.delete(r); } });
+          want.forEach((r) => {
+            if (roleSubs.has(r)) return;
+            roleSubs.set(r, tasksCol.where('assigneeRole', '==', r).onSnapshot((q) => { roleDocs.set(r, q.docs); fire(); },
+              (e) => { console.warn('Tasks for a role could not be read:', e && e.code); roleDocs.delete(r); fire(); }));
+          });
+          fire();
+        }, () => {});
         return () => { dead = true; stop(); };
       }
     };

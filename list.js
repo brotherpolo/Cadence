@@ -114,9 +114,9 @@
   C.showAssignedToMe = function () { ui.scope = 'tome'; C.go('list'); filtersChanged(); };
   const SCOPES = [
     ['all', 'Everything', () => true],
-    ['mine', 'Mine to do', (t) => (S().isOwner(t) && !t.assigneeId) || S().isAssignedToMe(t)],
+    ['mine', 'Mine to do', (t) => (S().isOwner(t) && !S().isWithOthers(t)) || S().isAssignedToMe(t)],
     ['tome', 'Assigned to me', (t) => S().isAssignedToMe(t)],
-    ['byme', 'Assigned to others', (t) => S().isOwner(t) && !!t.assigneeId]
+    ['byme', 'Assigned to others', (t) => S().isOwner(t) && S().isWithOthers(t)]
   ];
   const inScope = (t) => !S().sharing() || (SCOPES.find((x) => x[0] === ui.scope) || SCOPES[0])[2](t);
 
@@ -222,7 +222,7 @@
       '<div class="chips scroll-x">' +
       (nd ? '<button type="button" class="chip on node-filter" data-fnode style="--c:' + C.map.colorHex(nd.color) + '" title="Show all tasks"><i class="dot"></i>On “' + esc(C.map.title(nd)) + '”' + icon('x') + '</button><span class="chip-sep" aria-hidden="true"></span>' : '') +
       (ui.record ? '<button type="button" class="chip on node-filter rec-filter" data-frecord style="--c:' + esc(recFilterColor()) + '" title="Show all tasks"><i class="rdot"></i>On “' + esc(recFilterLabel()) + '”' + icon('x') + '</button><span class="chip-sep" aria-hidden="true"></span>' : '') +
-      (S().sharing() && st.tasks.some((t) => t.assigneeId) ?
+      (S().sharing() && st.tasks.some((t) => S().isWithOthers(t)) ?
         SCOPES.map(([id, label, fn]) => {
           const n = id === 'all' ? 0 : open.filter(fn).length;
           return '<button type="button" class="chip scope' + (ui.scope === id ? ' on' : '') + '" data-fscope="' + id + '" aria-pressed="' + (ui.scope === id) + '">' + label + (n ? ' <span class="mono muted">' + n + '</span>' : '') + '</button>';

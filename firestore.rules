@@ -146,7 +146,8 @@ service cloud.firestore {
     function inWorkflow(d) { return d.get('stage', null) != null; }
     function PersonResponsible(d) {
       return hasAccount() && (d.get('assignee', null) == request.auth.uid
-        || (d.get('assigneeGroup', null) != null && d.assigneeGroup in me().get('groups', [])));
+        || (d.get('assigneeGroup', null) != null && d.assigneeGroup in me().get('groups', []))
+        || (d.get('assigneeRole', null) != null && d.assigneeRole in me().get('roles', [])));
     }
     function canEditNow(d) {
       return inWorkflow(d) ? (isAdmin() || PersonResponsible(d)) : canEditRecord(d);
@@ -157,7 +158,7 @@ service cloud.firestore {
     function validRecord(d) {
       return d.keys().hasOnly(['formId', 'values', 'parentId', 'parentFormId', 'ownerId',
                                'createdBy', 'createdAt', 'updatedAt', 'updatedBy', 'nums', 'autoLog', 'auto',
-                               'stage', 'assignee', 'assigneeGroup', 'stageAt'])
+                               'stage', 'assignee', 'assigneeGroup', 'assigneeRole', 'stageAt'])
         && d.keys().hasAll(['formId', 'values', 'ownerId', 'createdBy', 'updatedBy'])
         && d.formId is string
         && d.values is map
@@ -195,6 +196,43 @@ service cloud.firestore {
                   || PersonResponsible(get(recordPath(d.recordId)).data)));
     }
 
+    // New task (create rule). u: my account, read once.
+    function taskCreateOk(d, taskId) {
+      let u = exists(userPath()) ? get(userPath()).data : null;
+      return u != null
+        && (u.get('role', 'member') == 'admin' || u.get('cadence', false) == true)
+        && validTask(d, taskId)
+        && (
+          // owner: their own email, and a real assignee if any
+          (d.ownerId == request.auth.uid
+             && ownerEmailIsMine(d)
+             && assigneeIsReal(d)
+             && roleOk(d)
+             && (d.get('recordId', null) == null
+                 || recordLinkOkFor(u, d, recordPath(d.recordId))
+                 || linkCopiedFromSource(d)))
+          // assignee: next occurrence of a repeating task they were given (or their role was)
+          || spawnedByAssignee(d)
+          || spawnedByRoleHolder(d, u)
+        );
+    }
+    // The linked record exists, is in the task's form, and u can see it (or is responsible
+    // for its current workflow step). Same test as canLinkRecord, reading the record once.
+    function recordLinkOkFor(u, d, p) {
+      let r = exists(p) ? get(p).data : null;
+      return r != null && r.formId == d.formId && seesRecordAs(u, r);
+    }
+    function seesRecordAs(u, r) {
+      let acc = u.get('access', {});
+      let view = acc.get(r.formId, acc.get('*', {'view': 'none'})).get('view', 'none');
+      return u.get('role', 'member') == 'admin'
+        || view == 'all'
+        || (view == 'own' && r.ownerId == request.auth.uid)
+        || r.get('assignee', null) == request.auth.uid
+        || (r.get('assigneeGroup', null) != null && r.assigneeGroup in u.get('groups', []))
+        || (r.get('assigneeRole', null) != null && r.assigneeRole in u.get('roles', []));
+    }
+
     function taskPath(id) {
       return /databases/$(database)/documents/tasks/$(id);
     }
@@ -216,7 +254,8 @@ service cloud.firestore {
                'ownerId', 'ownerName', 'ownerEmail',
                'assigneeId', 'assigneeName', 'assigneeEmail', 'members',
                'typeSnap', 'levelSnap', 'nodeId', 'moved', 'pushed', 'doneBy', 'reassignedBy', 'reassignedAt',
-               'recordId', 'formId', 'recordSnap'
+               'recordId', 'formId', 'recordSnap',
+               'assigneeRole', 'assigneeRoleName', 'doneByName'
              ])
           && d.keys().hasAll(['id', 'title', 'done', 'ownerId', 'members'])
           && d.id == taskId
@@ -233,6 +272,9 @@ service cloud.firestore {
           && optString(d, 'ownerEmail', 320)
           && optString(d, 'assigneeName', 200)
           && optString(d, 'assigneeEmail', 320)
+          && optString(d, 'assigneeRole', 100)
+          && optString(d, 'assigneeRoleName', 80)
+          && optString(d, 'doneByName', 200)
           && okSnap(d, 'typeSnap')
           && okSnap(d, 'levelSnap')
           && isDateKey(d.get('due', null))
@@ -253,9 +295,11 @@ service cloud.firestore {
           && (d.get('reassignedBy', null) == null || d.reassignedBy == request.auth.uid
               || (resource != null && resource.data.get('reassignedBy', null) == d.reassignedBy))
           && (!('reassignedAt' in d) || d.reassignedAt == null || d.reassignedAt is number)
-          // membership always mirrors owner + assignee
+          // membership always mirrors owner + assignee. A task given to a role (Formwright → Roles)
+          // has no assignee and only its owner as a member: the role's holders read it by role.
           && d.ownerId is string
           && d.members is list && d.members.size() >= 1 && d.members[0] == d.ownerId
+          && (d.get('assigneeRole', null) == null || (d.get('assigneeId', null) == null && d.members.size() == 1))
           && (d.get('assigneeId', null) == null
                 ? d.members.size() == 1
                 : (d.assigneeId is string && d.assigneeId != d.ownerId
@@ -294,6 +338,26 @@ service cloud.firestore {
     function isAssignee() {
       return resource.data.get('assigneeId', null) == request.auth.uid;
     }
+    // Roles: the task is given to a role this person holds (users/{uid}.roles, set by administrators)
+    function isRoleHolder() {
+      return resource.data.get('assigneeRole', null) != null && hasAccount()
+          && resource.data.assigneeRole in me().get('roles', []);
+    }
+    // a task given to a role names one that exists
+    function roleOk(d) {
+      return d.get('assigneeRole', null) == null
+          || exists(/databases/$(database)/documents/roles/$(d.assigneeRole));
+    }
+    // The next occurrence of a repeating task given to a role, made by one of its holders on completion.
+    function spawnedByRoleHolder(d, u) {
+      return d.get('assigneeRole', null) != null
+          && d.assigneeRole in u.get('roles', [])
+          && d.get('spawnedFrom', null) is string
+          && exists(taskPath(d.spawnedFrom))
+          && get(taskPath(d.spawnedFrom)).data.ownerId == d.ownerId
+          && get(taskPath(d.spawnedFrom)).data.get('assigneeRole', null) == d.assigneeRole
+          && linkCopiedFromSource(d);
+    }
 
     function changed() {
       return request.resource.data.diff(resource.data).affectedKeys();
@@ -315,20 +379,12 @@ service cloud.firestore {
       // read tasks linked to Formwright records (Formwright → My work → All tasks); people's
       // own tasks without a record link stay private.
       allow read: if signedIn() && ((request.auth.uid in resource.data.members && cadenceOk())
+                                    || (isRoleHolder() && cadenceOk())
                                     || (isAdmin() && resource.data.get('recordId', null) != null));
 
-      allow create: if signedIn() && cadenceOk()
-        && validTask(request.resource.data, taskId)
-        && (
-          // owner: their own email, and a real assignee if any
-          (request.resource.data.ownerId == request.auth.uid
-             && ownerEmailIsMine(request.resource.data)
-             && assigneeIsReal(request.resource.data)
-             && (canLinkRecord(request.resource.data)
-                 || linkCopiedFromSource(request.resource.data)))
-          // assignee: next occurrence of a repeating task they were given
-          || spawnedByAssignee(request.resource.data)
-        );
+      // Reads each document once (account, record, assignee's people entry): Firestore allows
+      // at most 10 document reads per request, and a linked task given to someone needs all three.
+      allow create: if signedIn() && taskCreateOk(request.resource.data, taskId);
 
       allow update: if signedIn() && cadenceOk()
         && validTask(request.resource.data, taskId)
@@ -339,11 +395,13 @@ service cloud.firestore {
              && request.resource.data.ownerId == resource.data.ownerId
              && (!changed().hasAny(['ownerEmail']) || ownerEmailIsMine(request.resource.data))
              && (!changed().hasAny(['assigneeId']) || assigneeIsReal(request.resource.data))
-             && (!changed().hasAny(['recordId', 'formId']) || canLinkRecord(request.resource.data)))
-          // assignee: do the work and move the date (never the record link)
-          || (isAssignee()
+             && (!changed().hasAny(['recordId', 'formId']) || canLinkRecord(request.resource.data))
+             && (!changed().hasAny(['assigneeRole']) || roleOk(request.resource.data)))
+          // assignee, or anyone holding the role it's given to: do the work and move the date
+          // (never the record link). The first to tick it off is credited (doneBy, doneByName).
+          || ((isAssignee() || isRoleHolder())
              && changed().hasOnly(['done', 'doneAt', 'due', 'time', 'subtasks',
-                                   'notes', 'updatedAt', 'spawnedNext', 'moved', 'pushed', 'doneBy']))
+                                   'notes', 'updatedAt', 'spawnedNext', 'moved', 'pushed', 'doneBy', 'doneByName']))
           // assignee: hand it back to the owner
           || (isAssignee()
              && request.resource.data.get('assigneeId', null) == null
@@ -352,13 +410,14 @@ service cloud.firestore {
           // Reassign (Formwright): on a task linked to a record, the person it's assigned to, or
           // an administrator, gives it to someone else (or back to the owner). Only who it's
           // with changes; the owner stays.
-          || ((isAssignee() || isAdmin())
+          || ((isAssignee() || isRoleHolder() || isAdmin())
              && resource.data.get('recordId', null) != null
              && request.resource.data.ownerId == resource.data.ownerId
              && request.resource.data.get('reassignedBy', null) == request.auth.uid
-             && changed().hasOnly(['assigneeId', 'assigneeName', 'assigneeEmail',
+             && changed().hasOnly(['assigneeId', 'assigneeName', 'assigneeEmail', 'assigneeRole', 'assigneeRoleName',
                                    'members', 'updatedAt', 'reassignedBy', 'reassignedAt'])
-             && assigneeIsReal(request.resource.data))
+             && assigneeIsReal(request.resource.data)
+             && roleOk(request.resource.data))
         );
 
       allow delete: if signedIn() && cadenceOk()
@@ -366,7 +425,7 @@ service cloud.firestore {
         && (resource == null
             || resource.data.ownerId == request.auth.uid
             // undoing a completion removes the occurrence it spawned
-            || (isAssignee()
+            || ((isAssignee() || isRoleHolder())
                 && resource.data.get('spawnedFrom', null) != null
                 && resource.data.done == false));
     }
@@ -485,7 +544,10 @@ service cloud.firestore {
         allow read: if signedIn() && (canViewRecord(get(recordPath(recordId)).data) || PersonResponsible(get(recordPath(recordId)).data));
         allow create: if signedIn()
           && request.resource.data.by == request.auth.uid
-          && request.resource.data.keys().hasOnly(['at', 'by', 'from', 'fromName', 'to', 'toName', 'label', 'comment', 'assignee', 'assigneeGroup'])
+          && request.resource.data.keys().hasOnly(['at', 'by', 'from', 'fromName', 'to', 'toName', 'label', 'comment', 'assignee', 'assigneeGroup',
+                                                    'assigneeRole', 'assigneeRoleName', 'asRole', 'asRoleName'])
+          // "moved as" a role: only a role the mover holds
+          && (request.resource.data.get('asRole', null) == null || request.resource.data.asRole in me().get('roles', []))
           && (isAdmin() || PersonResponsible(get(recordPath(recordId)).data) || canEditNow(get(recordPath(recordId)).data));
         allow delete: if isAdmin();
       }
@@ -611,6 +673,18 @@ service cloud.firestore {
 
     match /groups/{groupId} {
       allow read, write: if isAdmin();
+    }
+
+    // Roles (Formwright → Administration → Roles): who does the work (a workflow stage can go to a
+    // role). Separate from security groups, which decide access. Everyone with an account reads the
+    // names; administrators manage them and who holds them (users/{uid}.roles).
+    match /roles/{roleId} {
+      allow read: if hasAccount();
+      allow write: if isAdmin()
+        && request.resource.data.keys().hasOnly(['name', 'description', 'createdAt', 'updatedAt'])
+        && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 80
+        && optString(request.resource.data, 'description', 500);
+      allow delete: if isAdmin();
     }
 
     match /profiles/{userId} {

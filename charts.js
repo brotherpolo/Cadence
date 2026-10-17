@@ -16,8 +16,9 @@
   // people: "Me" is whoever is signed in; tasks without an owner are yours (made before sign-in)
   const isMe = (uid) => !uid || uid === S().state.owner;
   const owner = (t) => (isMe(t.ownerId) ? 'Me' : C.firstName(t.ownerName, t.ownerEmail));
-  const shared = (t) => !!(t.assigneeId && t.assigneeId !== t.ownerId);
-  const doer = (t) => (shared(t) ? (isMe(t.assigneeId) ? 'Me' : C.firstName(t.assigneeName, t.assigneeEmail)) : owner(t));
+  const shared = (t) => !!((t.assigneeId && t.assigneeId !== t.ownerId) || (t.assigneeRole && !t.assigneeId));
+  // a task given to a role counts for the role (Formwright → Roles)
+  const doer = (t) => (t.assigneeRole && !t.assigneeId ? (t.assigneeRoleName || 'A role') : shared(t) ? (isMe(t.assigneeId) ? 'Me' : C.firstName(t.assigneeName, t.assigneeEmail)) : owner(t));
   const meFirst = () => ['Me'];
   const personColor = (v) => (v === 'Me' ? 'var(--accent)' : null);
   C.handoffLabel = (t) => (shared(t) ? owner(t) + ' → ' + doer(t) : '');

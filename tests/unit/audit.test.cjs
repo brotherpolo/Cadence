@@ -2,7 +2,7 @@
 // Run from tests/: npm run test:unit
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { recordEntry, formEntry, groupEntry, userEntry, settingsEntry, restoreRecord, auditValue, titleOf } = require('../../functions/audit.js');
+const { recordEntry, creditName, formEntry, groupEntry, userEntry, settingsEntry, restoreRecord, auditValue, titleOf } = require('../../functions/audit.js');
 
 const who = { by: 'boss', byName: 'Adam' };
 const form = { name: 'Invoices', titleField: 'num', fields: [
@@ -122,4 +122,27 @@ test('a record task given to someone else', () => {
   assert.equal(reassignedBy(before, { ...after, reassignedAt: undefined, reassignedBy: undefined }), 'adam', 'otherwise the owner');
   assert.equal(taskReassignEntry('t1', before, { ...before }, { by: 'x' }, 1), null, 'no change');
   assert.equal(taskReassignEntry('t1', { ...before, recordId: null }, { ...after, recordId: null }, { by: 'x' }, 1), null, 'not a record task');
+});
+
+test('roles: stage moves are noted, and the role gets the credit', () => {
+  const wf = { ...form, workflow: { on: true, stages: [{ id: 's1', name: 'Review' }, { id: 's2', name: 'Paid' }] } };
+  const b = rec({ st: 'A' }, { stage: 's1', assigneeRole: 'r_acc' }), a = rec({ st: 'A' }, { stage: 's2', assigneeRole: null });
+  const e = recordEntry('r1', b, a, wf, who, 5);
+  assert.equal(e.kind, 'changed');
+  assert.deepEqual(e.changes.find((c) => c.key === 'stage'), { key: 'stage', label: 'Stage', type: 'text', from: 'Review', to: 'Paid' });
+  assert.equal(creditName(b, a, 'Farren', ['r_acc'], 'Accounts'), 'Accounts (Farren)');
+  assert.equal(creditName(b, a, 'Farren', [], 'Accounts'), 'Farren', 'not in the role: just their name');
+  assert.equal(creditName(b, { ...b }, 'Farren', ['r_acc'], 'Accounts'), 'Farren', 'no move: just their name');
+  const u = userEntry('u1', { roles: [] }, { roles: ['r_acc'] }, who, 5, new Map(), new Map(), new Map([['r_acc', 'Accounts']]));
+  assert.deepEqual(u.changes, [{ key: 'roles', label: 'Roles', type: 'multiselect', from: [], to: ['Accounts'] }]);
+});
+
+test('roles: tasks given to a role, reassigned and ticked off', () => {
+  const { taskReassignEntry, taskDoneEntry } = require('../../functions/audit.js');
+  const t = { recordId: 'r1', title: 'Pay', ownerId: 'amy', ownerName: 'Amy', assigneeId: null, assigneeRole: 'r_acc', assigneeRoleName: 'Accounts', recordSnap: { title: '58', form: 'Invoices' }, done: false };
+  const e = taskReassignEntry('t1', { ...t, assigneeRole: null, assigneeRoleName: null }, t, who, 5);
+  assert.deepEqual([e.changes[0].from, e.changes[0].to], ['Amy (owner)', 'Accounts (role)']);
+  const d = taskDoneEntry('t1', t, { ...t, done: true }, { by: 'far', byName: 'Accounts (Farren)' }, 6);
+  assert.deepEqual([d.kind, d.byName, d.changes[0].to], ['taskdone', 'Accounts (Farren)', 'Done']);
+  assert.equal(taskDoneEntry('t1', { ...t, done: true }, { ...t, done: true }, who, 6), null);
 });

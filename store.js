@@ -163,7 +163,7 @@
   function decorate(body) {
     if (remote && remote.prepare) remote.prepare(body);
     if (!state.sharing || body.ownerId !== state.owner) return body;
-    if (body.assigneeId) {
+    if (body.assigneeId || body.assigneeRole) {
       const ty = S.typeById(body.typeId), lv = S.levelById(body.levelId);
       body.typeSnap = ty ? { name: ty.name, color: ty.color, glyph: ty.glyph } : null;
       body.levelSnap = lv ? { name: lv.name, color: lv.color } : null;
@@ -179,12 +179,14 @@
     if (!state.sharing || !state.owner || !C.toast) return;
     const me = state.owner;
     const seen = new Set(state.seen || []);
-    const fresh = tasks.filter((t) => t.assigneeId === me && t.ownerId !== me && !t.done && !seen.has(t.id));
-    const present = new Set(tasks.filter((t) => t.assigneeId === me).map((t) => t.id));
+    const fresh = tasks.filter((t) => S.isAssignedToMe(t) && !t.done && !seen.has(t.id));
+    const present = new Set(tasks.filter((t) => S.isAssignedToMe(t)).map((t) => t.id));
     state.seen = Array.from(new Set([...seen].filter((id) => present.has(id)).concat([...present])));
     const msgs = [];
     tasks.forEach((t) => {
       const p = prev.get(t.id);
+      // given to a role: whoever in it ticked it off first
+      if (p && p.ownerId === me && p.assigneeRole && !p.done && t.done && t.doneBy && t.doneBy !== me && !pending(t.id)) { msgs.push([(t.doneByName || p.assigneeRoleName || 'Someone') + ' completed “' + t.title + '”', t.id]); return; }
       if (!p || p.ownerId !== me || !p.assigneeId || p.assigneeId === me || pending(t.id)) return;
       const who = personName(p.assigneeName, p.assigneeEmail);
       if (!p.done && t.done && t.assigneeId === p.assigneeId) msgs.push([who + ' completed “' + t.title + '”', t.id]);
@@ -192,7 +194,7 @@
     });
     if (fresh.length === 1) {
       const t = fresh[0];
-      C.toast(personName(t.ownerName, t.ownerEmail) + ' assigned you “' + t.title + '”', { action: 'Open', onAction: () => C.openEditor(t.id), duration: 8000 });
+      C.toast(personName(t.ownerName, t.ownerEmail) + (t.assigneeRole ? ' gave ' + (t.assigneeRoleName || 'your role') + ' “' : ' assigned you “') + t.title + '”', { action: 'Open', onAction: () => C.openEditor(t.id), duration: 8000 });
     } else if (fresh.length > 1) {
       C.toast(fresh.length + ' tasks were assigned to you', { action: 'Show', onAction: () => C.showAssignedToMe && C.showAssignedToMe(), duration: 8000 });
     }
@@ -426,7 +428,11 @@
     me() { return state.me; },
     /** tasks with no owner yet (local, or created before sign-in) belong to this person */
     isOwner(t) { return !!t && (!t.ownerId || t.ownerId === state.owner); },
-    isAssignedToMe(t) { return !!(t && t.assigneeId && t.assigneeId === state.owner && t.ownerId !== state.owner); },
+    isAssignedToMe(t) { return !!(t && t.ownerId !== state.owner && ((t.assigneeId && t.assigneeId === state.owner) || (t.assigneeRole && !t.assigneeId))); },
+    /** given to a role I hold (Formwright → Roles): anyone in it can do it; the first to tick it off is credited */
+    isMyRoleTask(t) { return !!(t && t.assigneeRole && !t.assigneeId && t.ownerId !== state.owner); },
+    /** someone else has it: a person or a role */
+    isWithOthers(t) { return !!(t && (t.assigneeId || t.assigneeRole)); },
     canDelete(t) { return S.isOwner(t) || (S.isAssignedToMe(t) && !!t.spawnedFrom && !t.done); },
     /** the type/importance to show: the owner's snapshot when the task came from someone else */
     typeOf(t) { return (!S.isOwner(t) && t.typeSnap) ? t.typeSnap : S.typeById(t.typeId); },
@@ -435,12 +441,13 @@
     assigneeFields(person) {
       const me = state.me || {}, owner = state.owner;
       const base = { ownerId: owner, ownerName: me.name || null, ownerEmail: me.email || null };
-      if (!person || person.uid === owner) return Object.assign(base, { assigneeId: null, assigneeName: null, assigneeEmail: null, members: [owner] });
-      return Object.assign(base, { assigneeId: person.uid, assigneeName: person.name || null, assigneeEmail: person.email || null, members: [owner, person.uid] });
+      const noRole = { assigneeRole: null, assigneeRoleName: null };
+      if (!person || person.uid === owner) return Object.assign(base, noRole, { assigneeId: null, assigneeName: null, assigneeEmail: null, members: [owner] });
+      return Object.assign(base, noRole, { assigneeId: person.uid, assigneeName: person.name || null, assigneeEmail: person.email || null, members: [owner, person.uid] });
     },
     /** assignee gives the task back to its owner */
     returnToOwner(id) {
-      const t = S.get(id); if (!t || !S.isAssignedToMe(t)) return null;
+      const t = S.get(id); if (!t || !S.isAssignedToMe(t) || S.isMyRoleTask(t)) return null;
       return S.updateTask(id, { assigneeId: null, assigneeName: null, assigneeEmail: null, members: [t.ownerId] });
     },
     /** people I've recently worked with, newest first */
@@ -494,13 +501,15 @@
       const t = S.get(id); if (!t) return {};
       const done = !t.done;
       let spawned = null;
-      // doneBy lets the owner be told when the person they assigned finishes it
-      S.updateTask(id, { done, doneAt: done ? Date.now() : null, doneBy: done && state.owner ? state.owner : null });
+      // doneBy lets the owner be told when the person they assigned finishes it. A task given to a
+      // role credits the role and the person: "Accounts (Farren)".
+      const credit = t.assigneeRole ? { doneByName: done ? (S.isMyRoleTask(t) ? (t.assigneeRoleName || 'Role') + ' (' + ((state.me && state.me.name) || 'Someone') + ')' : (state.me && state.me.name) || null) : null } : {};
+      S.updateTask(id, Object.assign({ done, doneAt: done ? Date.now() : null, doneBy: done && state.owner ? state.owner : null }, credit));
       if (done && t.repeat && t.repeat !== 'none' && !t.spawnedNext) {
         const next = C.clone(t);
         Object.assign(next, { id: C.uid('t'), done: false, doneAt: null, createdAt: Date.now(), due: C.nextDue(t.due, t.repeat), spawnedFrom: t.id });
         next.subtasks = (next.subtasks || []).map((s) => ({ ...s, done: false }));
-        delete next.spawnedNext; delete next.moved; delete next.pushed; delete next.doneBy; // each occurrence starts fresh
+        delete next.spawnedNext; delete next.moved; delete next.pushed; delete next.doneBy; delete next.doneByName; // each occurrence starts fresh
         spawned = S.addTask(next);
         S.updateTask(id, { spawnedNext: spawned.id });
       } else if (!done && t.spawnedNext) {

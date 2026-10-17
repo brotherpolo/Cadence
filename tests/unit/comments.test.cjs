@@ -86,3 +86,16 @@ test('the audit entry for a removed comment', () => {
   assert.equal(e.changes[0].from, 'Can you check this @Sam Lee?');
   assert.equal(cm.deletedEntry({ recordId: 'r1', rec: {}, form: {}, comment: c({ parent: 'c0' }), commentId: 'c2', who: { by: 'a', byName: 'A' }, now: 1 }).note, 'Removed a reply');
 });
+
+test('roles: mentioning a role reaches each holder once; a role task goes to the role', () => {
+  const c = { by: 'amy', text: 'Please pay @Accounts', mentions: [{ uid: 'role:r_acc', name: 'Accounts' }, { uid: 'bo', name: 'Bo' }], notified: { cy: 'sent' } };
+  const todo = cm.toNotify(c);
+  assert.deepEqual(todo.map((m) => m.uid), ['role:r_acc', 'bo']);
+  const holders = new Map([['r_acc', [{ uid: 'amy' }, { uid: 'bo' }, { uid: 'cy' }, { uid: 'far', user: { role: 'member' } }]]]);
+  const r = cm.roleRecipients(todo, holders, c);
+  assert.deepEqual(r.map((m) => [m.uid, m.role]), [['far', 'Accounts']], 'not the commenter, not someone told already or named too');
+  assert.equal(cm.mentionDoc({ to: 'far', comment: c, commentId: 'c1', recordId: 'r1', now: 1, role: 'Accounts' }).role, 'Accounts');
+  assert.match(cm.mentionEmail({ byName: 'Amy', item: 'Invoice', title: '58', text: 'x', role: 'Accounts' }).subject, /mentioned Accounts \(your role\) on Invoice 58/);
+  const t = cm.mentionTask({ id: 't1', owner: { uid: 'amy', name: 'Amy' }, role: { id: 'r_acc', name: 'Accounts' }, comment: c, recordId: 'r1', formId: 'f', recordTitle: '58', item: 'Invoice', now: 1 });
+  assert.deepEqual([t.assigneeId, t.assigneeRole, t.assigneeRoleName, t.members], [null, 'r_acc', 'Accounts', ['amy']]);
+});

@@ -28,6 +28,9 @@
     const ro = !!existing && !S.isOwner(existing);
     const sharing = S.sharing();
     let assignee = existing && existing.assigneeId && !ro ? { uid: existing.assigneeId, name: existing.assigneeName || '', email: existing.assigneeEmail || '' } : null;
+    // given to a role (Formwright → Roles): kept as it is unless the owner picks someone here
+    let keepRole = !!(existing && !ro && existing.assigneeRole && !existing.assigneeId);
+    const viaRole = !!(existing && ro && existing.assigneeRole && !existing.assigneeId);
     const assigneeBefore = assignee && assignee.uid;
     let assignQuery = '', assignMsg = '', assignBusy = false, confirmBack = false;
 
@@ -42,7 +45,7 @@
       '<div class="sheet-body"></div>' +
       '<div class="sheet-foot">' +
       (existing && !ro ? '<button type="button" class="btn ghost danger" data-act="delete">' + icon('trash') + '<span>Delete</span></button>' : '') +
-      (ro ? '<button type="button" class="btn ghost" data-act="handback">' + icon('upload') + '<span>Hand back</span></button>' : '') +
+      (ro && !viaRole ? '<button type="button" class="btn ghost" data-act="handback">' + icon('upload') + '<span>Hand back</span></button>' : '') +
       '<span class="spacer"></span>' +
       '<button type="button" class="btn ghost" data-close>Cancel</button>' +
       '<button type="submit" class="btn primary">' + (existing ? 'Save' : bulk ? 'Add ' + bulk.length + ' tasks' : 'Add task') + '</button>' +
@@ -139,6 +142,7 @@
     function fromNote() {
       const o = { uid: existing.ownerId, name: existing.ownerName, email: existing.ownerEmail };
       const first = C.firstName(o.name, o.email);
+      if (viaRole) return '<div class="ed-from">' + C.avatar(o) + '<p><b>' + esc(o.name || o.email || 'Someone') + '</b> gave this to <b>' + esc(existing.assigneeRoleName || 'your role') + '</b> (your role). Anyone in it can do it; whoever ticks it off first is credited' + (existing.done && existing.doneByName ? ' (done by ' + esc(existing.doneByName) + ')' : '') + '. You can change the date, checklist and notes. Ask ' + esc(first) + ' to change anything else.</p></div>';
       return '<div class="ed-from">' + C.avatar(o) + '<p><b>' + esc(o.name || o.email || 'Someone') + '</b> assigned this to you. You can change the date, checklist and notes. Ask ' + esc(first) + ' to change anything else.</p></div>';
     }
     function roField(label, v, glyph) {
@@ -160,7 +164,8 @@
       const favOn = (f) => !!(assignee && (((assignee.email || '').toLowerCase() === f.email) || (f.uid && assignee.uid === f.uid)));
       return '<div class="field"><span class="field-label">Assigned to</span>' +
         '<div class="chips">' +
-        '<button type="button" class="chip' + (!assignee ? ' on' : '') + '" data-assign="" aria-pressed="' + !assignee + '">' + C.avatar({ uid: S.state.owner, name: me.name, email: me.email }) + 'Me</button>' +
+        (keepRole ? '<button type="button" class="chip on" data-assign-role aria-pressed="true" title="Given to a role in Formwright: anyone in it can do it">' + C.avatar({ uid: 'role:' + existing.assigneeRole, name: existing.assigneeRoleName || 'Role' }) + esc(existing.assigneeRoleName || 'A role') + ' (role)</button>' : '') +
+        '<button type="button" class="chip' + (!assignee && !keepRole ? ' on' : '') + '" data-assign="" aria-pressed="' + (!assignee && !keepRole) + '">' + C.avatar({ uid: S.state.owner, name: me.name, email: me.email }) + 'Me</button>' +
         favs.map((f) => '<button type="button" class="chip' + (favOn(f) ? ' on' : '') + '" data-assign-email="' + esc(f.email) + '" aria-pressed="' + favOn(f) + '" title="' + esc(f.email) + '"' + (assignBusy ? ' disabled' : '') + '>' + C.avatar(f) + esc(f.name) + '</button>').join('') +
         people.map((p) => '<button type="button" class="chip' + (assignee && assignee.uid === p.uid ? ' on' : '') + '" data-assign="' + esc(p.uid) + '" aria-pressed="' + !!(assignee && assignee.uid === p.uid) + '" title="' + esc(p.email || '') + '">' + C.avatar(p) + esc(p.name || p.email) + '</button>').join('') +
         '</div>' +
@@ -176,14 +181,14 @@
       if (!e) { assignMsg = 'Type the email address they sign in with.'; sync(); return render(); }
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) { assignMsg = 'That email address doesn’t look right.'; sync(); return render(); }
       const me = S.me() || {};
-      if (e === me.email) { assignee = null; assignQuery = ''; assignMsg = ''; sync(); return render(); }
+      if (e === me.email) { keepRole = false; assignee = null; assignQuery = ''; assignMsg = ''; sync(); return render(); }
       sync(); assignBusy = true; assignMsg = ''; render();
       try {
         const p = await S.findPerson(e);
         if (!wrap.isConnected) return;
         if (p && p.uid) {
           const fav = QUICK_ASSIGN.find((f) => f.email === e);
-          assignee = Object.assign({}, p, { name: p.name || (fav && fav.name) || '' });
+          keepRole = false; assignee = Object.assign({}, p, { name: p.name || (fav && fav.name) || '' });
           if (!fromPill) assignQuery = '';
           assignMsg = '';
         }
@@ -282,12 +287,13 @@
       if (!b) return;
       if (b.hasAttribute('data-close')) return close();
       if (b.dataset.act !== 'handback' && confirmBack) { confirmBack = false; resetBack(); }
-      if (b.dataset.assign != null) { sync(); const uid = b.dataset.assign; assignee = uid ? (S.people().concat(assignee ? [assignee] : []).find((p) => p.uid === uid) || null) : null; assignMsg = ''; render(); return; }
+      if (b.dataset.assignRole != null) return;
+      if (b.dataset.assign != null) { keepRole = false; sync(); const uid = b.dataset.assign; assignee = uid ? (S.people().concat(assignee ? [assignee] : []).find((p) => p.uid === uid) || null) : null; assignMsg = ''; render(); return; }
       if (b.dataset.assignEmail != null) {
         sync();
         const em = b.dataset.assignEmail;
         const known = S.people().concat(assignee ? [assignee] : []).find((p) => p.uid && (p.email || '').toLowerCase() === em);
-        if (known) { assignee = known; assignMsg = ''; render(); } else findAssignee(em);
+        if (known) { keepRole = false; assignee = known; assignMsg = ''; render(); } else findAssignee(em);
         return;
       }
       if (b.dataset.act === 'find') { findAssignee(); return; }
@@ -323,7 +329,7 @@
       draft.subtasks = (draft.subtasks || []).filter((x) => x.title.trim());
       const pendingSub = body.querySelector('#ed-sub-new').value.trim();
       if (pendingSub) draft.subtasks.push({ id: C.uid('s'), title: pendingSub, done: false });
-      const who = sharing && !ro ? S.assigneeFields(assignee) : {};
+      const who = sharing && !ro && !keepRole ? S.assigneeFields(assignee) : {};
       const forName = assignee ? C.firstName(assignee.name, assignee.email) : '';
       if (existing) {
         const wasDone = existing.done;
@@ -333,7 +339,7 @@
         S.updateTask(existing.id, patch);
         if (draft.done !== wasDone) C.completeTask(existing.id);
         close(true);
-        if (sharing && !ro && (assignee && assignee.uid) !== assigneeBefore) C.toast(assignee ? 'Assigned “' + draft.title + '” to ' + forName : 'You’re doing “' + draft.title + '” yourself now');
+        if (sharing && !ro && !keepRole && ((assignee && assignee.uid) !== assigneeBefore || (existing.assigneeRole && !existing.assigneeId))) C.toast(assignee ? 'Assigned “' + draft.title + '” to ' + forName : 'You’re doing “' + draft.title + '” yourself now');
       } else if (bulk) {
         const made = bulk.map((nodeId) => S.addTask(Object.assign({ title: draft.title, notes: draft.notes, typeId: draft.typeId, levelId: draft.levelId, due: draft.due, time: draft.due ? draft.time : null, repeat: draft.repeat, subtasks: C.clone(draft.subtasks).map((x) => Object.assign(x, { id: C.uid('s') })), nodeId }, draft.recordId ? linkOf() : {}, who)));
         close(true);

@@ -411,7 +411,7 @@
       const rows = [COLS];
       tasks.forEach((t) => {
         const ty = S().typeOf(t), lv = S().levelOf(t);
-        const who = S().isAssignedToMe(t) ? 'From ' + (t.ownerEmail || t.ownerName || 'someone else') : (t.assigneeId ? (t.assigneeEmail || t.assigneeName || '') : '');
+        const who = t.assigneeRole && !t.assigneeId ? (t.assigneeRoleName || 'A role') + ' (role)' + (S().isOwner(t) ? '' : ' · from ' + (t.ownerEmail || t.ownerName || 'someone else')) : S().isAssignedToMe(t) ? 'From ' + (t.ownerEmail || t.ownerName || 'someone else') : (t.assigneeId ? (t.assigneeEmail || t.assigneeName || '') : '');
         rows.push([
           t.title || '',
           t.due ? keyToSerial(t.due) : '',

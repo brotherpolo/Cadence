@@ -66,10 +66,25 @@ function recordEntry(recordId, before, after, form, who, now) {
   const extra = [];
   if ((before.parentId || null) !== (after.parentId || null)) extra.push({ key: 'parent', label: 'Belongs to', type: 'parent', from: before.parentId || null, to: after.parentId || null, fromForm: before.parentFormId || null, toForm: after.parentFormId || null });
   if (before.ownerId !== after.ownerId) extra.push({ key: 'owner', label: 'Owner', type: 'person', from: before.ownerId || null, to: after.ownerId || null });
+  if ((before.stage || null) !== (after.stage || null) && after.stage) {
+    const stages = (form && form.workflow && form.workflow.stages) || [];
+    const sn = (id) => (id ? (stages.find((s) => s.id === id) || {}).name || 'A removed stage' : null);
+    extra.push({ key: 'stage', label: 'Stage', type: 'text', from: sn(before.stage), to: sn(after.stage) });
+  }
   const all = changes.concat(extra);
   if (!all.length) return null;
-  const kind = changes.length ? 'changed' : extra[0].key === 'parent' ? 'moved' : 'owner';
+  const kind = changes.length ? 'changed' : extra[0].key === 'parent' ? 'moved' : extra[0].key === 'owner' ? 'owner' : 'changed';
   return { ...base, kind, title: titleOf(after, form), changes: all };
+}
+
+/**
+ * Roles: a record that was waiting on a role moved on, and the person who moved it holds that role:
+ * they're credited as "Accounts (Farren)". Otherwise just their name.
+ */
+function creditName(before, after, personName, moverRoles, roleName) {
+  const r = before && before.assigneeRole;
+  if (!r || !after || (before.stage || null) === (after.stage || null) || !(moverRoles || []).includes(r)) return personName;
+  return `${roleName || 'Role'} (${personName})`;
 }
 
 function fieldChanges(before, after, form) {
@@ -143,7 +158,7 @@ function groupEntry(groupId, before, after, who, now, formNames = new Map()) {
 }
 
 /** Accounts: new sign-ins, role, security groups, Cadence approval. (Access maps are worked out from groups, so not repeated.) */
-function userEntry(userId, before, after, who, now, groupNames = new Map(), names = new Map()) {
+function userEntry(userId, before, after, who, now, groupNames = new Map(), names = new Map(), roleNames = new Map()) {
   const d = after || before;
   const name = names.get(userId) || d.displayName || String(d.email || '').split('@')[0] || 'Someone';
   const base = { at: now, by: who.by, byName: who.byName, area: 'user', targetId: userId, targetName: name };
@@ -153,6 +168,8 @@ function userEntry(userId, before, after, who, now, groupNames = new Map(), name
   if ((before.role || 'member') !== (after.role || 'member')) changes.push({ key: 'role', label: 'Role', type: 'text', from: before.role || 'member', to: after.role || 'member' });
   const gn = (ids) => (ids || []).map((g) => groupNames.get(g) || g).sort();
   if (!same([...(before.groups || [])].sort(), [...(after.groups || [])].sort())) changes.push({ key: 'groups', label: 'Security groups', type: 'multiselect', from: gn(before.groups), to: gn(after.groups) });
+  const rn = (ids) => (ids || []).map((r) => roleNames.get(r) || r).sort();
+  if (!same([...(before.roles || [])].sort(), [...(after.roles || [])].sort())) changes.push({ key: 'roles', label: 'Roles', type: 'multiselect', from: rn(before.roles), to: rn(after.roles) });
   if (!!before.cadence !== !!after.cadence) changes.push({ key: 'cadence', label: 'Can use Cadence', type: 'checkbox', from: !!before.cadence, to: !!after.cadence });
   return changes.length ? { ...base, kind: 'changed', changes } : null;
 }
@@ -202,23 +219,34 @@ async function restoreRecord(db, callerUid, data, now = Date.now()) {
  */
 function taskReassignEntry(taskId, before, after, who, now) {
   if (!before || !after || !after.recordId) return null;
-  const was = before.assigneeId || null, is = after.assigneeId || null;
+  const was = before.assigneeId || before.assigneeRole || null, is = after.assigneeId || after.assigneeRole || null;
   if (was === is) return null;
   const owner = after.ownerName || after.ownerEmail || 'the owner';
-  const name = (id, n, e) => (id ? n || e || 'someone' : `${owner} (owner)`);
+  const holder = (t) => (t.assigneeId ? t.assigneeName || t.assigneeEmail || 'someone' : t.assigneeRole ? `${t.assigneeRoleName || 'a role'} (role)` : `${owner} (owner)`);
+  const name = (id, n, e, t) => holder(t);
   const snap = after.recordSnap || {};
   return {
     at: now, by: who.by, byName: who.byName, area: 'record', kind: 'reassigned',
     recordId: after.recordId, formId: after.formId || null, formName: snap.form || '', title: snap.title || '',
     changes: [{ key: 'task:' + taskId, label: `Task “${String(after.title || 'Untitled task').slice(0, 200)}”`, type: 'text',
-      from: name(was, before.assigneeName, before.assigneeEmail), to: name(is, after.assigneeName, after.assigneeEmail) }],
+      from: name(was, before.assigneeName, before.assigneeEmail, before), to: name(is, after.assigneeName, after.assigneeEmail, after) }],
+  };
+}
+/** A task linked to a record was ticked off: noted on the record, with who did it ("Accounts (Farren)"). */
+function taskDoneEntry(taskId, before, after, who, now) {
+  if (!before || !after || !after.recordId || before.done || !after.done || after.sample) return null;
+  const snap = after.recordSnap || {};
+  return {
+    at: now, by: who.by, byName: who.byName, area: 'record', kind: 'taskdone',
+    recordId: after.recordId, formId: after.formId || null, formName: snap.form || '', title: snap.title || '',
+    changes: [{ key: 'task:' + taskId, label: `Task “${String(after.title || 'Untitled task').slice(0, 200)}”`, type: 'text', from: 'Open', to: 'Done' }],
   };
 }
 /** Who changed a task's assignee: the Reassign stamp, else the assignee handing it back, else the owner. */
 function reassignedBy(before, after) {
   if (after.reassignedBy && after.reassignedAt && after.reassignedAt !== (before.reassignedAt || null)) return after.reassignedBy;
-  if (!after.assigneeId && before.assigneeId) return before.assigneeId;
+  if (!after.assigneeId && before.assigneeId && !after.assigneeRole) return before.assigneeId;
   return after.ownerId;
 }
 
-module.exports = { taskReassignEntry, reassignedBy, recordEntry, formEntry, groupEntry, userEntry, settingsEntry, restoreRecord, auditValue, titleOf, RESTORE_DAYS };
+module.exports = { taskReassignEntry, taskDoneEntry, reassignedBy, recordEntry, creditName, formEntry, groupEntry, userEntry, settingsEntry, restoreRecord, auditValue, titleOf, RESTORE_DAYS };

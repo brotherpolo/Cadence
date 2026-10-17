@@ -87,9 +87,15 @@
   };
   /** "From Sam" on tasks assigned to me, "For Priya" on tasks I assigned */
   C.whoChip = function (t, compact) {
-    if (!t.assigneeId || !S.sharing()) return '';
+    if (!S.isWithOthers(t) || !S.sharing()) return '';
     let p, label;
-    if (S.isAssignedToMe(t)) { p = { uid: t.ownerId, name: t.ownerName, email: t.ownerEmail }; label = 'From ' + C.firstName(p.name, p.email); }
+    // given to a role (Formwright → Roles)
+    if (t.assigneeRole && !t.assigneeId) {
+      p = { uid: 'role:' + t.assigneeRole, name: t.assigneeRoleName || 'Role', email: '' };
+      label = S.isOwner(t) ? 'For ' + (t.assigneeRoleName || 'a role') : (t.assigneeRoleName || 'Your role') + ' · from ' + C.firstName(t.ownerName, t.ownerEmail);
+      if (t.done && t.doneByName) label += ' · done by ' + t.doneByName;
+    }
+    else if (S.isAssignedToMe(t)) { p = { uid: t.ownerId, name: t.ownerName, email: t.ownerEmail }; label = 'From ' + C.firstName(p.name, p.email); }
     else if (S.isOwner(t)) { p = { uid: t.assigneeId, name: t.assigneeName, email: t.assigneeEmail }; label = 'For ' + C.firstName(p.name, p.email); }
     else return '';
     return '<span class="who' + (compact ? ' compact' : '') + '" title="' + esc(label) + '">' + C.avatar(p) + (compact ? '<span class="sr">' + esc(label) + '</span>' : '<span>' + esc(label) + '</span>') + '</span>';

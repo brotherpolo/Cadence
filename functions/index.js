@@ -141,11 +141,48 @@ exports.taskChanged = onDocumentWritten('tasks/{taskId}', async (event) => {
     }
   }
   // a record task given to someone else: noted on the record in the audit trail
-  if (before && after.recordId && (before.assigneeId || null) !== (after.assigneeId || null)) {
+  if (before && after.recordId && ((before.assigneeId || null) !== (after.assigneeId || null) || (before.assigneeRole || null) !== (after.assigneeRole || null))) {
     try {
       const entry = audit.taskReassignEntry(event.params.taskId, before, after, await who(audit.reassignedBy(before, after)), Date.now());
       if (entry) jobs.push(db.collection('audit').add(entry));
     } catch (e) { logger.error('task reassign audit failed', e); }
+  }
+  // given to a role (Formwright → Roles): everyone holding it hears about it
+  if (after.assigneeRole && (before ? before.assigneeRole !== after.assigneeRole : !after.spawnedFrom)) {
+    try {
+      const giver = before && after.reassignedAt && after.reassignedAt !== before.reassignedAt && after.reassignedBy ? after.reassignedBy : after.ownerId;
+      const giverName = giver === after.ownerId ? nameOf(after.ownerName, after.ownerEmail) : nameOf(await personName(giver));
+      const holders = (await db.collection('users').where('roles', 'array-contains', after.assigneeRole).get()).docs.map((d) => d.id).filter((u) => u !== giver).slice(0, 50);
+      for (const uid of holders) {
+        const prefs = await prefsFor(uid);
+        if (!prefs) continue;
+        const tz = safeTz(prefs.tz || 'UTC');
+        jobs.push(sendTo(uid, 'assigned', {
+          title: giverName + ' gave ' + (after.assigneeRoleName || 'your role') + ' a task',
+          body: title + (after.due ? ' · due ' + when(after.due, tz) + (after.time ? ' at ' + clock(after.time) : '') : ''),
+          tag: 'assigned-' + event.params.taskId, task: event.params.taskId
+        }, prefs));
+      }
+    } catch (e) { logger.error('role task notice failed', e); }
+  }
+  // a record task ticked off: noted on the record, crediting the role ("Accounts (Farren)")
+  if (before && !before.done && after.done && after.recordId && after.doneBy) {
+    try {
+      const w = await who(after.doneBy);
+      if (after.assigneeRole && after.doneBy !== after.ownerId) {
+        const u = await db.collection('users').doc(after.doneBy).get();
+        if (u.exists && (u.get('roles') || []).includes(after.assigneeRole)) w.byName = `${after.assigneeRoleName || 'Role'} (${w.byName})`;
+      }
+      const entry = audit.taskDoneEntry(event.params.taskId, before, after, w, Date.now());
+      if (entry) jobs.push(db.collection('audit').add(entry));
+    } catch (e) { logger.error('task done audit failed', e); }
+  }
+  // finished by someone in the role it was given to
+  if (before && !before.done && after.done && after.assigneeRole && after.doneBy && after.doneBy !== after.ownerId) {
+    jobs.push(sendTo(after.ownerId, 'finished', {
+      title: (after.doneByName || after.assigneeRoleName || 'Someone') + ' finished a task',
+      body: title, tag: 'finished-' + event.params.taskId, task: event.params.taskId
+    }));
   }
   // finished by the person it was given to
   if (before && !before.done && after.done && shared(after) && after.doneBy && after.doneBy !== after.ownerId) {
@@ -178,13 +215,23 @@ async function remindOne(uid, prefs, now, lastCheck) {
   if (!hasDevice) return done();
 
   const mine = (snap) => snap.docs.map((d) => Object.assign({ id: d.id }, d.data())).filter((t) => !t.done && !t.sample && doerOf(t) === uid);
+  // tasks given to a role this person holds (Formwright → Roles): theirs to do as well
+  let roleTasks = null;
+  const byRole = async () => {
+    if (roleTasks) return roleTasks;
+    const roles = ((await db.collection('users').doc(uid).get()).get('roles') || []).filter((r) => typeof r === 'string').slice(0, 10);
+    roleTasks = roles.length ? (await db.collection('tasks').where('assigneeRole', 'in', roles).get()).docs.map((d) => Object.assign({ id: d.id }, d.data())).filter((t) => !t.done && !t.sample && t.due) : [];
+    return roleTasks;
+  };
+  const plus = (list, extra) => { const ids = new Set(list.map((t) => t.id)); return list.concat(extra.filter((t) => !ids.has(t.id))); };
   const inWindow = (at) => at > since && at <= now;
   const morningAt = zoned(today, prefs.morning || '08:00', tz);
   const sends = [];
 
   if (prefs.due) {
     // timed tasks around today (a lead time can reach into tomorrow's early hours)
-    const near = mine(await db.collection('tasks').where('members', 'array-contains', uid).where('due', 'in', [addDays(today, -1), today, addDays(today, 1)]).get());
+    const days = [addDays(today, -1), today, addDays(today, 1)];
+    const near = plus(mine(await db.collection('tasks').where('members', 'array-contains', uid).where('due', 'in', days).get()), (await byRole()).filter((t) => days.includes(t.due)));
     near.filter((t) => t.time).forEach((t) => {
       const at = zoned(t.due, t.time, tz) - (+prefs.lead || 0) * 60e3;
       if (inWindow(at)) sends.push(sendTo(uid, 'due', { title: t.title || 'Task due', body: (prefs.lead ? 'Due at ' : 'Due now · ') + clock(t.time), tag: 'due-' + t.id, task: t.id }, prefs));
@@ -192,11 +239,11 @@ async function remindOne(uid, prefs, now, lastCheck) {
     if (inWindow(morningAt)) {
       const untimed = near.filter((t) => t.due === today && !t.time);
       let overdue = [];
-      if (prefs.digest) overdue = mine(await db.collection('tasks').where('members', 'array-contains', uid).where('due', '<', today).get());
+      if (prefs.digest) overdue = plus(mine(await db.collection('tasks').where('members', 'array-contains', uid).where('due', '<', today).get()), (await byRole()).filter((t) => t.due < today));
       if (untimed.length || overdue.length) sends.push(morning(uid, prefs, untimed, overdue));
     }
   } else if (prefs.digest && inWindow(morningAt)) {
-    const overdue = mine(await db.collection('tasks').where('members', 'array-contains', uid).where('due', '<', today).get());
+    const overdue = plus(mine(await db.collection('tasks').where('members', 'array-contains', uid).where('due', '<', today).get()), (await byRole()).filter((t) => t.due < today));
     if (overdue.length) sends.push(morning(uid, prefs, [], overdue));
   }
   await Promise.all(sends);
@@ -369,7 +416,14 @@ exports.auditRecord = onDocumentWrittenWithAuthContext('records/{recordId}', asy
   const [before, after] = docs(event);
   if (!before && !after) return;
   const uid = (after && after.updatedBy) || uidOf(event);
-  const entry = audit.recordEntry(event.params.recordId, before, after, await formInfo((after || before).formId), await who(uid), Date.now());
+  const w = await who(uid);
+  if (before && after && before.assigneeRole && (before.stage || null) !== (after.stage || null) && uid) { // moved on for a role: "Accounts (Farren)"
+    try {
+      const [u, r] = await Promise.all([db.collection('users').doc(uid).get(), db.collection('roles').doc(before.assigneeRole).get()]);
+      w.byName = audit.creditName(before, after, w.byName, (u.exists && u.get('roles')) || [], r.exists ? r.get('name') : '');
+    } catch (e) { /* the plain name will do */ }
+  }
+  const entry = audit.recordEntry(event.params.recordId, before, after, await formInfo((after || before).formId), w, Date.now());
   if (entry) await db.collection('audit').add(entry);
 });
 exports.auditForm = onDocumentWrittenWithAuthContext('forms/{formId}', async (event) => {
@@ -385,14 +439,27 @@ exports.auditGroup = onDocumentWrittenWithAuthContext('groups/{groupId}', async 
   const entry = audit.groupEntry(event.params.groupId, before, after, await who(uidOf(event)), Date.now(), new Map(forms.docs.map((d) => [d.id, d.get('name')])));
   if (entry) await db.collection('audit').add(entry);
 });
+// Roles renamed in Formwright: tasks given to the role show the new name
+exports.roleRenamed = onDocumentWritten('roles/{roleId}', async (event) => {
+  const before = event.data.before.exists ? event.data.before.data() : null;
+  const after = event.data.after.exists ? event.data.after.data() : null;
+  if (!before || !after || (before.name || '') === (after.name || '')) return;
+  const snap = await db.collection('tasks').where('assigneeRole', '==', event.params.roleId).get();
+  for (let i = 0; i < snap.docs.length; i += 400) {
+    const b = db.batch();
+    snap.docs.slice(i, i + 400).forEach((d) => b.update(d.ref, { assigneeRoleName: String(after.name || '').slice(0, 80) }));
+    await b.commit();
+  }
+});
 exports.auditUser = onDocumentWrittenWithAuthContext('users/{userId}', async (event) => {
   if (bySystem(event)) return;
   const [before, after] = docs(event);
   if (before && after && (before.role || 'member') === (after.role || 'member') && !!before.cadence === !!after.cadence
-    && JSON.stringify([...(before.groups || [])].sort()) === JSON.stringify([...(after.groups || [])].sort())) return; // only access worked out again
-  const groups = await db.collection('groups').get();
+    && JSON.stringify([...(before.groups || [])].sort()) === JSON.stringify([...(after.groups || [])].sort())
+    && JSON.stringify([...(before.roles || [])].sort()) === JSON.stringify([...(after.roles || [])].sort())) return; // only access worked out again
+  const [groups, roles] = await Promise.all([db.collection('groups').get(), db.collection('roles').get()]);
   const entry = audit.userEntry(event.params.userId, before, after, await who(uidOf(event)), Date.now(),
-    new Map(groups.docs.map((d) => [d.id, d.get('name')])), new Map([[event.params.userId, await personName(event.params.userId)]]));
+    new Map(groups.docs.map((d) => [d.id, d.get('name')])), new Map([[event.params.userId, await personName(event.params.userId)]]), new Map(roles.docs.map((d) => [d.id, d.get('name')])));
   if (entry) await db.collection('audit').add(entry);
 });
 exports.auditSettings = onDocumentWrittenWithAuthContext('settings/{settingsId}', async (event) => {
@@ -433,7 +500,7 @@ async function allPeople() {
   if (Date.now() - cache.people.at < FRESH) return cache.people.map;
   const [u, p] = await Promise.all([db.collection('users').get(), db.collection('profiles').get()]);
   const map = new Map();
-  u.docs.forEach((d) => map.set(d.id, { email: String(d.get('email') || '').toLowerCase(), name: d.get('displayName') || '' }));
+  u.docs.forEach((d) => map.set(d.id, { email: String(d.get('email') || '').toLowerCase(), name: d.get('displayName') || '', roles: Array.isArray(d.get('roles')) ? d.get('roles') : [] }));
   p.docs.forEach((d) => { const x = map.get(d.id) || { email: '', name: '' }; if (d.get('displayName')) x.name = d.get('displayName'); if (!x.email && d.get('email')) x.email = String(d.get('email')).toLowerCase(); map.set(d.id, x); });
   cache.people = { at: Date.now(), map };
   return map;
@@ -584,8 +651,8 @@ async function autoStart(recordId, after) {
     if (!cur.exists || cur.get('stage')) return false; // gone, or started already
     const rec = cur.data();
     const next = fw.assigneeFor(st, rec, rec.createdBy || null);
-    tx.update(ref, { stage: st.id, assignee: next.assignee || null, assigneeGroup: next.assigneeGroup || null, stageAt: now });
-    tx.set(ref.collection('stages').doc(), { at: now, by: rec.createdBy || null, from: null, fromName: null, to: st.id, toName: st.name || '', label: 'Started', comment: '', assignee: next.assignee || null, assigneeGroup: next.assigneeGroup || null });
+    tx.update(ref, { stage: st.id, assignee: next.assignee || null, assigneeGroup: next.assigneeGroup || null, assigneeRole: next.assigneeRole || null, stageAt: now });
+    tx.set(ref.collection('stages').doc(), { at: now, by: rec.createdBy || null, from: null, fromName: null, to: st.id, toName: st.name || '', label: 'Started', comment: '', assignee: next.assignee || null, assigneeGroup: next.assigneeGroup || null, assigneeRole: next.assigneeRole || null });
     return true;
   });
 }
@@ -608,7 +675,10 @@ async function stageNotify(recordId, before, after) {
   const mover = String(after.updatedBy || '').startsWith('auto:') ? null : after.updatedBy || null;
   let who = arr.assignee ? [arr.assignee] : [];
   if (!who.length && arr.assigneeGroup) who = [...(await db.collection('users').where('groups', 'array-contains', arr.assigneeGroup).get()).docs.map((d) => d.id)].slice(0, 10);
+  if (!who.length && arr.assigneeRole) who = [...(await db.collection('users').where('roles', 'array-contains', arr.assigneeRole).get()).docs.map((d) => d.id)].slice(0, 10);
   if (!who.length) return;
+  let roleName = '';
+  if (!arr.assignee && !arr.assigneeGroup && arr.assigneeRole) { try { roleName = (await db.collection('roles').doc(arr.assigneeRole).get()).get('name') || ''; } catch (e) { /* plain wording */ } }
   const k = fw.makeKit({ forms: await allForms(), records: [{ ...after, id: recordId }] });
   const title = k.recTitle({ ...after, id: recordId }, form);
   const owner = mover || who[0];
@@ -619,7 +689,7 @@ async function stageNotify(recordId, before, after) {
     if (notify.task) {
       const ref = db.collection('tasks').doc();
       await ref.set({
-        id: ref.id, title: `${st.name}: ${title}`.slice(0, 500), notes: `Workflow: you’re the person responsible for this ${fw.itemName(form).toLowerCase()} at ${st.name}.${due ? ` Due ${due}.` : ''}`, due, time: null, done: false, doneAt: null, createdAt: now, updatedAt: now,
+        id: ref.id, title: `${st.name}: ${title}`.slice(0, 500), notes: `Workflow: ${roleName ? `your role ${roleName} is` : 'you’re the person'} responsible for this ${fw.itemName(form).toLowerCase()} at ${st.name}.${due ? ` Due ${due}.` : ''}`, due, time: null, done: false, doneAt: null, createdAt: now, updatedAt: now,
         subtasks: [], repeat: 'none', ownerId: owner, ownerName: op.name || null, ownerEmail: op.email || null,
         assigneeId: ap ? uid : null, assigneeName: ap ? ap.name || null : null, assigneeEmail: ap ? ap.email || null : null, members: ap ? [owner, uid] : [owner],
         recordId, formId: form.id, recordSnap: { title, form: form.name || '', color: fw.COLORS[(form.color ?? 0) % fw.COLORS.length] },
@@ -676,18 +746,26 @@ async function commentNotify(recordId, commentId) {
     const c = cur.data();
     const todo = cm.toNotify(c);
     if (!todo.length) return null;
-    const users = await tx.getAll(...todo.map((m) => db.collection('users').doc(m.uid)));
-    const out = todo.map((m, i) => {
+    const persons = todo.filter((m) => !cm.isRole(m.uid)), roleMs = todo.filter((m) => cm.isRole(m.uid));
+    // roles mentioned (Formwright → Roles): everyone holding them
+    const holders = new Map();
+    for (const m of roleMs) {
+      const q = await tx.get(db.collection('users').where('roles', 'array-contains', cm.roleIdOf(m.uid)).limit(50));
+      holders.set(cm.roleIdOf(m.uid), q.docs.map((d) => ({ uid: d.id, user: d.data() })));
+    }
+    const users = persons.length ? await tx.getAll(...persons.map((m) => db.collection('users').doc(m.uid))) : [];
+    const out = persons.map((m, i) => {
       const u = users[i].exists ? users[i].data() : null;
       return { ...m, user: u, state: !u ? 'gone' : cm.canSee(u, rec, m.uid) ? 'sent' : 'no-access' };
-    });
+    }).concat(cm.roleRecipients(todo, holders, c).map((m) => ({ ...m, state: cm.canSee(m.user, rec, m.uid) ? 'sent' : 'no-access' })));
     const args = [];
     out.forEach((m) => args.push(new admin.firestore.FieldPath('notified', m.uid), m.state));
+    roleMs.forEach((m) => args.push(new admin.firestore.FieldPath('notified', m.uid), (holders.get(cm.roleIdOf(m.uid)) || []).length ? 'sent' : 'nobody'));
     tx.update(ref, ...args);
-    return { c, out };
+    return { c, out, roles: roleMs };
   });
   if (!plan) return;
-  const { c, out } = plan;
+  const { c, out, roles } = plan;
   const forms = await allForms();
   const form = forms.find((f) => f.id === rec.formId) || {};
   const k = fw.makeKit({ forms, records: [rec] });
@@ -698,16 +776,25 @@ async function commentNotify(recordId, commentId) {
   const link = cm.recordLink(process.env.FORMWRIGHT_URL, recordId);
   const g = gmail();
   const brand = g.ready ? (await db.collection('settings').doc('exports').get()).data() || {} : {};
+  // a role mentioned with "also give a task": one task for the role; the first to tick it off does it
+  if (c.task && owner.uid) {
+    for (const m of roles || []) {
+      const r = await db.collection('roles').doc(cm.roleIdOf(m.uid)).get();
+      if (!r.exists) continue;
+      const tref = db.collection('tasks').doc();
+      await tref.set(cm.mentionTask({ id: tref.id, owner, role: { id: r.id, name: r.get('name') || m.name }, comment: c, recordId, formId: rec.formId, recordTitle: title, formName: form.name || '', item, color: fw.COLORS[(form.color ?? 0) % fw.COLORS.length], now }));
+    }
+  }
   for (const m of out.filter((x) => x.state === 'sent')) {
     const p = people.get(m.uid) || {};
-    await db.collection('mentions').add(cm.mentionDoc({ to: m.uid, comment: c, commentId, recordId, formId: rec.formId, recordTitle: title, formName: form.name || '', now }));
-    if (c.task && cm.usesCadence(m.user) && owner.uid) {
+    await db.collection('mentions').add(cm.mentionDoc({ to: m.uid, comment: c, commentId, recordId, formId: rec.formId, recordTitle: title, formName: form.name || '', now, role: m.role }));
+    if (c.task && !m.role && cm.usesCadence(m.user) && owner.uid) {
       const tref = db.collection('tasks').doc();
       await tref.set(cm.mentionTask({ id: tref.id, owner, assignee: { uid: m.uid, name: p.name || m.name, email: p.email || m.user.email || '' }, comment: c, recordId, formId: rec.formId, recordTitle: title, formName: form.name || '', item, color: fw.COLORS[(form.color ?? 0) % fw.COLORS.length], now }));
     }
     const to = p.email || String(m.user.email || '').toLowerCase();
     if (g.ready && to) {
-      const mail = cm.mentionEmail({ byName: owner.name, item, title, text: c.text, link, reply: !!c.parent });
+      const mail = cm.mentionEmail({ byName: owner.name, item, title, text: c.text, link, reply: !!c.parent, role: m.role });
       try {
         await mailer.sendMail({ from: { name: brand.companyName || g.user, address: g.user }, replyTo: owner.email || undefined, to, subject: mail.subject, text: mail.text, html: mail.html });
       } catch (e) { logger.error('mention email failed', e); }

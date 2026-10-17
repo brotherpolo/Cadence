@@ -22,7 +22,7 @@ const OWN = { view: 'own', edit: 'own' };
 const accounts = {
   admin: { role: 'admin', access: {} },
   owen: { role: 'member', access: { '*': NONE, f_clients: READ }, cadence: true },
-  bob: { role: 'member', access: { '*': NONE }, cadence: true },
+  bob: { role: 'member', access: { '*': NONE }, cadence: true, roles: ['r_acc'] },
   mia: { role: 'member', access: { '*': NONE, f_clients: OWN }, cadence: true },
   nora: { role: 'member', access: {}, cadence: true },
   stan: { role: 'member', access: {} },
@@ -92,6 +92,7 @@ beforeEach(async () => {
     for (const uid of ['owen', 'bob', 'nora']) {
       await setDoc(doc(d, 'people', email(uid)), { uid, name: uid });
     }
+    await setDoc(doc(d, 'roles', 'r_acc'), { name: 'Accounts', createdAt: 1 });
     await setDoc(doc(d, 'forms', 'f_clients'), { name: 'Clients', fields: [] });
     await setDoc(doc(d, 'forms', 'f_hr'), { name: 'HR', fields: [] });
     await setDoc(doc(d, 'records', 'r_acme'), record('f_clients', 'admin'));
@@ -175,6 +176,11 @@ describe('record links: setting them', () => {
     await assertSucceeds(setDoc(doc(db('mia'), 'tasks', 't1'), task('t1', 'mia', link('r_wf'))));
     await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'records', 'r_wf'), { ...record('f_clients', 'owen'), stage: 's2', assignee: 'owen' }));
     await assertFails(setDoc(doc(db('mia'), 'tasks', 't2'), task('t2', 'mia', link('r_wf'))));
+  });
+
+  test('a member links a task to a record and gives it to someone (the most reads at once)', async () => {
+    await assertSucceeds(setDoc(doc(db('mia'), 'tasks', 't1'), task('t1', 'mia', { ...link('r_mia'), ...assignedTo('bob'), members: ['mia', 'bob'] })));
+    await assertFails(setDoc(doc(db('mia'), 'tasks', 't2'), task('t2', 'mia', { ...link('r_acme'), ...assignedTo('bob'), members: ['mia', 'bob'] })));
   });
 
   test('someone who never opened Formwright can’t link records', async () => {
@@ -392,5 +398,28 @@ describe('Formwright: All tasks and Reassign', () => {
     await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'tasks', 't_plain'), task('t_plain', 'owen', { ...assignedTo('bob'), members: ['owen', 'bob'] })));
     await assertFails(updateDoc(doc(db('bob'), 'tasks', 't_plain'), pass('nora', 'bob')));
     await assertFails(updateDoc(doc(db('admin'), 'tasks', 't_plain'), pass('nora', 'admin')));
+  });
+});
+
+describe('roles: tasks given to a role', () => {
+  const roleTask = (id, extra = {}) => task(id, 'owen', { assigneeId: null, assigneeRole: 'r_acc', assigneeRoleName: 'Accounts', ...link('r_acme'), ...extra });
+  test('the owner gives a task to a role that exists; only the owner is a member', async () => {
+    await assertSucceeds(setDoc(doc(db('owen'), 'tasks', 't_r1'), roleTask('t_r1')));
+    await assertFails(setDoc(doc(db('owen'), 'tasks', 't_r2'), roleTask('t_r2', { assigneeRole: 'r_gone' })));
+    await assertFails(setDoc(doc(db('owen'), 'tasks', 't_r3'), roleTask('t_r3', { members: ['owen', 'nora'] })));
+    await assertFails(setDoc(doc(db('owen'), 'tasks', 't_r4'), roleTask('t_r4', { ...assignedTo('bob'), members: ['owen', 'bob'] })));
+  });
+  test('holders read it by role and tick it off, credited; others can’t', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => { await setDoc(doc(ctx.firestore(), 'tasks', 't_r'), roleTask('t_r')); });
+    await assertSucceeds(getDocs(query(collection(db('bob'), 'tasks'), where('assigneeRole', '==', 'r_acc'))));
+    await assertFails(getDoc(doc(db('nora'), 'tasks', 't_r')));
+    await assertFails(updateDoc(doc(db('nora'), 'tasks', 't_r'), { done: true, doneAt: 2, doneBy: 'nora', updatedAt: 2 }));
+    await assertFails(updateDoc(doc(db('bob'), 'tasks', 't_r'), { title: 'Mine now', updatedAt: 2 }));
+    await assertFails(updateDoc(doc(db('bob'), 'tasks', 't_r'), { members: ['owen', 'bob'], updatedAt: 2 }));
+    await assertSucceeds(updateDoc(doc(db('bob'), 'tasks', 't_r'), { done: true, doneAt: 2, doneBy: 'bob', doneByName: 'Accounts (bob)', updatedAt: 2 }));
+  });
+  test('a holder or an admin can pass it to one person (Reassign)', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => { await setDoc(doc(ctx.firestore(), 'tasks', 't_r'), roleTask('t_r')); });
+    await assertSucceeds(updateDoc(doc(db('bob'), 'tasks', 't_r'), { ...assignedTo('bob'), assigneeRole: null, assigneeRoleName: null, members: ['owen', 'bob'], reassignedBy: 'bob', reassignedAt: 3, updatedAt: 3 }));
   });
 });
