@@ -202,6 +202,10 @@ describe('new accounts', () => {
   test('profiles: everyone reads, each person writes their own', async () => {
     await assertSucceeds(setDoc(doc(db('alice'), 'profiles', 'alice'), { displayName: 'Alice' }));
     await assertFails(setDoc(doc(db('alice'), 'profiles', 'bob'), { displayName: 'Not Bob' }));
+    // a Google account photo: https only
+    await assertSucceeds(setDoc(doc(db('alice'), 'profiles', 'alice'), { displayName: 'Alice', photoURL: 'https://lh3.googleusercontent.com/a/x=s96-c' }));
+    await assertFails(setDoc(doc(db('alice'), 'profiles', 'alice'), { displayName: 'Alice', photoURL: 'javascript:alert(1)' }));
+    await assertFails(setDoc(doc(db('alice'), 'profiles', 'alice'), { displayName: 'Alice', photoURL: 42 }));
     await assertSucceeds(getDoc(doc(db('bob'), 'profiles', 'alice')));
   });
 });
@@ -290,6 +294,15 @@ describe('workflows', () => {
   });
   test('stage triggers are allowed in automations', async () => {
     await assertSucceeds(setDoc(doc(db('admin'), 'automations', 'a_s'), { name: 'On approve', formId: 'f_jobs', on: true, trigger: { type: 'stage', to: 's2' }, join: 'all', conds: [], acts: [{ do: 'task', title: 'x' }], createdBy: 'admin', createdAt: 1, updatedAt: 1, updatedBy: 'admin' }));
+  });
+  test('scheduled (monthly) automations; their waiting-for-OK list is read-only and admins only', async () => {
+    await assertSucceeds(setDoc(doc(db('admin'), 'automations', 'a_m'), { name: 'Month end', formId: 'f_jobs', on: true, trigger: { type: 'schedule', every: 'monthEndBiz', hour: 17, headsUp: true, approve: true }, join: 'all', conds: [], acts: [{ do: 'task', title: 'x' }], createdBy: 'admin', createdAt: 1, updatedAt: 1, updatedBy: 'admin' }));
+    await assertFails(setDoc(doc(db('admin'), 'automations', 'a_m', 'sched', 'run'), { month: '2026-10' }));
+    await assertFails(setDoc(doc(db('admin'), 'pendingSends', 'a_m_r1'), { automationId: 'a_m' }));
+    await env.withSecurityRulesDisabled(async (c) => { await setDoc(doc(c.firestore(), 'pendingSends', 'a_m_r1'), { automationId: 'a_m', recordId: 'r1' }); });
+    await assertSucceeds(getDoc(doc(db('admin'), 'pendingSends', 'a_m_r1')));
+    await assertFails(getDoc(doc(db('alice'), 'pendingSends', 'a_m_r1')));
+    await assertFails(deleteDoc(doc(db('admin'), 'pendingSends', 'a_m_r1')));
   });
 });
 

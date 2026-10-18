@@ -110,12 +110,25 @@
     // An existing name chosen in Formwright is left alone.
     if (me.email && me.verified) {
       const pref = db.collection('profiles').doc(uid);
+      // the Google account photo, when signed in with Google (refreshed each sign-in)
+      const photo = /^https:\/\//.test(String(user.photoURL || '')) && String(user.photoURL).length <= 1000 ? user.photoURL : '';
       pref.get().then((x) => {
-        if (!x.exists) return pref.set({ displayName: String(me.name || me.email.split('@')[0]).slice(0, 120), email: user.email });
-        if (!x.get('email')) return pref.set({ email: user.email }, { merge: true });
-        return null;
+        if (!x.exists) return pref.set(Object.assign({ displayName: String(me.name || me.email.split('@')[0]).slice(0, 120), email: user.email }, photo ? { photoURL: photo } : {}));
+        const up = {};
+        if (!x.get('email')) up.email = user.email;
+        if (photo && x.get('photoURL') !== photo) up.photoURL = photo;
+        return Object.keys(up).length ? pref.set(up, { merge: true }) : null;
       }).catch((e) => console.warn('Could not add you to the people list:', e && e.code));
     }
+    // Everyone's photos, for the avatars (kept up to date while the app is open)
+    try {
+      FB.stopPhotos && FB.stopPhotos();
+      FB.stopPhotos = db.collection('profiles').onSnapshot((snap) => {
+        const next = {};
+        (snap.docs || []).forEach((d) => { const u = d.get('photoURL'); if (u) next[d.id] = u; });
+        if (JSON.stringify(next) !== JSON.stringify(C.photos || {})) { C.photos = next; if (C.repaint) C.repaint(); }
+      }, () => { /* no access to the people list: initials only */ });
+    } catch (e) { /* initials only */ }
     // Everyone with an account (Formwright's people list): for the "Assigned to" pills.
     FB.listPeople = async () => {
       const snap = await db.collection('profiles').get();

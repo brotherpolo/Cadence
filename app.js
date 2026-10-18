@@ -83,8 +83,24 @@
     const parts = label.replace(/@.*/, '').split(/[\s._-]+/).filter(Boolean);
     const ini = ((parts[0] || '?')[0] + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase();
     let h = 0; String(p.uid || label).split('').forEach((c) => { h = (h * 31 + c.charCodeAt(0)) % 360; });
-    return '<span class="av" style="--h:' + h + '" title="' + esc(p.name || p.email || '') + '" aria-hidden="true">' + esc(ini) + '</span>';
+    const src = C.photoOf(p.uid);
+    return '<span class="av" style="--h:' + h + '" title="' + esc(p.name || p.email || '') + '" aria-hidden="true">' + esc(ini) +
+      (src ? '<img class="av-pic" src="' + esc(src) + '" alt="" loading="lazy" referrerpolicy="no-referrer" draggable="false">' : '') + '</span>';
   };
+  /* Google account photos (profiles/{uid}.photoURL, saved when someone signs in with Google) over the initials;
+     one that won't load is removed, leaving the initials underneath. */
+  C.photos = C.photos || {};
+  const badPhotos = new Set();
+  C.photoOf = function (uid) {
+    const u = String((uid && C.photos[uid]) || '').trim();
+    if (!/^https:\/\/[^\s"'<>]+$/i.test(u) || u.length > 1000) return '';
+    const src = /googleusercontent\.com\//.test(u) ? u.replace(/=s\d+(-c)?$/, '=s96-c') : u;
+    return badPhotos.has(src) ? '' : src;
+  };
+  document.addEventListener('error', (e) => {
+    const t = e.target;
+    if (t && t.classList && t.classList.contains('av-pic')) { badPhotos.add(t.getAttribute('src')); t.remove(); }
+  }, true);
   /** "From Sam" on tasks assigned to me, "For Priya" on tasks I assigned */
   C.whoChip = function (t, compact) {
     if (!S.isWithOthers(t) || !S.sharing()) return '';
@@ -403,6 +419,8 @@
 
   /* ---------- boot ---------- */
   let raf = 0;
+  /** Draw again (e.g. when people's photos arrive). */
+  C.repaint = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => { if (!current) return; renderChrome(); C.views[current].update(); }); };
   S.subscribe(() => {
     cancelAnimationFrame(raf);
     raf = requestAnimationFrame(() => {

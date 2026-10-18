@@ -640,7 +640,7 @@ service cloud.firestore {
         && d.name is string && d.name.size() > 0 && d.name.size() <= 120
         && d.formId is string && d.formId.size() > 0 && d.formId.size() <= 100
         && d.on is bool
-        && d.trigger is map && d.trigger.get('type', '') in ['created', 'changed', 'date', 'emailed', 'stage']
+        && d.trigger is map && d.trigger.get('type', '') in ['created', 'changed', 'date', 'emailed', 'stage', 'schedule']
         && d.acts is list && d.acts.size() <= 10
         && (!('conds' in d) || (d.conds is list && d.conds.size() <= 12))
         && d.createdBy is string;
@@ -657,6 +657,17 @@ service cloud.firestore {
       match /fired/{recordId} {
         allow read, write: if false;
       }
+      // scheduled automations: this month's run and heads-up, claimed by the server
+      match /sched/{what} {
+        allow read, write: if false;
+      }
+    }
+
+    // Scheduled automations with "approve first": each record waiting for an administrator's
+    // OK. The server writes them; Send now / Don't send go through the automationSend function.
+    match /pendingSends/{id} {
+      allow read: if isAdmin();
+      allow write: if false;
     }
 
     // Dashboards emailed on a schedule (Formwright → a dashboard → Email schedule): administrators
@@ -716,7 +727,9 @@ service cloud.firestore {
         && (!('email' in request.resource.data) || request.resource.data.email == request.auth.token.get('email', ''))
         && request.resource.data.displayName is string
         && request.resource.data.displayName.size() <= 120
-        && optString(request.resource.data, 'homeDashboard', 100);
+        && optString(request.resource.data, 'homeDashboard', 100)
+        // photoURL: their Google account photo (https only)
+        && (!('photoURL' in request.resource.data) || (request.resource.data.photoURL is string && request.resource.data.photoURL.size() <= 1000 && request.resource.data.photoURL.matches('https://[^ ]+')));
       allow delete: if isAdmin() || (signedIn() && userId == request.auth.uid);
     }
 

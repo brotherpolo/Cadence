@@ -778,6 +778,8 @@ button.mix-key:hover { color: var(--ink); }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .av { background: oklch(0.38 0.08 var(--h)); color: oklch(0.92 0.05 var(--h)); } }
 .who { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--ink-2); white-space: nowrap; }
 .who .av { width: 18px; height: 18px; font-size: 9px; }
+.av { position: relative; overflow: hidden; }
+.av .av-pic { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
 .who.compact { vertical-align: middle; }
 .c-title .who.compact { margin-left: 8px; }
 .ccard-meta .who .av { width: 16px; height: 16px; font-size: 8px; }
