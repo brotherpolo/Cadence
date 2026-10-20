@@ -4,7 +4,7 @@ A build-free task app: plain HTML, CSS and JavaScript files. No bundler, no npm 
 
 - **Tasks**: natural-language quick add, inventory summary, filters, grouping, agenda and table layouts, swipe gestures on phones
 - **Calendar**: month and week views; drag tasks between days or onto "Unscheduled"
-- **Sharing**: assign a task to anyone who has signed in with Google; they see it in their own list
+- **Sharing**: assign a task to anyone with an account (everyone who uses Formwright or Cadence is listed), or keep one a Formwright role gave you; people show with their Google photo or initials
 - **Insights**: completed vs. added per week, on-time rate, streak, a daily activity heatmap, and breakdowns by type, importance, overdue age and shared tasks
 - **Chart builder**: drag fields (type, importance, status, dates, assignee…) onto X axis, Values and Split by to make column, bar, line, area, pie, donut and scatter charts; save favorites to a board
 - **Chart builder extras**: map fields (cluster, branch, node, depth), a sunburst that follows the map's tree, KPI tiles (one number with an 8-week trend and change vs last week), and goal lines that fade the bars that miss
@@ -89,8 +89,9 @@ Formwright's data:
 forms/{formId}               form designs (admins write; everyone signed in reads)
 records/{id}                 form entries, checked against users/{uid}.access
 groups/{id}                  security groups (admins only)
-users/{uid}                  Formwright account: role, groups, effective access
-profiles/{uid}               display names for "Created by"
+users/{uid}                  Formwright account: role (access level), groups, effective access, roles[] (jobs held)
+profiles/{uid}               display name, sign-in email and Google photo (photoURL, https only), for names, pickers and avatars
+roles/{id}                   jobs people do (Accounts, Site lead): admins write; holders are in users/{uid}.roles
 reports/{id}                 saved reports: the owner writes; shared ones readable by members
 imports/{id}                 spreadsheet imports, kept 7 days for undo (admins only)
 imports/{id}/before/{recId}  a record as it was before an import changed it (admins only)
@@ -98,6 +99,11 @@ records/{id}.nums            auto numbers (server only); counters/{id} their cou
 records/{id}/emails/{id}     PDFs emailed from a record (server only; readable with the record)
 audit/{id}                   the audit trail (server only; admins read)
 settings/exports             company name and logo for Formwright's PDF exports (admins write; members read)
+automations/{id}             Formwright automations (admins only); runs/ run log, fired/ and sched/ server marks
+pendingSends/{id}            scheduled automations waiting for an admin's OK (server writes; admins read)
+dashMails/{dashboardId}      a dashboard's email schedule (admins write; the server notes the last send)
+stageOverdue/{recordId}      overdue reminders sent for a record's stage (server only)
+mentions/{id}                @mentions for My work (server writes; the person mentioned reads it)
 uploads/... (Storage)        files attached to records
 ```
 
@@ -133,7 +139,7 @@ Cadence reads Formwright's forms and your Formwright account (`users/{uid}`) to 
 
 `functions/autonumber.js`: `autoNumberOnCreate` numbers every new record's Auto number fields from a counter (`counters/{formId}__{fieldId}`) in a transaction; `autoNumberFill` (admins) numbers existing records, keeping numbers already typed in; `autoNumberSet` (admins) changes one number, keeps it unique and logs it in `autoLog`. The numbers are in `records/{id}.nums`, which the rules let only the server write. The year option uses `FORMWRIGHT_TZ` (default `America/Toronto`). Deploy with the other functions.
 
-### Audit trail (Formwright → Administration → Audit trail)
+### Audit trail (Formwright → Settings → Audit trail)
 
 `functions/audit.js` and the `audit*` functions in `index.js` write `audit/{id}` whenever a record, form, security group, account (`users/{uid}`) or `settings/*` document changes, with who did it and what changed. Deleted records keep a copy, and `restoreRecord` (admins, within 90 days) puts one back. Writes the server makes itself (auto numbers, removals, restores) are skipped there and noted by the function that made them. Admins read the trail; nobody writes it from the apps. It needs the `audit` indexes:
 
@@ -150,7 +156,7 @@ echo 'GMAIL_USER=you@gmail.com' >> functions/.env                # the Gmail acc
 firebase functions:secrets:set GMAIL_APP_PASSWORD --project tasks-2ae9d   # paste the Gmail app password
 ```
 
-Limits: 10 addresses per email, an 8 MB PDF, 100 emails per person per day (`emailLimits/{uid}`, server only). If Gmail refuses the password, make a new app password and run the `secrets:set` line again, then redeploy the functions.
+Limits: 10 addresses per email, an 8 MB PDF, 100 emails per person per day (`emailLimits/{uid}`, server only). If Gmail refuses the password ("535 … Username and Password not accepted" in the logs, or a scheduled run's task saying Gmail didn't accept the app password), make a new app password at myaccount.google.com/apppasswords and run the `secrets:set` line again (paste it there, never anywhere else), then redeploy every function that sends email: `emailRecord`, `automationOnWrite`, `automationDaily`, `automationMonthly`, `automationSend`, `commentWritten`, `stageOverdue`, `dashMailer`, `dashMailTest`.
 
 Each email's log keeps the message too, and the PDF exactly as sent is kept in Storage at `sentEmails/{recordId}/{emailId}.pdf` (written only by the server; `storage.rules` lets anyone who can see the record read it). If keeping the PDF fails, the email still counts as sent and its log says no copy was kept. `deleteSentEmails` (administrators only) deletes one, several or all of a record's sent emails with their PDFs, and notes what was deleted in the audit trail (kind `emaildeleted`). Deploy rules, Storage rules and functions together:
 
@@ -159,7 +165,7 @@ bash deploy.sh firestore:rules,storage,functions
 ```
 
 
-### Automations (Formwright → Administration → Automations)
+### Automations (Formwright → Settings → Automations)
 
 `functions/automate.js` (the logic, unit-tested) and `index.js` (`automationOnWrite` on every record write, `automationDaily` at 7:00 a.m. Toronto time, `automationTest` for the editor's Test run, and Email PDF calling them after sending). Automations are in `automations/{id}` (admins only), with `runs/` (the run log, server-written) and `fired/` (date runs done today). Records changed by an automation carry `auto: { depth, id, at, actor }`, written only by the server, used to stop loops (3 in a row). Emails use the same Gmail setup as Email PDF; PDFs are made here with `fwkit.cjs` (built from Formwright, see its README) and `vendor/pdf-lib.min.js`. New Formwright records in a form with a workflow are started at the first stage by `autoStart` (also in `automationOnWrite`, whatever made the record). Workflow notices also run there (`stageNotify`), with the task due on the stage's due date (working days): when a Formwright record arrives at a workflow stage, the previous stage's tasks for it (notes starting "Workflow:") are ticked done and the new assignee (or up to 10 members of the assigned group) gets a task and/or email. The security rules let only a staged record's assignee or an admin change it. Deploy rules and functions together:
 
@@ -167,9 +173,25 @@ bash deploy.sh firestore:rules,storage,functions
 bash deploy.sh firestore:rules,functions
 ```
 
+### Scheduled automations (Formwright → Automations → "is due on a schedule")
+
+`automationMonthly` runs every hour and, for each automation whose trigger is `{ type: 'schedule', freq, n, days, on, qmonth, month, start, hour, headsUp, approve }`, works out whether today is a run day and the hour has come (Formwright's `autosched.js`, through `fwkit.cjs`). Each run day runs once (`automations/{id}/sched/run`), and the day-before heads-up email to the automation's owner once (`…/sched/headsup`). For each record where the "Only if" holds, it either carries out the steps (an email that can't go stops the steps after it, and the owner gets a Cadence task saying why: no address, or Gmail refusing the password) or, with **approve first**, writes `pendingSends/{automationId_recordId}` and gives the owner a "Review and send" task. `automationSend` (administrators) does **Send now** or **Don't send**, checking the "Only if" still holds; `automationPreview` (administrators) lists what a schedule would do now, without changing anything. Older `every: 'monthEnd' | 'monthEndBiz'` triggers still work. Deploy:
+
+```sh
+bash deploy.sh firestore:rules,functions:automationMonthly,functions:automationPreview,functions:automationSend,functions:automationOnWrite,functions:automationDaily,functions:automationTest,functions:emailRecord
+```
+
+### Dashboard emails (Formwright → a dashboard → ✉ Email schedule, and Settings → Schedules)
+
+`dashMailer` runs every hour and sends each `dashMails/{dashboardId}` whose slot is due (every weekday, a day of the week, a date of the month, or every day, at an hour, Toronto time) to its people, everyone in its roles at the time, and other addresses (blind copies), through the same Gmail setup as Email PDF. It claims the slot first so a retry can't send twice, then notes `lastAt`, `lastStatus` ("sent", or why not) and `lastTo`. The email is built from the dashboard's reports by Formwright's `dashmail.js` (in `fwkit.cjs`). `dashMailTest` (administrators) sends one to the person asking. Deploy with `bash deploy.sh firestore:rules,functions:dashMailer,functions:dashMailTest`.
+
+### Workflow overdue reminders and roles
+
+`stageOverdue` runs on weekday mornings at 7:30 (Toronto). For records at a stage with a due date and overdue settings, it emails whoever has the record the morning after it's due, and, if it's still overdue the chosen number of working days later, also tells the administrators, a role or a person. Each is sent once per stage visit (`stageOverdue/{recordId}`) and noted in the audit trail (`functions/overdue.js` builds the emails, unit-tested). Stages, tasks, @mentions and emails can go to a **role** (Formwright → Settings → Roles): everyone in `users/{uid}.roles` that holds it. A task given to a role has `assigneeRole`/`assigneeRoleName` and only its owner in `members`; holders read it through the rules (`isRoleHolder`) and Cadence listens for each role you hold. Anyone in the role can do it, and it records who did (`doneByName`, "Accounts (Farren)"). `roleRenamed` updates tasks when a role is renamed. Deploy with `bash deploy.sh firestore:rules,functions`.
+
 ### Comments and @mentions (Formwright → a record → Comments)
 
-Comments live in `records/{id}/comments/` (anyone who can see the record reads and adds them, as themselves; you edit or delete your own, admins delete any; replies are one level deep). `functions/comments.js` (the logic, unit-tested) and `commentWritten` in `index.js` tell the people a comment @mentions, once each, and only if they can open the record (the same test as the rules): a `mentions/{id}` entry for My work → Mentions (only that person reads it or marks it read), an email through the same Gmail setup as Email PDF, and, when the commenter ticked it, a Cadence task from the commenter to them linked to the record (only people with Cadence). It writes `notified{uid: sent | no-access | gone}` on the comment so the app can say who wasn't told. Removing a comment removes its replies and mentions and notes it in the audit trail (kind `commentdeleted`). To put a link to the record in the email, add Formwright's address once:
+Comments live in `records/{id}/comments/` (anyone who can see the record reads and adds them, as themselves; you edit or delete your own, admins delete any; replies are one level deep). `functions/comments.js` (the logic, unit-tested) and `commentWritten` in `index.js` tell the people a comment @mentions (a role mention, `@Accounts`, means everyone holding it), once each, and only if they can open the record (the same test as the rules): a `mentions/{id}` entry for My work → Mentions (only that person reads it or marks it read), an email through the same Gmail setup as Email PDF, and, when the commenter ticked it, a Cadence task from the commenter to them linked to the record (only people with Cadence). It writes `notified{uid: sent | no-access | gone}` on the comment so the app can say who wasn't told. Removing a comment removes its replies and mentions and notes it in the audit trail (kind `commentdeleted`). To put a link to the record in the email, add Formwright's address once:
 
 ```sh
 echo 'FORMWRIGHT_URL=https://your-formwright-site.web.app' >> functions/.env
@@ -207,7 +229,7 @@ From this folder, in Cloud Shell:
 
 ```sh
 (cd tests && npm install && npm test)     # rules tests against the emulators (needs Java, which Cloud Shell has)
-(cd tests && npm run test:unit)           # dashboard layout, remove-person, auto-number, email, audit and comment tests (no emulator needed)
+(cd tests && npm run test:unit)           # dashboard layout, remove-person, auto-number, email, audit, comment, overdue, dashboard-email and scheduled-automation tests (no emulator needed)
 firebase deploy --only firestore:rules,firestore:indexes,storage --project tasks-2ae9d
 ```
 
@@ -268,13 +290,15 @@ Open **Settings → Notifications → Turn on for this device**, allow notificat
 
 ## Assigning tasks
 
-In the task editor, **Assigned to** shows "Me", the people you've worked with recently, and an email box. Type someone's email and press **Assign**.
+In the task editor, **Assigned to** lists **Me** and everyone with an account (from Formwright's people list: `profiles` with an email, not removed), each with their Google photo or initials, plus an email box for anyone else (type their email and press **Assign**). A task a Formwright role was given shows that role as a chip, kept unless the owner picks someone.
 
 - The person must have signed in to Cadence once. Signing in lists their email in the `people` directory. Directory entries can be looked up one exact email at a time, never listed, and only verified addresses can claim one. Every Google account is verified; email/password users need to verify their address first.
 - **The owner** can change anything, reassign, or delete.
 - **The assignee** can complete the task, change its date and time, and edit the checklist and notes. Title, type, importance and repeat are read-only for them. They can't delete it, but they can **Hand back** the task to the owner.
 - The assignee sees the owner's type and importance names and colors, even if their own settings differ.
 - Completing a repeating task as the assignee creates the next occurrence for the same owner and assignee.
+- **Photos:** signing in with Google saves your Google photo to your profile (refreshed each sign-in); avatars show it over your initials, and initials show for anyone without one or whose photo can't load. New photos appear without a reload.
+- **Tasks given to a role:** everyone holding the role sees the task ("Accounts · from Amy") and any of them can do it; the owner is told who finished it.
 - The app shows a notice when someone assigns you a task, and when an assignee completes or hands back one of yours. Use the **Assigned to me** / **Assigned to others** filters on the Tasks page to see just those.
 - **Version 25** makes Cadence **by approval**: a new account sees only a blocking screen ("You don't have access yet. Please contact an administrator.", the email it's signed in with, and Sign out) until a Formwright admin switches on **Can use Cadence** for it under Users (admins always can). It opens by itself once approved, and closes at once if access is taken away, and the rules refuse Cadence data to anyone not approved. Its sign-in also creates the same starting account record Formwright does, so new people show up there to approve. The site now runs scripts only from itself and Google's sign-in, Firebase and App Check services (the old inline redirect is `boot.js`). **Order matters:** install Formwright's update, approve everyone who uses Cadence, then upload these files, and deploy the new `firestore.rules` last.
 - **Version 24** turns the Board into **Dashboards**: several per person, each a grid you arrange by dragging and resizing. **Deploy the new `firestore.rules` before uploading the new files**: the old rules reject a board that holds dashboards. Your existing board opens as a dashboard called "My board" (sections become headings; small, medium and wide cards become 8, 12 and 24 squares across). Nothing is saved in the new shape until you change something, so nothing is lost if you go back. New charts from the Chart builder go on the dashboard you last opened.
@@ -328,7 +352,7 @@ firestore.rules       Firestore security rules (Cadence and Formwright)
 storage.rules         Storage security rules (Formwright uploads, kept PDFs of sent emails)
 firestore.indexes.json  indexes: reminders, and tasks linked to a record
 firebase.json         Firebase CLI config (rules, indexes, functions, hosting)
-functions/            Cloud Functions: notifications (index.js), removing a person (remove.js), auto numbers (autonumber.js), Email PDF (email.js), audit trail (audit.js), comments and @mentions (comments.js), automations (automate.js, fwkit.cjs, vendor/pdf-lib.min.js), package.json, .env
+functions/            Cloud Functions: notifications (index.js), removing a person (remove.js), auto numbers (autonumber.js), Email PDF (email.js), audit trail (audit.js), comments and @mentions (comments.js), automations and schedules (automate.js, fwkit.cjs, vendor/pdf-lib.min.js), overdue reminders (overdue.js), dashboard emails (dashMailer in index.js), package.json, .env
 tests/                rules tests (development only; run with npm test inside tests/)
 ```
 
