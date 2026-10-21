@@ -844,3 +844,37 @@ describe('dashboards emailed on a schedule', () => {
     await assertFails(setDoc(doc(db('admin'), 'stageOverdue', 'r1'), { stage: 's' }));
   });
 });
+
+describe('Problems and backups (Settings → Problems and backups)', () => {
+  const prob = (uid, extra = {}) => ({ at: 1, app: 'formwright', uid, name: 'Alice', where: 'Edit form · save-form', message: 'It broke', code: 'invalid-argument', detail: 'Error: It broke', url: '/#/x', agent: 'UA', version: '', ...extra });
+  test('anyone signed in reports their own, within the limits; only admins read or clear them', async () => {
+    await assertSucceeds(setDoc(doc(db('alice'), 'problems', 'p1'), prob('alice')));
+    await assertSucceeds(setDoc(doc(db('ned'), 'problems', 'p2'), prob('ned', { app: 'cadence' })));
+    await assertFails(setDoc(doc(db('alice'), 'problems', 'p3'), prob('bob')), 'not as someone else');
+    await assertFails(setDoc(doc(db('alice'), 'problems', 'p4'), prob('alice', { app: 'server' })), 'not as the server');
+    await assertFails(setDoc(doc(db('alice'), 'problems', 'p5'), prob('alice', { message: 'x'.repeat(501) })));
+    await assertFails(setDoc(doc(db('alice'), 'problems', 'p6'), prob('alice', { detail: 'x'.repeat(4001) })));
+    await assertFails(setDoc(doc(db('alice'), 'problems', 'p7'), prob('alice', { extra: 1 })));
+    await assertFails(setDoc(doc(db('alice'), 'problems', 'p8'), prob('alice', { message: '' })));
+    await assertFails(setDoc(doc(env.unauthenticatedContext().firestore(), 'problems', 'p9'), prob('alice')));
+    await assertFails(getDoc(doc(db('alice'), 'problems', 'p1')));
+    await assertFails(updateDoc(doc(db('alice'), 'problems', 'p1'), { message: 'changed' }));
+    await assertFails(deleteDoc(doc(db('alice'), 'problems', 'p1')));
+    await assertSucceeds(getDocs(collection(db('admin'), 'problems')));
+    await assertFails(updateDoc(doc(db('admin'), 'problems', 'p1'), { message: 'changed' }));
+    await assertSucceeds(deleteDoc(doc(db('admin'), 'problems', 'p1')));
+  });
+  test('the backup’s status is the server’s; admins read it', async () => {
+    await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'system', 'backup'), { lastAt: 1, ok: true }));
+    await assertSucceeds(getDoc(doc(db('admin'), 'system', 'backup')));
+    await assertFails(getDoc(doc(db('olivia'), 'system', 'backup')));
+    await assertFails(setDoc(doc(db('admin'), 'system', 'backup'), { lastAt: 2, ok: true }));
+  });
+  test('who gets the morning email: admins set it', async () => {
+    const ok = (uid, extra = {}) => ({ notify: [uid], updatedAt: 1, updatedBy: uid, ...extra });
+    await assertSucceeds(setDoc(doc(db('admin'), 'settings', 'problems'), ok('admin')));
+    await assertFails(setDoc(doc(db('admin'), 'settings', 'problems'), ok('admin', { notify: Array.from({ length: 21 }, (_, i) => 'u' + i) })));
+    await assertFails(setDoc(doc(db('admin'), 'settings', 'problems'), ok('admin', { other: 1 })));
+    await assertFails(setDoc(doc(db('olivia'), 'settings', 'problems'), ok('olivia')));
+  });
+});

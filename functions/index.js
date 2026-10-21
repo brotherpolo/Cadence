@@ -41,6 +41,8 @@ const audit = require('./audit');
 const overdue = require('./overdue');
 const cm = require('./comments');
 const automate = require('./automate');
+const backup = require('./backup');
+const problems = require('./problems');
 const fw = require('./fwkit.cjs');
 const { FieldValue } = require('firebase-admin/firestore');
 const { defineSecret } = require('firebase-functions/params');
@@ -49,6 +51,17 @@ const GMAIL_APP_PASSWORD = defineSecret('GMAIL_APP_PASSWORD');
 admin.initializeApp();
 const db = admin.firestore();
 setGlobalOptions({ region: process.env.CADENCE_REGION || 'us-central1', maxInstances: 5 });
+
+// Anything that goes wrong here is logged as before, and also listed for administrators in
+// Formwright → Settings → Problems (problems.js; a few per place per 10 minutes at most).
+const problemLimit = new problems.Limiter();
+function oops(where, ...args) {
+  logger.error(where, ...args);
+  try {
+    if (!problemLimit.ok(String(where))) return Promise.resolve();
+    return db.collection('problems').add(problems.serverEntry(String(where), args)).catch((e) => logger.warn('problem not recorded', e && e.message));
+  } catch (e) { return Promise.resolve(); } // never fail because of this
+}
 
 const DEFAULTS = { due: true, assigned: true, finished: true, digest: true, morning: '08:00', lead: 0 };
 const EVERY_MIN = 5;          // how often reminders runs
@@ -148,7 +161,7 @@ exports.taskChanged = onDocumentWritten('tasks/{taskId}', async (event) => {
     try {
       const entry = audit.taskReassignEntry(event.params.taskId, before, after, await who(audit.reassignedBy(before, after)), Date.now());
       if (entry) jobs.push(db.collection('audit').add(entry));
-    } catch (e) { logger.error('task reassign audit failed', e); }
+    } catch (e) { oops('task reassign audit failed', e); }
   }
   // given to a role (Formwright → Roles): everyone holding it hears about it
   if (after.assigneeRole && (before ? before.assigneeRole !== after.assigneeRole : !after.spawnedFrom)) {
@@ -166,7 +179,7 @@ exports.taskChanged = onDocumentWritten('tasks/{taskId}', async (event) => {
           tag: 'assigned-' + event.params.taskId, task: event.params.taskId
         }, prefs));
       }
-    } catch (e) { logger.error('role task notice failed', e); }
+    } catch (e) { oops('role task notice failed', e); }
   }
   // a record task ticked off: noted on the record, crediting the role ("Accounts (Farren)")
   if (before && !before.done && after.done && after.recordId && after.doneBy) {
@@ -178,7 +191,7 @@ exports.taskChanged = onDocumentWritten('tasks/{taskId}', async (event) => {
       }
       const entry = audit.taskDoneEntry(event.params.taskId, before, after, w, Date.now());
       if (entry) jobs.push(db.collection('audit').add(entry));
-    } catch (e) { logger.error('task done audit failed', e); }
+    } catch (e) { oops('task done audit failed', e); }
   }
   // finished by someone in the role it was given to
   if (before && !before.done && after.done && after.assigneeRole && after.doneBy && after.doneBy !== after.ownerId) {
@@ -204,7 +217,7 @@ exports.reminders = onSchedule({ schedule: 'every ' + EVERY_MIN + ' minutes', ti
   const last = new Map(states.docs.map((d) => [d.id, d.get('lastCheck') || 0]));
   for (const p of people.docs) {
     try { await remindOne(p.id, Object.assign({}, DEFAULTS, p.data()), now, last.get(p.id)); }
-    catch (e) { logger.error('reminders failed for a user', { uid: p.id, error: e.message }); }
+    catch (e) { oops('reminders failed for a user', { uid: p.id, error: e.message }); }
   }
 });
 
@@ -280,7 +293,7 @@ exports.removeAccount = onCall({ region: 'us-central1', timeoutSeconds: 300 }, a
   } catch (e) {
     const known = ['unauthenticated', 'invalid-argument', 'failed-precondition', 'permission-denied', 'not-found'];
     if (known.includes(e.code)) throw new HttpsError(e.code, e.message);
-    logger.error('removeAccount failed', e);
+    oops('removeAccount failed', e);
     throw new HttpsError('internal', 'The removal didn’t finish. Try again; nothing already removed comes back.');
   }
 });
@@ -292,7 +305,7 @@ const callable = (name, fn) => onCall({ region: 'us-central1', timeoutSeconds: 3
     return await fn(db, request.auth && request.auth.uid, request.data);
   } catch (e) {
     if (CALLABLE_CODES.includes(e.code)) throw new HttpsError(e.code, e.message);
-    logger.error(name + ' failed', e);
+    oops(name + ' failed', e);
     throw new HttpsError('internal', 'That didn’t finish. Try again.');
   }
 });
@@ -302,7 +315,7 @@ exports.autoNumberOnCreate = onDocumentCreated('records/{recordId}', async (even
   try {
     await autonumber.assignOnCreate(db, event.params.recordId);
   } catch (e) {
-    logger.error('auto number failed', { recordId: event.params.recordId, error: String(e && e.message) });
+    oops('auto number failed', { recordId: event.params.recordId, error: String(e && e.message) });
     throw e; // retried by Firestore triggers when retries are on; otherwise "Number existing records" fixes it
   }
 });
@@ -348,17 +361,17 @@ exports.emailRecord = onCall({ region: 'us-central1', timeoutSeconds: 120, memor
     const out = await sendRecordEmail(db, (mail) => mailer.sendMail(mail), request.auth && request.auth.uid, request.data, {
       from: user, ready: !!(user && pass), fromName: (brand.exists && brand.get('companyName')) || '', tz: process.env.FORMWRIGHT_TZ || 'America/Toronto',
       save: keepPdf,
-      onSaveError: (e) => logger.error('emailRecord: the PDF copy was not kept', e),
+      onSaveError: (e) => oops('emailRecord: the PDF copy was not kept', e),
     });
     const rec = (await db.collection('records').doc(request.data.recordId).get()).data() || {};
     const form = await formInfo(rec.formId);
     await logAudit(request.auth.uid, { area: 'record', kind: 'emailed', recordId: request.data.recordId, formId: rec.formId, formName: form.name || '', title: audit.titleOf(rec, form),
       note: `To ${out.to.join(', ')}${out.cc.length ? '; Cc ' + out.cc.join(', ') : ''} · “${String(request.data.subject || '').slice(0, 200)}”${request.data.attach === false ? ' (no PDF)' : ''}` });
-    try { await runAutomations('emailed', { recordId: request.data.recordId, actor: request.auth.uid }); } catch (e) { logger.error('automations after email failed', e); }
+    try { await runAutomations('emailed', { recordId: request.data.recordId, actor: request.auth.uid }); } catch (e) { oops('automations after email failed', e); }
     return out;
   } catch (e) {
     if (CALLABLE_CODES.includes(e.code)) throw new HttpsError(e.code, e.message);
-    logger.error('emailRecord failed', e);
+    oops('emailRecord failed', e);
     throw new HttpsError('internal', 'The email didn’t go. Try again.');
   }
 });
@@ -378,7 +391,7 @@ exports.deleteSentEmails = onCall({ region: 'us-central1' }, async (request) => 
     return { deleted: n };
   } catch (e) {
     if (CALLABLE_CODES.includes(e.code)) throw new HttpsError(e.code, e.message);
-    logger.error('deleteSentEmails failed', e);
+    oops('deleteSentEmails failed', e);
     throw new HttpsError('internal', 'The emails weren’t deleted. Try again.');
   }
 });
@@ -406,7 +419,7 @@ async function formInfo(formId) {
 async function logAudit(uid, entry) {
   try {
     await db.collection('audit').add({ at: Date.now(), by: uid || 'unknown', byName: await personName(uid), ...entry });
-  } catch (e) { logger.error('audit write failed', e); }
+  } catch (e) { oops('audit write failed', e); }
 }
 // writes the server makes itself (numbers, removals, restores) log their own, clearer entry
 const bySystem = (event) => event.authType === 'service_account' || event.authType === 'system' || /gserviceaccount\.com$/.test(String(event.authId || ''));
@@ -472,11 +485,16 @@ exports.auditSettings = onDocumentWrittenWithAuthContext('settings/{settingsId}'
   if (entry) await db.collection('audit').add(entry);
 });
 exports.restoreRecord = callable('restoreRecord', async (d, uid, data) => {
-  const out = await audit.restoreRecord(d, uid, data);
+  // Undo ({ recordId }) can arrive before the deletion is noted (auditRecord runs a moment later): wait a little
+  let out;
+  for (let i = 0; ; i++) {
+    try { out = await audit.restoreRecord(d, uid, data); break; }
+    catch (e) { if (e.code === 'not-found' && data && data.recordId && i < 10) { await new Promise((r) => setTimeout(r, 1000)); continue; } throw e; }
+  }
   const rec = (await db.collection('records').doc(out.recordId).get()).data() || {};
   const form = await formInfo(out.formId);
   await logAudit(uid, { area: 'record', kind: 'restored', recordId: out.recordId, formId: out.formId, formName: form.name || '', title: audit.titleOf(rec, form),
-    note: [out.parentGone ? 'its parent is gone, so it was restored on its own' : '', out.trimmed ? 'signatures and long text weren’t kept for this one' : ''].filter(Boolean).join('; ') });
+    note: [data && data.recordId ? 'Undo, just after deleting it' : '', out.parentGone ? 'its parent is gone, so it was restored on its own' : '', out.trimmed ? 'signatures and long text weren’t kept for this one' : ''].filter(Boolean).join('; ') });
   return out;
 });
 
@@ -607,7 +625,7 @@ async function runOne(a, c, { kind, actor, depth, test = false, strict = false, 
         const info = await mailer.sendMail({ from: { name: brand.companyName || g.user, address: g.user }, to: st.to, subject: st.subject, text: st.message, attachments: att });
         const logRef = db.collection('records').doc(c.rec.id).collection('emails').doc();
         let pdfPath = null; // kept like Email PDF's, so the Sent emails pop-up can open it
-        if (pdfBytes) { const path = `sentEmails/${c.rec.id}/${logRef.id}.pdf`; try { await keepPdf(path, pdfBytes); pdfPath = path; } catch (e) { logger.error('automation email: the PDF copy was not kept', e); } }
+        if (pdfBytes) { const path = `sentEmails/${c.rec.id}/${logRef.id}.pdf`; try { await keepPdf(path, pdfBytes); pdfPath = path; } catch (e) { oops('automation email: the PDF copy was not kept', e); } }
         await logRef.set({ to: st.to, cc: [], copyMe: false, subject: st.subject, message: st.message || '', fileName: pdfName, bytes, pdfPath, by, byName, at: now, messageId: (info && info.messageId) || null });
         await db.collection('audit').add({ at: now, by, byName, area: 'record', kind: 'emailed', recordId: c.rec.id, formId: c.form.id, formName: c.form.name || '', title, note: `To ${st.to.join(', ')} · “${st.subject}”${st.pdf ? '' : ' (no PDF)'}` });
         st.text += note;
@@ -619,12 +637,12 @@ async function runOne(a, c, { kind, actor, depth, test = false, strict = false, 
       }
       did.push(st.text);
     } catch (e) {
-      logger.error('automation step failed', a.id, st.kind, e);
+      oops('automation step failed', a.id, st.kind, e);
       const why = st.kind === 'email' ? automate.mailWhy(e) : e.message || 'failed';
       errors.push(`${st.text}: ${why}`);
       if (strict && st.kind === 'email') {
         errors.push('Stopped here, so nothing after it was done');
-        if (problemTasks) { try { await ownerTask(a, c, automate.problemTask({ name: a.name || 'Untitled', item: itemOf(c), it: fw.itemName(c.form), why })); } catch (e2) { logger.error('problem task failed', e2); } }
+        if (problemTasks) { try { await ownerTask(a, c, automate.problemTask({ name: a.name || 'Untitled', item: itemOf(c), it: fw.itemName(c.form), why })); } catch (e2) { oops('problem task failed', e2); } }
         break;
       }
     }
@@ -742,7 +760,7 @@ async function stageNotify(recordId, before, after) {
       const brand = (await db.collection('settings').doc('exports').get()).data() || {};
       try {
         await mailer.sendMail({ from: { name: brand.companyName || g.user, address: g.user }, to: people.get(uid).email, subject: `${fw.itemName(form)} ${title}: you’re the person responsible (${st.name})`, text: `${people.get(mover)?.name || 'Someone'} moved ${fw.itemName(form).toLowerCase()} “${title}” to ${st.name}. You’re the person responsible for it now.${due ? `\n\nIt’s due ${due}.` : ''}\n\nOpen Formwright and look in My work.` });
-      } catch (e) { logger.error('workflow email failed', e); }
+      } catch (e) { oops('workflow email failed', e); }
     }
   }
 }
@@ -798,7 +816,7 @@ exports.dashMailer = onSchedule({ schedule: '0 * * * *', timeZone: TZ, secrets: 
         if (!to.length) status = 'nobody to send to';
         else await mailer.sendMail({ from: { name: built.brand.companyName || g.user, address: g.user }, bcc: to, subject: built.mail.subject, text: built.mail.text, html: built.mail.html });
       }
-    } catch (e) { status = 'not sent: ' + (e.message || 'error').slice(0, 120); if (!e.quiet) logger.error('dashboard email failed', d.id, e); }
+    } catch (e) { status = 'not sent: ' + (e.message || 'error').slice(0, 120); if (!e.quiet) oops('dashboard email failed', d.id, e); }
     await d.ref.update({ lastAt: Date.now(), lastStatus: status, lastTo: to.slice(0, 50) });
   }
 });
@@ -822,7 +840,7 @@ exports.dashMailTest = onCall({ region: 'us-central1', timeoutSeconds: 120, memo
     return { to };
   } catch (e) {
     if (e instanceof HttpsError) throw e;
-    logger.error('dashboard email test failed', e);
+    oops('dashboard email test failed', e);
     throw new HttpsError('internal', 'The test didn’t send. Try again.');
   }
 });
@@ -876,7 +894,7 @@ exports.stageOverdue = onSchedule({ schedule: '30 7 * * 1-5', timeZone: TZ, secr
           await db.collection('audit').add(overdue.auditEntry({ recordId: rec.id, rec, formName: form.name, title: base.title, stage: base.stage, kind: 'escalate', to, now: Date.now() }));
         }
         await ref.set(out);
-      } catch (e) { logger.error('overdue check failed', rec.id, e); }
+      } catch (e) { oops('overdue check failed', rec.id, e); }
     }
   }
 });
@@ -884,8 +902,8 @@ exports.stageOverdue = onSchedule({ schedule: '30 7 * * 1-5', timeZone: TZ, secr
 exports.automationOnWrite = onDocumentWrittenWithAuthContext({ document: 'records/{recordId}', secrets: [GMAIL_APP_PASSWORD], memory: '512MiB', timeoutSeconds: 120 }, async (event) => {
   const [before, after] = docs(event);
   if (!after) return;
-  if (!before && !after.stage) { try { await autoStart(event.params.recordId, after); } catch (e) { logger.error('workflow start failed', e); } } // its own write comes back here as the arrival
-  try { await stageNotify(event.params.recordId, before, after); } catch (e) { logger.error('workflow notice failed', e); }
+  if (!before && !after.stage) { try { await autoStart(event.params.recordId, after); } catch (e) { oops('workflow start failed', e); } } // its own write comes back here as the arrival
+  try { await stageNotify(event.params.recordId, before, after); } catch (e) { oops('workflow notice failed', e); }
   const depth = automate.depthOf(before, after);
   const actor = depth ? (after.auto && after.auto.actor) || null : (String(after.updatedBy || '').startsWith('auto:') ? null : after.updatedBy || uidOf(event) || null);
   await runAutomations(before ? 'changed' : 'created', { recordId: event.params.recordId, before, after, actor, depth });
@@ -902,11 +920,11 @@ exports.commentWritten = onDocumentWrittenWithAuthContext({ document: 'records/{
   const [before, after] = docs(event);
   if (!after) {
     if (!before) return;
-    try { await commentRemoved(event, recordId, commentId, before); } catch (e) { logger.error('comment removal tidy-up failed', e); }
+    try { await commentRemoved(event, recordId, commentId, before); } catch (e) { oops('comment removal tidy-up failed', e); }
     return;
   }
   if (!cm.toNotify(after).length) return;
-  try { await commentNotify(recordId, commentId); } catch (e) { logger.error('comment mention failed', e); }
+  try { await commentNotify(recordId, commentId); } catch (e) { oops('comment mention failed', e); }
 });
 
 async function commentNotify(recordId, commentId) {
@@ -972,7 +990,7 @@ async function commentNotify(recordId, commentId) {
       const mail = cm.mentionEmail({ byName: owner.name, item, title, text: c.text, link, reply: !!c.parent, role: m.role });
       try {
         await mailer.sendMail({ from: { name: brand.companyName || g.user, address: g.user }, replyTo: owner.email || undefined, to, subject: mail.subject, text: mail.text, html: mail.html });
-      } catch (e) { logger.error('mention email failed', e); }
+      } catch (e) { oops('mention email failed', e); }
     }
   }
 }
@@ -1014,7 +1032,7 @@ exports.automationDaily = onSchedule({ schedule: '0 7 * * *', timeZone: TZ, secr
       try {
         const c = await recordContext(r.id);
         if (c && automate.condsHold(a, c.k.look(c.form, c.rec))) await runOne(a, c, { kind: 'date', actor: r.ownerId, depth: 0 });
-      } catch (e) { logger.error('date automation failed', a.id, r.id, e); }
+      } catch (e) { oops('date automation failed', a.id, r.id, e); }
     }
   }
 });
@@ -1095,7 +1113,7 @@ async function scheduleRun(a) {
       const taskId = await ownerTask(a, c, automate.approvalTask({ name, item, it: it(c), steps }));
       await pref.set({ automationId: a.id, automationName: name, recordId: c.rec.id, formId: c.form.id, title: automate.itemLabel(item), steps: steps.filter((s) => s.kind !== 'skip').map((s) => s.text).slice(0, 10), taskId, at: now, ownerId: a.createdBy });
       await db.collection('automations').doc(a.id).collection('runs').add({ at: now, recordId: c.rec.id, title: item.title, kind: 'schedule', depth: 0, ok: true, did: ['Waiting for your OK (task created)'], errors: [], actor: null });
-    } catch (e) { logger.error('scheduled automation: one record failed', a.id, c.rec.id, e); }
+    } catch (e) { oops('scheduled automation: one record failed', a.id, c.rec.id, e); }
   }
 }
 
@@ -1108,10 +1126,10 @@ exports.automationMonthly = onSchedule({ schedule: '0 * * * *', timeZone: TZ, se
     const due = fw.scheduleNow(a.trigger, local);
     try {
       if (due.headsUp && await claimPeriod(a.id, 'headsup', due.headsPeriod)) await scheduleHeadsUp(a, due.headsPeriod);
-    } catch (e) { logger.error('automation heads-up failed', a.id, e); }
+    } catch (e) { oops('automation heads-up failed', a.id, e); }
     try {
       if (due.run && await claimPeriod(a.id, 'run', due.period)) await scheduleRun(a);
-    } catch (e) { logger.error('scheduled automation failed', a.id, e); }
+    } catch (e) { oops('scheduled automation failed', a.id, e); }
   }
 });
 
@@ -1159,7 +1177,68 @@ exports.automationSend = onCall({ region: 'us-central1', timeoutSeconds: 120, me
     return { ok: true, sent: true, did: out.did };
   } catch (e) {
     if (CALLABLE_CODES.includes(e.code)) throw new HttpsError(e.code, e.message);
-    logger.error('automationSend failed', e);
+    oops('automationSend failed', e);
     throw new HttpsError('internal', 'That didn’t finish. Try again.');
   }
+});
+
+/* ---------- nightly backups (backup.js) ----------
+   2:30 a.m. every night: the whole database to gs://<bucket>/nightly/YYYY-MM-DD/, then nightly
+   copies older than 30 days are removed (the newest 7 always stay). How it went is kept in
+   system/backup for Formwright → Settings to show; a failure is listed under Problems.
+   One-time setup (README): this function's service account needs to export the database and
+   to write to the bucket. */
+exports.nightlyBackup = onSchedule({ schedule: '30 2 * * *', timeZone: TZ, memory: '512MiB', timeoutSeconds: 540, retryCount: 1 }, async () => {
+  const project = process.env.GCLOUD_PROJECT || (JSON.parse(process.env.FIREBASE_CONFIG || '{}').projectId) || 'tasks-2ae9d';
+  const bucketName = process.env.BACKUP_BUCKET || `${project}-db-exports`;
+  const status = db.collection('system').doc('backup');
+  const started = Date.now();
+  try {
+    const { v1 } = require('@google-cloud/firestore');
+    const client = new v1.FirestoreAdminClient();
+    const bucket = admin.storage().bucket(bucketName);
+    const out = await backup.run({
+      now: started, tz: TZ, keepDays: backup.KEEP_DAYS,
+      exportTo: async (prefix) => {
+        const [op] = await client.exportDocuments({ name: client.databasePath(project, '(default)'), outputUriPrefix: `gs://${bucketName}/${prefix}`, collectionIds: [] });
+        await op.promise();
+      },
+      listFolders: async () => { const [, , res] = await bucket.getFiles({ prefix: 'nightly/', delimiter: '/', autoPaginate: false, maxResults: 1000 }); return (res && res.prefixes) || []; },
+      deleteFolder: async (prefix) => { await bucket.deleteFiles({ prefix, force: true }); },
+    });
+    await status.set({ lastAt: Date.now(), startedAt: started, ok: true, folder: `gs://${bucketName}/${out.folder}`, removed: out.removed.length, keepDays: backup.KEEP_DAYS, error: '' }, { merge: true });
+    await status.set({ lastOkAt: Date.now() }, { merge: true });
+  } catch (e) {
+    await status.set({ lastAt: Date.now(), startedAt: started, ok: false, error: String((e && e.message) || e).slice(0, 500) }, { merge: true }).catch(() => {});
+    await oops('Nightly backup', e);
+    throw e; // so the scheduler retries once
+  }
+});
+
+/* ---------- Problems: the morning email, and clearing old reports (problems.js) ----------
+   7:05 a.m.: administrators listed in settings/problems.notify get one email of what's new
+   since the last one (nothing new, no email). Reports older than 30 days are removed. */
+exports.problemsDigest = onSchedule({ schedule: '5 7 * * *', timeZone: TZ, secrets: [GMAIL_APP_PASSWORD], memory: '512MiB', timeoutSeconds: 300, retryCount: 0 }, async () => {
+  const now = Date.now();
+  // clear out the old ones
+  const old = await db.collection('problems').where('at', '<', now - problems.KEEP_DAYS * 864e5).limit(1000).get();
+  for (let i = 0; i < old.docs.length; i += 400) { const b = db.batch(); old.docs.slice(i, i + 400).forEach((d) => b.delete(d.ref)); await b.commit(); }
+  // what's new since the last email
+  const mark = db.collection('system').doc('problems');
+  const since = ((await mark.get()).data() || {}).lastDigestAt || now - 864e5;
+  const fresh = (await db.collection('problems').where('at', '>', since).limit(500).get()).docs.map((d) => d.data());
+  await mark.set({ lastDigestAt: now }, { merge: true });
+  if (!fresh.length) return;
+  const notify = (((await db.collection('settings').doc('problems').get()).data() || {}).notify || []).slice(0, 20);
+  if (!notify.length) return;
+  const people = await allPeople();
+  const admins = new Set((await db.collection('users').where('role', '==', 'admin').get()).docs.map((d) => d.id));
+  const to = [...new Set(notify.filter((u) => admins.has(u)).map((u) => people.get(u)?.email).filter(Boolean))];
+  if (!to.length) return;
+  const g = gmail();
+  if (!g.ready) { logger.warn('problems: Gmail isn’t set up, so no email'); return; }
+  const base = String(process.env.FORMWRIGHT_URL || '').trim().replace(/#.*$/, '').replace(/\/+$/, '');
+  const mail = problems.digestEmail(fresh, /^https?:\/\//i.test(base) ? base + '/#/problems' : '', TZ);
+  const brand = (await db.collection('settings').doc('exports').get()).data() || {};
+  await mailer.sendMail({ from: { name: brand.companyName || g.user, address: g.user }, to, subject: mail.subject, text: mail.text, html: mail.html });
 });

@@ -69,7 +69,8 @@ function fakeDb(seed) {
   const snap = (path) => ({ id: path.split('/').pop(), exists: m.has(path), data: () => m.get(path), get: (k) => (m.get(path) || {})[k] });
   const ref = (path) => ({ path, get: async () => snap(path) });
   return {
-    m, collection: (c) => ({ doc: (id) => ref(c + '/' + id) }),
+    m, collection: (c) => ({ doc: (id) => ref(c + '/' + id),
+      where: (f, op, v) => ({ get: async () => ({ docs: [...m.keys()].filter((k) => k.startsWith(c + '/') && (m.get(k) || {})[f] === v).map((k) => ({ ...snap(k), ref: ref(k) })) }) }) }),
     async runTransaction(fn) { const ops = []; const out = await fn({ get: async (r) => snap(r.path), set: (r, d) => ops.push(() => m.set(r.path, d)), update: (r, d) => ops.push(() => m.set(r.path, { ...m.get(r.path), ...d })) }); ops.forEach((f) => f()); return out; },
   };
 }
@@ -145,4 +146,28 @@ test('roles: tasks given to a role, reassigned and ticked off', () => {
   const d = taskDoneEntry('t1', t, { ...t, done: true }, { by: 'far', byName: 'Accounts (Farren)' }, 6);
   assert.deepEqual([d.kind, d.byName, d.changes[0].to], ['taskdone', 'Accounts (Farren)', 'Done']);
   assert.equal(taskDoneEntry('t1', { ...t, done: true }, { ...t, done: true }, who, 6), null);
+});
+
+test('Undo: whoever deleted it, for 10 minutes, if they can still add to that form', async () => {
+  const min = 60e3, now = 1000 * min;
+  const del = (by, at) => ({ ...recordEntry('r1', rec({ st: 'Draft' }), null, form, { by, byName: by }, at) });
+  const seed = (extra = {}) => fakeDb({ 'users/boss': { role: 'admin' }, 'users/amy': { role: 'member', access: { f_inv: { view: 'own', edit: 'own' } } },
+    'users/bo': { role: 'member', access: { '*': { view: 'all', edit: 'none' } } }, 'forms/f_inv': form, 'records/c1': { formId: 'f_cli' }, ...extra });
+  const rejects = (p, code, re) => assert.rejects(p, (e) => e.code === code && (!re || re.test(e.message)));
+  // found by the record, the latest deletion
+  let db = seed({ 'audit/old': { ...del('amy', now - 30 * min), restoredAt: now - 20 * min }, 'audit/a1': del('amy', now - 2 * min) });
+  const out = await restoreRecord(db, 'amy', { recordId: 'r1' }, now);
+  assert.equal(out.auditId, 'a1');
+  assert.equal(db.m.get('records/r1').values.st, 'Draft');
+  assert.equal(db.m.get('audit/a1').restoredBy, 'amy');
+  await rejects(restoreRecord(db, 'amy', { recordId: 'r1' }, now), 'not-found', /isn’t noted yet/);
+  // too late, someone else's, can't add to the form, not noted yet
+  await rejects(restoreRecord(seed({ 'audit/a1': del('amy', now - 11 * min) }), 'amy', { recordId: 'r1' }, now), 'failed-precondition', /10 minutes/);
+  await rejects(restoreRecord(seed({ 'audit/a1': del('boss', now - min) }), 'amy', { recordId: 'r1' }, now), 'permission-denied', /someone else deleted/);
+  await rejects(restoreRecord(seed({ 'audit/a1': del('bo', now - min) }), 'bo', { recordId: 'r1' }, now), 'permission-denied', /can no longer add/);
+  await rejects(restoreRecord(seed(), 'amy', { recordId: 'r1' }, now), 'not-found');
+  // members still can't restore from the audit trail
+  await rejects(restoreRecord(seed({ 'audit/a1': del('amy', now - min) }), 'amy', { auditId: 'a1' }, now), 'permission-denied');
+  // admins can undo anyone's, any time in 90 days
+  assert.equal((await restoreRecord(seed({ 'audit/a1': del('amy', now - 60 * min) }), 'boss', { recordId: 'r1' }, now)).recordId, 'r1');
 });

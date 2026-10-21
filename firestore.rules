@@ -690,6 +690,31 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Problems (Formwright → Settings → Problems): what went wrong for people, for administrators.
+    // Anyone signed in can report their own (size-limited, never changed); the server reports its
+    // own and clears old ones. Only administrators read or clear them.
+    function validProblem(d) {
+      return d.keys().hasOnly(['at', 'app', 'uid', 'name', 'where', 'message', 'code', 'detail', 'url', 'agent', 'version'])
+        && d.keys().hasAll(['at', 'app', 'uid', 'message'])
+        && d.uid == request.auth.uid
+        && d.app in ['formwright', 'cadence']
+        && d.at is int
+        && d.message is string && d.message.size() > 0 && d.message.size() <= 500
+        && optString(d, 'name', 100) && optString(d, 'where', 200) && optString(d, 'code', 100)
+        && optString(d, 'detail', 4000) && optString(d, 'url', 300) && optString(d, 'agent', 300) && optString(d, 'version', 40);
+    }
+    match /problems/{id} {
+      allow read, delete: if isAdmin();
+      allow create: if signedIn() && validProblem(request.resource.data);
+      allow update: if false;
+    }
+
+    // What the server's own jobs last did (system/backup: the nightly backup): admins read it.
+    match /system/{id} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
     // Audit trail (Formwright → Administration): written only by the server; admins read it.
     match /audit/{entryId} {
       allow read: if isAdmin();
@@ -941,6 +966,10 @@ service cloud.firestore {
             && request.resource.data.timeZone is string && request.resource.data.timeZone.size() > 0 && request.resource.data.timeZone.size() <= 60
             && request.resource.data.weekStart in [0, 1]
             && request.resource.data.fyStart is int && request.resource.data.fyStart >= 1 && request.resource.data.fyStart <= 12
+            && request.resource.data.updatedAt is int && request.resource.data.updatedBy == request.auth.uid)
+        // settings/problems: administrators who get the morning email of new problems
+        || (id == 'problems' && request.resource.data.keys().hasOnly(['notify', 'updatedAt', 'updatedBy'])
+            && request.resource.data.notify is list && request.resource.data.notify.size() <= 20
             && request.resource.data.updatedAt is int && request.resource.data.updatedBy == request.auth.uid)
         || (id == 'home' && request.resource.data.keys().hasOnly(['dashboardId', 'updatedAt', 'updatedBy'])
             && request.resource.data.dashboardId is string && request.resource.data.dashboardId.size() <= 100

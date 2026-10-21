@@ -8,14 +8,16 @@
  *   formEntry / groupEntry / userEntry / settingsEntry
  *                                           form designs, security groups, accounts (role,
  *                                           groups, Cadence), PDF export settings
- *   restoreRecord(db, callerUid, { auditId })
- *                                           admins: bring back a deleted record (within 90 days)
+ *   restoreRecord(db, callerUid, { auditId } | { recordId })
+ *                                           admins: bring back a deleted record (within 90 days);
+ *                                           whoever deleted it: Undo, for 10 minutes ({ recordId })
  *
  * Entry: { at, by, byName, area, kind, formId, formName, recordId, title, targetId, targetName,
  *          changes: [{ key, label, type, from, to }], note, snapshot }
  * Values are kept raw (the app shows them the way it shows fields); long text is shortened,
  * a signature is noted as signed, and a file or photo by its name. */
 const RESTORE_DAYS = 90;
+const UNDO_MINUTES = 10;
 const MAX_TEXT = 1000;
 
 function fail(code, message) { const e = new Error(message); e.code = code; throw e; }
@@ -187,14 +189,30 @@ function settingsEntry(id, before, after, who, now) {
 /** Admins: bring a deleted record back from its audit entry (same ID, so its rows and links reconnect). */
 async function restoreRecord(db, callerUid, data, now = Date.now()) {
   const auditId = data && typeof data.auditId === 'string' ? data.auditId : '';
+  const undoId = !auditId && data && typeof data.recordId === 'string' ? data.recordId : '';
   if (!callerUid) fail('unauthenticated', 'Sign in first.');
-  if (!auditId) fail('invalid-argument', 'Say which deletion to undo.');
+  if (!auditId && !undoId) fail('invalid-argument', 'Say which deletion to undo.');
   const me = await db.collection('users').doc(callerUid).get();
-  if (!me.exists || me.get('role') !== 'admin') fail('permission-denied', 'Only administrators can restore records.');
-  const aRef = db.collection('audit').doc(auditId);
-  const a = await aRef.get();
+  const admin = me.exists && me.get('role') === 'admin';
+  if (!admin && !undoId) fail('permission-denied', 'Only administrators can restore records.');
+  let aRef, a;
+  if (auditId) { aRef = db.collection('audit').doc(auditId); a = await aRef.get(); }
+  else {
+    // Undo: the latest deletion of that record (the server notes it a moment after the delete)
+    const q = await db.collection('audit').where('recordId', '==', undoId).get();
+    a = q.docs.filter((d) => d.get('kind') === 'deleted' && d.get('area') === 'record' && !d.get('restoredAt')).sort((x, y) => (y.get('at') || 0) - (x.get('at') || 0))[0];
+    if (!a) fail('not-found', 'That deletion isn’t noted yet. Try again in a moment.');
+    aRef = a.ref;
+  }
   if (!a.exists || a.get('kind') !== 'deleted' || a.get('area') !== 'record' || !a.get('snapshot')) fail('not-found', 'That isn’t a deleted record.');
   if (a.get('restoredAt')) fail('failed-precondition', 'That record has already been restored.');
+  if (!admin) { // Undo: their own deletion, just now, on a form they can still add to
+    const acc = (me.exists && me.get('access')) || {};
+    const lvl = acc[a.get('snapshot').formId] || acc['*'] || {};
+    if (a.get('by') !== callerUid) fail('permission-denied', 'Only administrators can restore something someone else deleted.');
+    if (now - (a.get('at') || 0) > UNDO_MINUTES * 60e3) fail('failed-precondition', `Undo works for ${UNDO_MINUTES} minutes. After that, ask an administrator to restore it.`);
+    if (!['own', 'all'].includes(lvl.edit)) fail('permission-denied', 'You can no longer add records to that form, so it can’t come back from here.');
+  }
   if (now - (a.get('at') || 0) > RESTORE_DAYS * 864e5) fail('failed-precondition', `Records can be restored for ${RESTORE_DAYS} days after they’re deleted.`);
   const recordId = a.get('recordId');
   const recRef = db.collection('records').doc(recordId);
@@ -210,7 +228,7 @@ async function restoreRecord(db, callerUid, data, now = Date.now()) {
     tx.set(recRef, { ...snap, updatedAt: now, updatedBy: callerUid });
     tx.update(aRef, { restoredAt: now, restoredBy: callerUid });
   });
-  return { recordId, formId: snap.formId, parentGone, trimmed: !!a.get('snapshot').trimmed };
+  return { recordId, formId: snap.formId, parentGone, trimmed: !!a.get('snapshot').trimmed, auditId: auditId || a.id };
 }
 
 /**
@@ -249,4 +267,4 @@ function reassignedBy(before, after) {
   return after.ownerId;
 }
 
-module.exports = { taskReassignEntry, taskDoneEntry, reassignedBy, recordEntry, creditName, formEntry, groupEntry, userEntry, settingsEntry, restoreRecord, auditValue, titleOf, RESTORE_DAYS };
+module.exports = { UNDO_MINUTES, taskReassignEntry, taskDoneEntry, reassignedBy, recordEntry, creditName, formEntry, groupEntry, userEntry, settingsEntry, restoreRecord, auditValue, titleOf, RESTORE_DAYS };

@@ -1,12 +1,15 @@
 {
   "name": "cadence-functions",
-  "description": "Cadence push notifications, and Formwright's server jobs: removing people, auto numbers, emailing PDFs.",
+  "description": "Cadence push notifications, and Formwright's server jobs: removing people, auto numbers, emailing PDFs, nightly backups, problem reports.",
   "private": true,
   "main": "index.js",
-  "engines": { "node": "22" },
+  "engines": {
+    "node": "22"
+  },
   "dependencies": {
     "firebase-admin": "^12.7.0",
     "firebase-functions": "^6.1.0",
-    "nodemailer": "^6.9.16"
+    "nodemailer": "^6.9.16",
+    "@google-cloud/firestore": "^7.10.0"
   }
 }

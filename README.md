@@ -142,7 +142,7 @@ Cadence reads Formwright's forms and your Formwright account (`users/{uid}`) to 
 
 ### Audit trail (Formwright → Settings → Audit trail)
 
-`functions/audit.js` and the `audit*` functions in `index.js` write `audit/{id}` whenever a record, form, security group, account (`users/{uid}`) or `settings/*` document changes, with who did it and what changed. Deleted records keep a copy, and `restoreRecord` (admins, within 90 days) puts one back. Writes the server makes itself (auto numbers, removals, restores) are skipped there and noted by the function that made them. Admins read the trail; nobody writes it from the apps. It needs the `audit` indexes:
+`functions/audit.js` and the `audit*` functions in `index.js` write `audit/{id}` whenever a record, form, security group, account (`users/{uid}`) or `settings/*` document changes, with who did it and what changed. Deleted records keep a copy, and `restoreRecord` puts one back: admins within 90 days (from the Audit trail, or **Recently deleted** under a form's list), and whoever deleted it for 10 minutes (**Undo** in Formwright's "Deleted" message, on a form they can still add to). Writes the server makes itself (auto numbers, removals, restores) are skipped there and noted by the function that made them. Admins read the trail; nobody writes it from the apps. It needs the `audit` indexes:
 
 ```sh
 bash deploy.sh firestore:rules,firestore:indexes,functions   # backs up the database first
@@ -224,6 +224,14 @@ The rules let administrators add versions under `forms/{id}/versions/` (as thems
 firebase deploy --only functions --project tasks-2ae9d
 ```
 
+### Problems (Formwright → Settings → Problems and backups)
+
+When something goes wrong, a short report goes to `problems/{id}`: from people's browsers (Formwright's `src/problems.js` and Cadence's `problems.js`, each person only their own, size-limited and checked by the rules) and from the server (every `oops(...)` in `functions/index.js`, which also logs as before; a few per place per 10 minutes at most). Browser noise, extensions and a lost connection aren't reported. Only administrators read or clear them. `problemsDigest` (7:05 a.m.) emails administrators who switched on **Email me each morning** (`settings/problems.notify`) when there's something new, and clears reports older than 30 days. `functions/problems.js` is unit-tested.
+
+### Nightly backups
+
+`nightlyBackup` (2:30 a.m., `functions/backup.js`, unit-tested) exports the whole database to `gs://tasks-2ae9d-db-exports/nightly/YYYY-MM-DD/`, and once that has worked removes nightly copies older than 30 days (the newest 7 always stay; nothing outside `nightly/` is touched). How it went is kept in `system/backup` (admins read it): Formwright shows it under Settings → Problems and backups, and a failure is listed as a problem. It's in addition to Firestore's own daily and weekly backups (see Backups below). **One-time setup**, after deploying the functions: `bash scripts/backup-setup.sh` in Cloud Shell. It lets the account the backup runs as export the database and write to the bucket (it never changes `firebase-adminsdk-fbsvc`).
+
 ### Deploying rules
 
 From this folder, in Cloud Shell:
@@ -301,6 +309,7 @@ In the task editor, **Assigned to** lists **Me** and everyone with an account (f
 - **Photos:** signing in with Google saves your Google photo to your profile (refreshed each sign-in); avatars show it over your initials, and initials show for anyone without one or whose photo can't load. New photos appear without a reload.
 - **Tasks given to a role:** everyone holding the role sees the task ("Accounts · from Amy") and any of them can do it; the owner is told who finished it.
 - The app shows a notice when someone assigns you a task, and when an assignee completes or hands back one of yours. Use the **Assigned to me** / **Assigned to others** filters on the Tasks page to see just those.
+- **Version 31:** problems in Cadence (a failed save, an error) are reported to Formwright's Settings → Problems and backups for administrators (`problems.js`). Needs the rules in this update.
 - **Version 30:** reads form icons as Formwright now saves them (a list of shapes, each a plain object), so they show again once a form with an icon saves. No rules change.
 - **Version 29:** a task linked to a Formwright record shows that form's icon (when the form uses one: Formwright → Form designer → Settings → Badge) instead of the coloured square, on the task, in the task editor and on the form filter chips. Drawn from plain shapes only. No rules change.
 - **Versions 26 to 28:** Google photos on avatars (26, 27); a task's date and time open their calendar or clock wherever you click in the box, and Settings → Your data shows the right version again (28). No rules change.
@@ -327,6 +336,7 @@ tokens.css            color, type and spacing tokens (light + dark)
 app.css               layout and components
 icons.js              inline SVG icons
 utils.js              dates, formatting, quick-add parser, recurrence
+problems.js           reports what goes wrong to Formwright → Settings → Problems
 store.js              state, local cache, sync engine
 firebase-config.js    your Firebase config (empty = local only)
 firebase-sync.js      sign-in screen + Firestore connection
@@ -372,7 +382,7 @@ A Firestore record holds at most 1 MB. Tasks are saved one per record, so they h
 
 ## Backups
 
-- **Automatic:** Firestore keeps a daily backup (7 days) and a weekly one (Sundays, 8 weeks). Photos and files are copied nightly to `gs://tasks-2ae9d-file-backups` (kept for good; deletions recoverable for 30 days).
+- **Automatic:** Firestore keeps a daily backup (7 days) and a weekly one (Sundays, 8 weeks). The **nightly export** (`nightlyBackup`, above) adds a copy in `gs://tasks-2ae9d-db-exports/nightly/<date>` every night, kept 30 days, in the same form as a manual export, and Formwright shows whether last night's worked. Photos and files are copied nightly to `gs://tasks-2ae9d-file-backups` (kept for good; deletions recoverable for 30 days).
 - **Before every deploy:** the deploy workflows (Formwright's and Cadence's) first export the whole database to `gs://tasks-2ae9d-db-exports/before-deploy/<date>-<app>-<commit>` with `scripts/backup-db.mjs`, and stop without deploying if that fails. Cloud Shell deploys do the same with `bash deploy.sh <what>` in the Cadence folder. These copies are deleted after 90 days by a rule on the bucket.
 - **Any time:** `gcloud firestore export gs://tasks-2ae9d-db-exports/$(date +%Y-%m-%d-%H%M) --project=tasks-2ae9d` makes a copy that's kept until you delete it.
 - **Restoring** overwrites live documents with the same IDs, so plan it first (one collection or everything, into this database or a new one).
