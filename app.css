@@ -1376,3 +1376,6 @@ th.num .cb-tsort { flex-direction: row-reverse; }
   .bd-cv.can-drill .bd-card { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; cursor: pointer; }
   .bd-acts { width: 100%; }
 }
+
+/* Date and time boxes open their picker on any click (utils.js) */
+input[type="date"]:not(:disabled):not([readonly]),input[type="datetime-local"]:not(:disabled):not([readonly]),input[type="time"]:not(:disabled):not([readonly]){cursor:pointer}

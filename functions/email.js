@@ -13,6 +13,10 @@
  *
  * Limits: administrators only; 10 addresses per email; 8 MB PDF; 100 emails per person per day,
  * so a stolen account can't be used to send spam. Errors are { code, message }. */
+
+/** Gmail turned the app password down (EAUTH, "535 Username and Password not accepted"), not a passing hiccup. */
+const gmailRefused = (e) => !!e && (e.code === 'EAUTH' || e.responseCode === 535 || /\b535\b|BadCredentials|Username and Password not accepted|Invalid login/i.test(String(e.message || e.response || '')));
+const APP_PASSWORD_HELP = 'Gmail didn’t accept the app password, so nothing was sent. It changes when the Google account’s password changes or the app password is removed. An administrator needs to make a new one at myaccount.google.com/apppasswords, store it in Cloud Shell, and redeploy (see “Email PDF” in the Cadence instructions).';
 const MAX_TO = 10, MAX_PDF = 8 * 1024 * 1024, PER_DAY = 100;
 const EMAIL = /^[^\s@<>(),;:"\[\]\\]+@[^\s@<>(),;:"\[\]\\]+\.[^\s@<>(),;:"\[\]\\]{2,}$/;
 
@@ -31,7 +35,7 @@ async function sendRecordEmail(db, send, callerUid, data, opts = {}) {
   if (!callerUid) fail('unauthenticated', 'Sign in first.');
   const me = await db.collection('users').doc(callerUid).get();
   if (!me.exists || me.get('role') !== 'admin') fail('permission-denied', 'Only administrators can email records.');
-  if (!opts.from || !opts.ready) fail('failed-precondition', 'Email isn’t set up yet. See the install steps (Gmail app password).');
+  if (!opts.from || !opts.ready) fail('failed-precondition', 'Email isn’t set up yet: Formwright needs a Gmail address and app password. See “Email PDF” in the Cadence instructions.');
 
   const recordId = data && typeof data.recordId === 'string' ? data.recordId : '';
   if (!recordId) fail('invalid-argument', 'Say which record.');
@@ -79,8 +83,7 @@ async function sendRecordEmail(db, send, callerUid, data, opts = {}) {
   try {
     info = await send(mail);
   } catch (e) {
-    const auth = /535|auth|credentials|Username and Password/i.test(String(e && (e.responseCode || e.message)));
-    fail(auth ? 'failed-precondition' : 'unavailable', auth ? 'Gmail refused the app password. Make a new one and store it again (see the install steps).' : 'Gmail didn’t accept the email just now. Try again in a minute.');
+    fail(gmailRefused(e) ? 'failed-precondition' : 'unavailable', gmailRefused(e) ? APP_PASSWORD_HELP : 'Gmail didn’t accept the email just now. Try again in a minute.');
   }
   const logRef = recRef.collection('emails').doc();
   let pdfPath = null;

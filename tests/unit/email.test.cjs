@@ -83,6 +83,14 @@ test('Gmail refusing the password says what to fix', async () => {
   await assert.rejects(sendRecordEmail(fakeDb(seed()), send, 'boss', ok(), OPTS), (e) => e.code === 'failed-precondition' && /app password/.test(e.message));
 });
 
+test('Gmail refusing the password: in words, with where to make a new one (EAUTH too); a hiccup just says try again', async () => {
+  const eauth = async () => { const e = new Error('Invalid login'); e.code = 'EAUTH'; throw e; };
+  await assert.rejects(sendRecordEmail(fakeDb(seed()), eauth, 'boss', ok(), OPTS), (e) => e.code === 'failed-precondition' && /didn’t accept the app password, so nothing was sent/.test(e.message) && /myaccount\.google\.com\/apppasswords/.test(e.message));
+  const hiccup = async () => { const e = new Error('Connection timeout'); e.code = 'ETIMEDOUT'; throw e; };
+  await assert.rejects(sendRecordEmail(fakeDb(seed()), hiccup, 'boss', ok(), OPTS), (e) => e.code === 'unavailable' && /Try again in a minute/.test(e.message));
+  await assert.rejects(sendRecordEmail(fakeDb(seed()), eauth, 'boss', ok(), { ...OPTS, ready: false }), (e) => e.code === 'failed-precondition' && /isn’t set up yet/.test(e.message));
+});
+
 test('the PDF is kept with the message, so it can be opened from Sent emails', async () => {
   const db = fakeDb(seed()), kept = [];
   const out = await sendRecordEmail(db, gmail(), 'boss', ok(), { ...OPTS, save: async (path, pdf, name) => kept.push([path, pdf.subarray(0, 5).toString(), name]) });

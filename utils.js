@@ -1,7 +1,15 @@
 /* Cadence — helpers: dates, formatting, escaping, natural-language quick add */
 (function () {
   const C = (window.Cadence = window.Cadence || {});
-  C.VERSION = '25';
+  C.VERSION = '28'; // keep in step with the ?v= numbers in index.html
+  // Date and time boxes open their calendar or clock wherever they're clicked, not only on the
+  // small icon: nobody has to type a date. Typing still works from the keyboard.
+  const PICK = { date: 1, 'datetime-local': 1, time: 1, month: 1, week: 1 };
+  document.addEventListener('click', (e) => {
+    const t = e.target;
+    if (!t || t.tagName !== 'INPUT' || !PICK[t.type] || t.disabled || t.readOnly || typeof t.showPicker !== 'function') return;
+    try { t.showPicker(); } catch (err) { /* already open, or not allowed here: the icon still works */ }
+  });
   const pad = (n) => String(n).padStart(2, '0');
 
   const D = {
