@@ -810,7 +810,7 @@ service cloud.firestore {
     // form's default list, and only an admin can make it. A view never grants access to
     // records: each list still shows only the records the reader may see.
     function validListView(d) {
-      return d.keys().hasOnly(['formId', 'name', 'ownerId', 'shared', 'cols', 'sort', 'filters', 'density', 'createdAt', 'updatedAt'])
+      return d.keys().hasOnly(['formId', 'name', 'ownerId', 'shared', 'cols', 'sort', 'filters', 'density', 'layout', 'createdAt', 'updatedAt'])
         && d.keys().hasAll(['formId', 'name', 'ownerId', 'shared', 'cols', 'sort'])
         && d.formId is string && d.formId.size() > 0 && d.formId.size() <= 100
         && d.name is string && d.name.size() > 0 && d.name.size() <= 80
@@ -820,6 +820,13 @@ service cloud.firestore {
         && d.sort is map && d.sort.keys().hasOnly(['key', 'dir'])
         && (!('filters' in d) || (d.filters is map && d.filters.size() <= 40))
         && (!('density' in d) || d.density in ['cozy', 'compact'])
+        // Board or Timeline (Formwright's layoutlogic.js): how the view shows its records
+        && (!('layout' in d) || (d.layout is map
+            && d.layout.keys().hasOnly(['kind', 'by', 'sum', 'start', 'end', 'color', 'zoom'])
+            && d.layout.get('kind', 'table') in ['table', 'board', 'timeline']
+            && d.layout.get('zoom', 'month') in ['week', 'month', 'quarter']
+            && optString(d.layout, 'by', 100) && optString(d.layout, 'sum', 100) && optString(d.layout, 'start', 100)
+            && optString(d.layout, 'end', 100) && optString(d.layout, 'color', 100)))
         && (!('createdAt' in d) || d.createdAt is number)
         && (!('updatedAt' in d) || d.updatedAt is number);
     }

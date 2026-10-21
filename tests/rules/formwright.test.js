@@ -431,6 +431,11 @@ describe('list views', () => {
   test('members save, change and delete their own private views', async () => {
     await assertSucceeds(setDoc(doc(db('bob'), 'listViews', 'v_new'), lv('bob')));
     await assertSucceeds(updateDoc(doc(db('bob'), 'listViews', 'v_new'), { cols: ['f:stage'], density: 'compact', updatedAt: 2 }));
+    // a Board or Timeline view keeps its layout
+    await assertSucceeds(setDoc(doc(db('bob'), 'listViews', 'v_board'), lv('bob', { layout: { kind: 'board', by: '_stage', sum: 'budget', start: 'start', end: 'due', color: '_stage', zoom: 'month' } })));
+    await assertFails(setDoc(doc(db('bob'), 'listViews', 'v_bad1'), lv('bob', { layout: { kind: 'pie' } })));
+    await assertFails(setDoc(doc(db('bob'), 'listViews', 'v_bad2'), lv('bob', { layout: { kind: 'board', extra: 1 } })));
+    await assertFails(setDoc(doc(db('bob'), 'listViews', 'v_bad3'), lv('bob', { layout: { kind: 'timeline', zoom: 'year' } })));
     await assertSucceeds(getDocs(query(collection(db('bob'), 'listViews'), where('ownerId', '==', 'bob'))));
     await assertSucceeds(deleteDoc(doc(db('bob'), 'listViews', 'v_new')));
   });
