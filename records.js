@@ -48,10 +48,12 @@
   const ICON_TAGS = { path: 1, circle: 1, rect: 1, line: 1, polyline: 1, polygon: 1, ellipse: 1 };
   const ICON_ATTRS = { d: 1, cx: 1, cy: 1, r: 1, rx: 1, ry: 1, x: 1, y: 1, width: 1, height: 1, x1: 1, y1: 1, x2: 1, y2: 1, points: 1 };
   function iconSvg(icon) {
-    const shapes = (Array.isArray(icon.shapes) ? icon.shapes : []).filter((x) => Array.isArray(x) && ICON_TAGS[x[0]] && x[1] && typeof x[1] === 'object').slice(0, 40);
+    // saved as [{ t: tag, ...attrs }] (Firestore can't store a list inside a list); [tag, attrs] is read too
+    const shapes = (Array.isArray(icon.shapes) ? icon.shapes : []).map((x) => (Array.isArray(x) ? Object.assign({}, x[1] && typeof x[1] === 'object' ? x[1] : {}, { t: x[0] }) : x))
+      .filter((x) => x && typeof x === 'object' && ICON_TAGS[x.t]).slice(0, 40);
     if (!shapes.length) return '';
     return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" focusable="false">' +
-      shapes.map(([tag, a]) => '<' + tag + Object.keys(a).filter((k) => ICON_ATTRS[k] && a[k] != null && String(a[k]).length <= 4000).map((k) => ' ' + k + '="' + String(a[k]).replace(/[^0-9a-zA-Z .,\-+]/g, '') + '"').join('') + '/>').join('') + '</svg>';
+      shapes.map((a) => '<' + a.t + Object.keys(a).filter((k) => ICON_ATTRS[k] && a[k] != null && String(a[k]).length <= 4000).map((k) => ' ' + k + '="' + String(a[k]).replace(/[^0-9a-zA-Z .,\-+]/g, '') + '"').join('') + '/>').join('') + '</svg>';
   }
   const colorOf = (f) => COLORS[((f && f.color) || 0) % COLORS.length];
   const itemName = (f) => ((f && f.itemName) || '').trim() || ((f && f.name) || 'Record').replace(/s$/i, '') || 'Record';
