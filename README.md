@@ -99,6 +99,7 @@ records/{id}.nums            auto numbers (server only); counters/{id} their cou
 records/{id}/emails/{id}     PDFs emailed from a record (server only; readable with the record)
 audit/{id}                   the audit trail (server only; admins read)
 settings/exports             company name and logo for Formwright's PDF exports (admins write; members read)
+settings/calendar            time zone, week start (0/1) and fiscal year start month (1-12) for reports and dashboards (admins write; members read)
 automations/{id}             Formwright automations (admins only); runs/ run log, fired/ and sched/ server marks
 pendingSends/{id}            scheduled automations waiting for an admin's OK (server writes; admins read)
 dashMails/{dashboardId}      a dashboard's email schedule (admins write; the server notes the last send)
@@ -183,7 +184,7 @@ bash deploy.sh firestore:rules,functions:automationMonthly,functions:automationP
 
 ### Dashboard emails (Formwright → a dashboard → ✉ Email schedule, and Settings → Schedules)
 
-`dashMailer` runs every hour and sends each `dashMails/{dashboardId}` whose slot is due (every weekday, a day of the week, a date of the month, or every day, at an hour, Toronto time) to its people, everyone in its roles at the time, and other addresses (blind copies), through the same Gmail setup as Email PDF. It claims the slot first so a retry can't send twice, then notes `lastAt`, `lastStatus` ("sent", or why not) and `lastTo`. The email is built from the dashboard's reports by Formwright's `dashmail.js` (in `fwkit.cjs`). `dashMailTest` (administrators) sends one to the person asking. Deploy with `bash deploy.sh firestore:rules,functions:dashMailer,functions:dashMailTest`.
+`dashMailer` runs every hour and sends each `dashMails/{dashboardId}` whose slot is due (every weekday, a day of the week, a date of the month, or every day, at an hour, Toronto time) to its people, everyone in its roles at the time, and other addresses (blind copies), through the same Gmail setup as Email PDF. It claims the slot first so a retry can't send twice, then notes `lastAt`, `lastStatus` ("sent", or why not) and `lastTo`. The email is built from the dashboard's reports by Formwright's `dashmail.js` (in `fwkit.cjs`). `dashMailTest` (administrators) sends one to the person asking. The numbers use the dashboard's saved period (any of Today … Last year, or a custom range) counted with `settings/calendar` (Formwright → Settings → Dates and time: time zone, week start, fiscal year); a chart over time that would be more than 14 rows steps up (days to weeks, say) and the step still running says "(so far)". Deploy with `bash deploy.sh firestore:rules,functions:dashMailer,functions:dashMailTest`.
 
 ### Workflow overdue reminders and roles
 
