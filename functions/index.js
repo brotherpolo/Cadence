@@ -14,6 +14,8 @@
  *   automation*   Formwright → Administration → Automations: run on every record change
  *                 (automationOnWrite), at 7:00 each morning for dates (automationDaily), after
  *                 Email PDF, and as a dry run from the editor (automationTest) (automate.js)
+ *                 On a schedule (automationMonthly, hourly check), with Preview
+ *                 (automationPreview) and approve first's Send now / Don't send (automationSend)
  *   audit*        Formwright → Audit trail: records, forms, groups, accounts and settings as
  *                 they change; restoreRecord brings a deleted record back (audit.js)
  *   commentWritten Formwright record comments: tells the people @mentioned (My work → Mentions,
@@ -550,7 +552,10 @@ async function serverPdf(c, people) {
 }
 
 /** Carry out one automation on one record, log the run, and note changes in the audit trail. */
-async function runOne(a, c, { kind, actor, depth, test = false }) {
+// strict (scheduled runs): an email that can't go (no address, Gmail refused it) stops the
+// steps after it, so an invoice is never marked Sent when it wasn't; the owner gets a task
+// saying why, unless problemTasks is false (Send now, where they're looking at it).
+async function runOne(a, c, { kind, actor, depth, test = false, strict = false, problemTasks = true }) {
   const people = await allPeople();
   const brand = (await db.collection('settings').doc('exports').get()).data() || {};
   const now = Date.now();
@@ -562,7 +567,14 @@ async function runOne(a, c, { kind, actor, depth, test = false }) {
   const title = c.k.recTitle(c.rec, c.form);
   for (const st of steps) {
     try {
-      if (st.kind === 'skip') { did.push(st.text); continue; }
+      if (st.kind === 'skip') {
+        if (strict && st.noAddr) {
+          errors.push(`${st.text}. Stopped here, so nothing after it was done`);
+          if (problemTasks) await ownerTask(a, c, automate.problemTask({ name: a.name || 'Untitled', item: itemOf(c), it: fw.itemName(c.form), why: 'there’s no email address to send it to' }));
+          break;
+        }
+        did.push(st.text); continue;
+      }
       if (st.kind === 'set') {
         const up = { updatedAt: now, updatedBy: by, auto: stamp };
         Object.entries(st.set).forEach(([fid, v]) => { up['values.' + fid] = v; });
@@ -608,11 +620,39 @@ async function runOne(a, c, { kind, actor, depth, test = false }) {
       did.push(st.text);
     } catch (e) {
       logger.error('automation step failed', a.id, st.kind, e);
-      errors.push(`${st.text}: ${e.message || 'failed'}`);
+      const why = st.kind === 'email' ? automate.mailWhy(e) : e.message || 'failed';
+      errors.push(`${st.text}: ${why}`);
+      if (strict && st.kind === 'email') {
+        errors.push('Stopped here, so nothing after it was done');
+        if (problemTasks) { try { await ownerTask(a, c, automate.problemTask({ name: a.name || 'Untitled', item: itemOf(c), it: fw.itemName(c.form), why })); } catch (e2) { logger.error('problem task failed', e2); } }
+        break;
+      }
     }
   }
   await db.collection('automations').doc(a.id).collection('runs').add({ at: now, recordId: c.rec.id, title, kind, depth, ok: !errors.length, did, errors, actor: actor || null });
-  return steps;
+  return { steps, did, errors };
+}
+
+/** A record as the scheduled emails and tasks name it: its title, parent and first money amount. */
+function itemOf(c) {
+  const money = (c.form.fields || []).find((f) => f.type === 'currency' || (f.type === 'formula' && f.format === 'currency'));
+  let amount = '';
+  try { amount = money ? c.k.fieldText(c.form, c.rec, money.label) || '' : ''; } catch (e) { amount = ''; }
+  return { title: c.k.recTitle(c.rec, c.form), parent: c.parent && c.pform ? c.k.recTitle(c.parent, c.pform) : '', amount };
+}
+
+/** A Cadence task for the automation's owner, linked to the record. */
+async function ownerTask(a, c, { title, notes }) {
+  const people = await allPeople();
+  const owner = a.createdBy, op = people.get(owner) || {}, now = Date.now();
+  const ref = db.collection('tasks').doc();
+  await ref.set({
+    id: ref.id, title, notes: notes || '', due: automate.dayKey(now, TZ), time: null, done: false, doneAt: null, createdAt: now, updatedAt: now,
+    subtasks: [], repeat: 'none', ownerId: owner, ownerName: op.name || null, ownerEmail: op.email || null,
+    assigneeId: null, assigneeName: null, assigneeEmail: null, members: [owner],
+    recordId: c.rec.id, formId: c.form.id, recordSnap: { title: c.k.recTitle(c.rec, c.form), form: c.form.name || '', color: fw.COLORS[(c.form.color ?? 0) % fw.COLORS.length] },
+  });
+  return ref.id;
 }
 
 /** Run the automations of a record's form that match this event. */
@@ -725,7 +765,9 @@ async function dashMailBuild(dashboardId, schedule) {
   const c = { forms, records, profiles, formById: k.formById, recById: k.recById, valOf: (f, r, form) => k.valOf(f, r, form), fmt: (f, v) => k.fmt(f, v), recTitle: (r) => k.recTitle(r, k.formById(r.formId)) };
   const base = String(process.env.FORMWRIGHT_URL || '').trim().replace(/#.*$/, '').replace(/\/+$/, '');
   const brand = (await db.collection('settings').doc('exports').get()).data() || {};
-  const prevTz = process.env.TZ; process.env.TZ = TZ; // "this month" and the date in Formwright's time zone
+  // the company calendar (Formwright → Settings → Dates and time): its time zone, week start and fiscal year
+  const cal = fw.setCalendar((await db.collection('settings').doc('calendar').get()).data() || null);
+  const prevTz = process.env.TZ; process.env.TZ = cal.timeZone || TZ; // dates in the company's time zone
   try {
     return { mail: fw.dashEmail(c, dash, reports, { now: Date.now(), link: /^https?:\/\//i.test(base) ? `${base}/#/dashboard/${encodeURIComponent(dashboardId)}` : '', schedule, company: brand.companyName || '' }), people, brand };
   } finally { if (prevTz === undefined) delete process.env.TZ; else process.env.TZ = prevTz; }
@@ -990,4 +1032,134 @@ exports.automationTest = callable('automationTest', async (d, uid, data) => {
   const due = (a.trigger || {}).type === 'date' ? automate.dateDue(a, c.form, c.rec, automate.dayKey(Date.now(), TZ)) : null;
   const steps = await runOne({ ...a, id: 'test', createdBy: uid }, c, { kind: 'test', actor: uid, depth: 0, test: true });
   return { title: c.k.recTitle(c.rec, c.form), holds, due, steps: steps.map((x) => ({ kind: x.kind, text: x.text })) };
+});
+
+/* ---------- Formwright → Automations on a schedule (monthly) ---------- */
+// "Every month on the last business day at 5 p.m., for each invoice where Auto-send is End of
+// month and Status is Draft: email the PDF to the customer's billing email, then set Status to
+// Sent." Any frequency (daily, weekly on chosen days, monthly, quarterly, yearly, every n of
+// them: autosched.js in Formwright). Checked every hour; each run day runs once
+// (automations/{id}/sched/run) and gives its heads-up once the day before (…/sched/headsup). With "approve first", each record waits in
+// pendingSends/{automationId_recordId} with a task for the owner, until Send now or Don't send.
+
+/** Claim this run (or heads-up) for an automation, by its run day: true the first time only. */
+async function claimPeriod(autoId, what, period) {
+  const ref = db.collection('automations').doc(autoId).collection('sched').doc(what);
+  return db.runTransaction(async (tx) => { const cur = await tx.get(ref); if (cur.exists && cur.get('period') === period) return false; tx.set(ref, { period, at: Date.now() }); return true; });
+}
+
+/** The records an automation would run on now (its "Only if" holds), with what it would do. */
+async function scheduledItems(a, limit = 300) {
+  const recs = (await db.collection('records').where('formId', '==', a.formId).get()).docs.map(recData);
+  const out = [];
+  for (const r of recs) {
+    if (out.length >= limit) break;
+    const c = await recordContext(r.id);
+    if (!c || !automate.condsHold(a, c.k.look(c.form, c.rec))) continue;
+    const steps = await runOne(a, c, { kind: 'test', actor: r.ownerId, depth: 0, test: true });
+    out.push({ c, steps, item: itemOf(c) });
+  }
+  return { items: out, checked: recs.length };
+}
+
+async function scheduleHeadsUp(a, runKey) {
+  const people = await allPeople();
+  const to = people.get(a.createdBy)?.email;
+  if (!to) return;
+  const { items } = await scheduledItems(a);
+  if (!items.length) return;
+  const g = gmail();
+  if (!g.ready) throw new Error('Email isn’t set up (Gmail app password)');
+  const form = (await allForms()).find((f) => f.id === a.formId) || {};
+  const local = automate.localNow(Date.now(), TZ);
+  const brand = (await db.collection('settings').doc('exports').get()).data() || {};
+  const m = automate.headsUpEmail({ name: a.name || 'Untitled', form, items: items.map((x) => ({ ...x.item, steps: x.steps })), dayText: fw.dayText(runKey), hourText: fw.hourText(fw.normalizeSchedule(a.trigger).hour), approve: !!a.trigger.approve });
+  await mailer.sendMail({ from: { name: brand.companyName || g.user, address: g.user }, to, subject: m.subject, text: m.text });
+  await db.collection('automations').doc(a.id).collection('runs').add({ at: Date.now(), recordId: null, title: '', kind: 'headsup', depth: 0, ok: true, did: [`Heads-up emailed to ${to}: ${items.length} for tomorrow`], errors: [], actor: null });
+}
+
+async function scheduleRun(a) {
+  const { items } = await scheduledItems(a);
+  const it = (c) => fw.itemName(c.form);
+  for (const { c, steps, item } of items) {
+    try {
+      if (!a.trigger.approve) { await runOne(a, c, { kind: 'schedule', actor: c.rec.ownerId || null, depth: 0, strict: true }); continue; }
+      const now = Date.now(), name = a.name || 'Untitled';
+      if (steps.some((s) => s.noAddr)) {
+        await ownerTask(a, c, automate.problemTask({ name, item, it: it(c), why: 'there’s no email address to send it to' }));
+        await db.collection('automations').doc(a.id).collection('runs').add({ at: now, recordId: c.rec.id, title: item.title, kind: 'schedule', depth: 0, ok: false, did: [], errors: ['No email address to send to: you have a task to fix it'], actor: null });
+        continue;
+      }
+      const pref = db.collection('pendingSends').doc(`${a.id}_${c.rec.id}`);
+      if ((await pref.get()).exists) continue; // still waiting from before
+      const taskId = await ownerTask(a, c, automate.approvalTask({ name, item, it: it(c), steps }));
+      await pref.set({ automationId: a.id, automationName: name, recordId: c.rec.id, formId: c.form.id, title: automate.itemLabel(item), steps: steps.filter((s) => s.kind !== 'skip').map((s) => s.text).slice(0, 10), taskId, at: now, ownerId: a.createdBy });
+      await db.collection('automations').doc(a.id).collection('runs').add({ at: now, recordId: c.rec.id, title: item.title, kind: 'schedule', depth: 0, ok: true, did: ['Waiting for your OK (task created)'], errors: [], actor: null });
+    } catch (e) { logger.error('scheduled automation: one record failed', a.id, c.rec.id, e); }
+  }
+}
+
+exports.automationMonthly = onSchedule({ schedule: '0 * * * *', timeZone: TZ, secrets: [GMAIL_APP_PASSWORD], memory: '512MiB', timeoutSeconds: 540, retryCount: 0 }, async () => {
+  const local = automate.localNow(Date.now(), TZ);
+  const s = await db.collection('automations').where('on', '==', true).get();
+  for (const d of s.docs) {
+    const a = { ...d.data(), id: d.id };
+    if ((a.trigger || {}).type !== 'schedule') continue;
+    const due = fw.scheduleNow(a.trigger, local);
+    try {
+      if (due.headsUp && await claimPeriod(a.id, 'headsup', due.headsPeriod)) await scheduleHeadsUp(a, due.headsPeriod);
+    } catch (e) { logger.error('automation heads-up failed', a.id, e); }
+    try {
+      if (due.run && await claimPeriod(a.id, 'run', due.period)) await scheduleRun(a);
+    } catch (e) { logger.error('scheduled automation failed', a.id, e); }
+  }
+});
+
+const adminOnly = async (d, uid) => {
+  if (!uid) throw Object.assign(new Error('Sign in first.'), { code: 'unauthenticated' });
+  const me = await d.collection('users').doc(uid).get();
+  if (!me.exists || me.get('role') !== 'admin') throw Object.assign(new Error('Only administrators can do that.'), { code: 'permission-denied' });
+};
+
+// the editor's "Preview this month": which records it would run on now, and what it would do
+exports.automationPreview = callable('automationPreview', async (d, uid, data) => {
+  await adminOnly(d, uid);
+  const a = data && data.automation;
+  if (!a || !a.formId || (a.trigger || {}).type !== 'schedule') throw Object.assign(new Error('Say which scheduled automation.'), { code: 'invalid-argument' });
+  const { items, checked } = await scheduledItems({ ...a, id: 'test', createdBy: uid }, 200);
+  const local = automate.localNow(Date.now(), TZ), next = fw.nextRun(a.trigger, local);
+  return { next, nextText: next ? `${fw.dayText(next)} at ${fw.hourText(fw.normalizeSchedule(a.trigger).hour)}` : 'not scheduled (check the dates)', schedule: fw.autoScheduleText(a.trigger), checked, items: items.map(({ c, steps, item }) => ({ recordId: c.rec.id, title: automate.itemLabel(item), steps: steps.map((x) => ({ kind: x.kind, text: x.text, noAddr: !!x.noAddr })) })) };
+});
+
+// "Approve first": Send now or Don't send, from the record or the Automations page
+exports.automationSend = onCall({ region: 'us-central1', timeoutSeconds: 120, memory: '512MiB', secrets: [GMAIL_APP_PASSWORD] }, async (request) => {
+  const uid = request.auth && request.auth.uid, data = request.data || {};
+  try {
+    await adminOnly(db, uid);
+    if (typeof data.id !== 'string' || !data.id) throw Object.assign(new Error('Say which one.'), { code: 'invalid-argument' });
+    const pref = db.collection('pendingSends').doc(data.id);
+    const p = await pref.get();
+    if (!p.exists) throw Object.assign(new Error('That’s already been dealt with.'), { code: 'not-found' });
+    const pd = p.data(), now = Date.now();
+    const closeTask = async () => { if (pd.taskId) { try { await db.collection('tasks').doc(pd.taskId).update({ done: true, doneAt: now, updatedAt: now }); } catch (e) { /* already gone */ } } };
+    if (!data.send) {
+      await pref.delete(); await closeTask();
+      await db.collection('automations').doc(pd.automationId).collection('runs').add({ at: now, recordId: pd.recordId, title: pd.title || '', kind: 'schedule', depth: 0, ok: true, did: ['Not sent: you chose Don’t send'], errors: [], actor: uid });
+      return { ok: true, sent: false };
+    }
+    const ad = await db.collection('automations').doc(pd.automationId).get();
+    if (!ad.exists) throw Object.assign(new Error('The automation has been deleted, so there’s nothing to send with. Choose Don’t send.'), { code: 'failed-precondition' });
+    const a = { ...ad.data(), id: ad.id };
+    const c = await recordContext(pd.recordId);
+    if (!c) { await pref.delete(); await closeTask(); throw Object.assign(new Error('That record has been deleted.'), { code: 'not-found' }); }
+    if (!automate.condsHold(a, c.k.look(c.form, c.rec))) throw Object.assign(new Error('It no longer matches the automation’s “Only if” (for example its Status or Auto-send changed), so nothing was sent. Choose Don’t send, or send it with Email PDF.'), { code: 'failed-precondition' });
+    const out = await runOne(a, c, { kind: 'schedule', actor: uid, depth: 0, strict: true, problemTasks: false });
+    if (out.errors.length) return { ok: false, did: out.did, errors: out.errors };
+    await pref.delete(); await closeTask();
+    return { ok: true, sent: true, did: out.did };
+  } catch (e) {
+    if (CALLABLE_CODES.includes(e.code)) throw new HttpsError(e.code, e.message);
+    logger.error('automationSend failed', e);
+    throw new HttpsError('internal', 'That didn’t finish. Try again.');
+  }
 });

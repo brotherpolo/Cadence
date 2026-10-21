@@ -936,6 +936,12 @@ service cloud.firestore {
       allow create, update: if isAdmin() && (
         (id == 'exports' && validExportSettings(request.resource.data))
         // settings/home: the dashboard Home shows for anyone who hasn't chosen their own
+        // settings/calendar: time zone, week start, fiscal year (Formwright → Settings → Dates and time)
+        || (id == 'calendar' && request.resource.data.keys().hasOnly(['timeZone', 'weekStart', 'fyStart', 'updatedAt', 'updatedBy'])
+            && request.resource.data.timeZone is string && request.resource.data.timeZone.size() > 0 && request.resource.data.timeZone.size() <= 60
+            && request.resource.data.weekStart in [0, 1]
+            && request.resource.data.fyStart is int && request.resource.data.fyStart >= 1 && request.resource.data.fyStart <= 12
+            && request.resource.data.updatedAt is int && request.resource.data.updatedBy == request.auth.uid)
         || (id == 'home' && request.resource.data.keys().hasOnly(['dashboardId', 'updatedAt', 'updatedBy'])
             && request.resource.data.dashboardId is string && request.resource.data.dashboardId.size() <= 100
             && request.resource.data.updatedBy == request.auth.uid));

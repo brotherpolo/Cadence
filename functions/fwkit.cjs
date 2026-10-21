@@ -23,22 +23,31 @@ __export(entry_exports, {
   ACTION_LABEL: () => ACTION_LABEL,
   COLORS: () => COLORS,
   assigneeFor: () => assigneeFor,
+  autoScheduleText: () => scheduleText2,
   dashEmail: () => dashEmail,
   dayKey: () => dayKey,
+  dayText: () => dayText,
   daysOverdue: () => daysOverdue,
   drawPdf: () => drawPdf,
   dueSlot: () => dueSlot,
   fileName: () => fileName,
   fillTemplate: () => fillTemplate,
   firstStage: () => firstStage,
+  hourText: () => hourText2,
   itemName: () => itemName,
   makeKit: () => makeKit,
+  nextRun: () => nextRun,
+  nextRuns: () => nextRuns,
+  normalizeCal: () => normalizeCal,
+  normalizeSchedule: () => normalize,
   opOf: () => opOf,
   overdueStep: () => overdueStep,
   partsIn: () => partsIn,
   recipients: () => recipients,
   ruleFires: () => ruleFires,
+  scheduleNow: () => scheduleNow,
   scheduleText: () => scheduleText,
+  setCalendar: () => setCalendar,
   stageDue: () => stageDue,
   testCond: () => testCond,
   wfOn: () => wfOn
@@ -192,9 +201,9 @@ var FX = (() => {
     }
     return t;
   }
-  const cache = /* @__PURE__ */ new Map();
+  const cache2 = /* @__PURE__ */ new Map();
   function parse(src) {
-    if (cache.has(src)) return cache.get(src);
+    if (cache2.has(src)) return cache2.get(src);
     const t = tokenize(src);
     let p = 0;
     if (!t.length) throw E2("Write a formula, for example {Price} * {Quantity}.");
@@ -261,8 +270,8 @@ var FX = (() => {
     }
     const ast = cmp();
     if (p < t.length) throw E2(`Unexpected \u201C${t[p].v}\u201D. Check for a missing operator like + or *.`);
-    cache.set(src, ast);
-    if (cache.size > 500) cache.clear();
+    cache2.set(src, ast);
+    if (cache2.size > 500) cache2.clear();
     return ast;
   }
   function ev(n, c) {
@@ -463,7 +472,7 @@ function wrapText(text, width, measure) {
   });
   return lines;
 }
-function colWidths(cols, rows, measure, avail, { min = 36, cap = 220, pad = 10 } = {}) {
+function colWidths(cols, rows, measure, avail, { min = 36, cap = 220, pad: pad2 = 10 } = {}) {
   const n = cols.length;
   if (!n) return [];
   const want = cols.map((c, i) => {
@@ -471,7 +480,7 @@ function colWidths(cols, rows, measure, avail, { min = 36, cap = 220, pad = 10 }
     rows.forEach((r) => {
       w2 = Math.max(w2, Math.min(cap, measure(String(r[i] ?? ""))));
     });
-    return Math.max(min, Math.min(cap, w2) + pad);
+    return Math.max(min, Math.min(cap, w2) + pad2);
   });
   const total = want.reduce((a, b) => a + b, 0);
   if (total <= avail) {
@@ -500,7 +509,7 @@ function fitBox(w, h, maxW, maxH, scaleMax = 1) {
   const s = Math.min(maxW / w, maxH / h, scaleMax);
   return { w: w * s, h: h * s };
 }
-function planTable(cols, rows, measure, { spaces, sizes = [9.5, 8.5, 7.5, 7], pad = 10, cap = 230, maxWord = 0.4, short = 20 } = {}) {
+function planTable(cols, rows, measure, { spaces, sizes = [9.5, 8.5, 7.5, 7], pad: pad2 = 10, cap = 230, maxWord = 0.4, short = 20 } = {}) {
   const sum = (a) => a.reduce((x, y) => x + y, 0);
   const tryFit = (sp2, size2, strict, roomy) => {
     const mF = measure(size2, false), mB = measure(size2, true);
@@ -519,8 +528,8 @@ function planTable(cols, rows, measure, { spaces, sizes = [9.5, 8.5, 7.5, 7], pa
       });
       let keep = c.num ? full : Math.max(strict ? whole : 0, Math.min(longest, sp2.avail * maxWord));
       if (roomy && !c.num) keep = Math.max(keep, Math.min(full, sp2.avail * 0.22));
-      minW[i] = Math.max(head, keep) + pad + 0.5;
-      want[i] = Math.max(minW[i], Math.min(cap, full) + pad + 0.5);
+      minW[i] = Math.max(head, keep) + pad2 + 0.5;
+      want[i] = Math.max(minW[i], Math.min(cap, full) + pad2 + 0.5);
     });
     if (sum(minW) > sp2.avail + 0.01) return null;
     const total = sum(want);
@@ -537,7 +546,7 @@ function planTable(cols, rows, measure, { spaces, sizes = [9.5, 8.5, 7.5, 7], pa
     }
   }
   const sp = spaces[spaces.length - 1], size = sizes[sizes.length - 1];
-  const widths = colWidths(cols.map((c) => ({ label: c.label })), rows, (t, b) => measure(size, b)(t), sp.avail, { min: 30, cap, pad });
+  const widths = colWidths(cols.map((c) => ({ label: c.label })), rows, (t, b) => measure(size, b)(t), sp.avail, { min: 30, cap, pad: pad2 });
   return { size, widths, landscape: !!sp.landscape, broken: true };
 }
 function layoutRich(blocks, width, measure, { size = 10.5, lh = 14 } = {}) {
@@ -1822,6 +1831,120 @@ function fillTemplate(tpl, ctx) {
   }).replace(/[ \t]+\n/g, "\n").replace(/ {2,}/g, " ");
 }
 
+// src/cal.js
+var DEFAULT_CAL = Object.freeze({ timeZone: "America/Toronto", weekStart: 1, fyStart: 1 });
+var CAL = { ...DEFAULT_CAL };
+var okZone = (z) => {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: z });
+    return true;
+  } catch (e) {
+    return false;
+  }
+};
+function normalizeCal(c) {
+  const x = c || {};
+  return {
+    timeZone: typeof x.timeZone === "string" && x.timeZone && okZone(x.timeZone) ? x.timeZone : DEFAULT_CAL.timeZone,
+    weekStart: x.weekStart === 0 || x.weekStart === "0" ? 0 : 1,
+    fyStart: Number.isInteger(+x.fyStart) && +x.fyStart >= 1 && +x.fyStart <= 12 ? +x.fyStart : 1
+  };
+}
+function setCalendar(c) {
+  CAL = normalizeCal(c);
+  cache.clear();
+  return CAL;
+}
+var fmts = /* @__PURE__ */ new Map();
+function fmtFor(tz) {
+  if (!fmts.has(tz)) fmts.set(tz, new Intl.DateTimeFormat("en-US", { timeZone: tz, year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric", hourCycle: "h23" }));
+  return fmts.get(tz);
+}
+var cache = /* @__PURE__ */ new Map();
+function wall(t) {
+  const key = Math.floor(t / 1e3);
+  const hit = cache.get(key);
+  if (hit) return hit;
+  const p = {};
+  fmtFor(CAL.timeZone).formatToParts(new Date(key * 1e3)).forEach((x) => {
+    if (x.type !== "literal") p[x.type] = +x.value;
+  });
+  const out = { y: p.year, m: p.month - 1, d: p.day, h: p.hour % 24, mi: p.minute, s: p.second };
+  out.dow = new Date(Date.UTC(out.y, out.m, out.d)).getUTCDay();
+  if (cache.size > 2e4) cache.clear();
+  cache.set(key, out);
+  return out;
+}
+var offsetAt = (t) => {
+  const w = wall(t);
+  return Date.UTC(w.y, w.m, w.d, w.h, w.mi, w.s) - Math.floor(t / 1e3) * 1e3;
+};
+function at(y, m, d = 1, h = 0, mi = 0) {
+  const guess = Date.UTC(y, m, d, h, mi);
+  const o1 = offsetAt(guess - 0);
+  let t = guess - o1;
+  const o2 = offsetAt(t);
+  if (o2 !== o1) {
+    const t2 = guess - o2;
+    if (offsetAt(t2) === o2) t = t2;
+  }
+  return t;
+}
+function parseLocal(s) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?$/.exec(String(s || ""));
+  if (!m) return null;
+  return at(+m[1], +m[2] - 1, +m[3], m[4] ? +m[4] : 0, m[5] ? +m[5] : 0) + (m[6] ? +m[6] * 1e3 : 0);
+}
+var fyM0 = () => CAL.fyStart - 1;
+var qBack = (m) => ((m - fyM0()) % 3 + 3) % 3;
+var yBack = (m) => ((m - fyM0()) % 12 + 12) % 12;
+function startOf(t, iv) {
+  const w = wall(t);
+  if (iv === "day") return at(w.y, w.m, w.d);
+  if (iv === "week") return at(w.y, w.m, w.d - (w.dow - CAL.weekStart + 7) % 7);
+  if (iv === "quarter") return at(w.y, w.m - qBack(w.m), 1);
+  if (iv === "year") return at(w.y, w.m - yBack(w.m), 1);
+  return at(w.y, w.m, 1);
+}
+function nextOf(s, iv, k = 1) {
+  const w = wall(s);
+  if (iv === "day") return at(w.y, w.m, w.d + k);
+  if (iv === "week") return at(w.y, w.m, w.d + 7 * k);
+  if (iv === "quarter") return at(w.y, w.m + 3 * k, 1);
+  if (iv === "year") return at(w.y, w.m + 12 * k, 1);
+  return at(w.y, w.m + k, 1);
+}
+var MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+var fiscal = () => CAL.fyStart !== 1;
+function fyOf(t) {
+  const w = wall(t);
+  const sm = w.m - yBack(w.m);
+  return fiscal() ? sm < 0 ? w.y : w.y + 1 : w.y;
+}
+function quarterOf(t) {
+  const w = wall(t);
+  return Math.floor(yBack(w.m) / 3) + 1;
+}
+function dayName(t, { weekday = false, year = true } = {}) {
+  const w = wall(t);
+  return `${weekday ? ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][w.dow] + ", " : ""}${MON[w.m]} ${w.d}${year ? ", " + w.y : ""}`;
+}
+function bucketName(s, iv) {
+  const w = wall(s);
+  if (iv === "day") return dayName(s);
+  if (iv === "week") return "Week of " + dayName(s);
+  if (iv === "quarter") return `Q${quarterOf(s)} ${fiscal() ? "FY" + fyOf(s) : w.y}`;
+  if (iv === "year") return fiscal() ? "FY" + fyOf(s) : String(w.y);
+  return `${MON[w.m]} ${w.y}`;
+}
+function spanName(from, to) {
+  const a = wall(from), b = wall(to - 1);
+  if (a.y === b.y && a.m === b.m && a.d === b.d) return dayName(from);
+  if (a.y !== b.y) return `${dayName(from)} \u2013 ${dayName(to - 1)}`;
+  if (a.m === b.m) return `${MON[a.m]} ${a.d} \u2013 ${b.d}, ${a.y}`;
+  return `${MON[a.m]} ${a.d} \u2013 ${MON[b.m]} ${b.d}, ${a.y}`;
+}
+
 // src/reportlogic.js
 var GRID = 12;
 var MAX_ROWS = 4;
@@ -1887,7 +2010,9 @@ function timeOf(v) {
   if (v == null || v === "") return null;
   if (typeof v === "number") return v;
   const s = String(v);
-  const t = new Date(s.length === 10 ? s + "T00:00" : s).getTime();
+  const local = parseLocal(s);
+  if (local != null) return local;
+  const t = new Date(s).getTime();
   return isNaN(t) ? null : t;
 }
 function isEmptyVal(v) {
@@ -1904,57 +2029,66 @@ function textOf(ctx, f, v) {
     return String(v);
   }
 }
-function measureOf(ctx, w, list2) {
+function measureOf(ctx, w, list3) {
   const m = w.measure || { fn: "count" };
-  if (m.fn === "count" || !m.ref) return list2.length;
-  const nums = list2.map((r) => Number(valueOf(ctx, r, m.ref))).filter((n) => !isNaN(n) && n !== null);
-  const vals = list2.map((r) => valueOf(ctx, r, m.ref)).filter((v) => v !== null && v !== void 0 && v !== "" && !isNaN(Number(v))).map(Number);
+  if (m.fn === "count" || !m.ref) return list3.length;
+  const nums = list3.map((r) => Number(valueOf(ctx, r, m.ref))).filter((n) => !isNaN(n) && n !== null);
+  const vals = list3.map((r) => valueOf(ctx, r, m.ref)).filter((v) => v !== null && v !== void 0 && v !== "" && !isNaN(Number(v))).map(Number);
   const sum = vals.reduce((a, b) => a + b, 0);
   if (m.fn === "avg") return vals.length ? sum / vals.length : null;
   return nums.length ? sum : 0;
 }
-var INTERVALS = ["week", "month", "quarter", "year"];
+var INTERVALS = ["day", "week", "month", "quarter", "year"];
 var MAX_BUCKETS = 400;
-var LAST_N = { week: 26, month: 12, quarter: 8, year: 5 };
+var MAX_POINTS = 120;
+var LAST_N = { day: 30, week: 26, month: 12, quarter: 8, year: 5 };
+var lastN = (iv) => LAST_N[iv] || 12;
 function periodStart(t, iv) {
-  const d = new Date(t), y = d.getFullYear(), m = d.getMonth();
-  if (iv === "week") return new Date(y, m, d.getDate() - (d.getDay() + 6) % 7).getTime();
-  if (iv === "quarter") return new Date(y, m - m % 3, 1).getTime();
-  if (iv === "year") return new Date(y, 0, 1).getTime();
-  return new Date(y, m, 1).getTime();
+  return startOf(t, INTERVALS.includes(iv) ? iv : "month");
 }
 function periodNext(t, iv, k = 1) {
-  const d = new Date(t), y = d.getFullYear(), m = d.getMonth();
-  if (iv === "week") return new Date(y, m, d.getDate() + 7 * k).getTime();
-  if (iv === "quarter") return new Date(y, m + 3 * k, 1).getTime();
-  if (iv === "year") return new Date(y + k, 0, 1).getTime();
-  return new Date(y, m + k, 1).getTime();
+  return nextOf(t, INTERVALS.includes(iv) ? iv : "month", k);
 }
-function bucketsOf(ctx, w, list2, now, range) {
-  const iv = INTERVALS.includes(w.interval) ? w.interval : "week";
-  const times = list2.map((r) => timeOf(valueOf(ctx, r, w.time)));
+function autoInterval(from, to) {
+  const days = (to - from) / 864e5;
+  return days <= 45 ? "day" : days <= 190 ? "week" : days <= 3 * 366 ? "month" : days <= 12 * 366 ? "quarter" : "year";
+}
+function bucketsOf(ctx, w, list3, now, range) {
+  const asked = w.interval === "auto" || INTERVALS.includes(w.interval) ? w.interval : "week";
+  const times = list3.map((r) => timeOf(valueOf(ctx, r, w.time)));
   const known = times.filter((t) => t != null);
   const lo = known.length ? Math.min(...known) : null, hi = known.length ? Math.max(...known) : null;
   let from = null, to = null;
   if (range) {
-    from = range.from;
-    to = Math.min(range.to - 1, Math.max(now, range.from));
+    from = range.from > -8e15 ? range.from : lo;
+    to = range.to < 8e15 ? Math.min(range.to - 1, Math.max(now, range.from)) : Math.max(hi ?? now, now);
   } else if (w.span === "custom") {
     from = w.from ? timeOf(w.from) : lo;
-    to = w.to ? timeOf(w.to) + 864e5 - 1 : hi;
+    to = w.to ? periodNext(timeOf(w.to), "day") - 1 : hi;
   } else if (w.span === "fit") {
     from = lo;
     to = hi;
   }
+  let iv = asked === "auto" ? from != null && to != null && from <= to ? autoInterval(from, to) : "month" : asked;
   if (from == null || to == null || from > to) {
     to = now;
-    from = periodNext(periodStart(now, iv), iv, -(LAST_N[iv] - 1));
+    from = periodNext(periodStart(now, iv), iv, -(lastN(iv) - 1));
+  }
+  const count = (v) => {
+    let n = 0;
+    for (let s = periodStart(from, v); s <= to && n <= MAX_POINTS; s = periodNext(s, v)) n++;
+    return n;
+  };
+  let stepped = false;
+  while (iv !== "year" && count(iv) > MAX_POINTS) {
+    iv = INTERVALS[INTERVALS.indexOf(iv) + 1];
+    stepped = true;
   }
   const starts = [];
   for (let s = periodStart(from, iv); s <= to && starts.length < 2e4; s = periodNext(s, iv)) starts.push(s);
   const keep = starts.slice(-MAX_BUCKETS);
   const out = keep.map((s) => ({ start: s, end: periodNext(s, iv), date: new Date(s), rows: [] }));
-  list2.forEach((r, i) => {
+  list3.forEach((r, i) => {
     const t = times[i];
     if (t == null || !out.length || t < out[0].start || t >= out[out.length - 1].end) return;
     let a = 0, b = out.length - 1;
@@ -1965,7 +2099,11 @@ function bucketsOf(ctx, w, list2, now, range) {
     }
     out[a].rows.push(r);
   });
-  return out.map(({ rows, ...x }) => ({ ...x, value: measureOf(ctx, w, rows) || 0 }));
+  const res = out.map(({ rows, ...x }) => ({ ...x, value: measureOf(ctx, w, rows) || 0, partial: x.start <= now && now < x.end }));
+  res.iv = iv;
+  res.asked = asked;
+  res.stepped = stepped;
+  return res;
 }
 function refLabel(ctx, ref, baseForm) {
   const f = fieldOf(ctx, ref);
@@ -2045,7 +2183,27 @@ function layout(widgets, pinned) {
 }
 
 // src/dashlogic.js
-var PERIODS = [["all", "All time"], ["month", "This month"], ["30d", "Last 30 days"], ["quarter", "This quarter"], ["year", "This year"]];
+var PERIODS = [
+  ["today", "Today"],
+  ["yesterday", "Yesterday"],
+  ["7d", "Last 7 days"],
+  ["30d", "Last 30 days"],
+  ["week", "This week"],
+  ["lastweek", "Last week"],
+  ["month", "This month"],
+  ["lastmonth", "Last month"],
+  ["quarter", "This quarter"],
+  ["lastquarter", "Last quarter"],
+  ["year", "This year"],
+  ["lastyear", "Last year"],
+  ["all", "All time"],
+  ["custom", "Custom range"]
+];
+var periodName = (key, custom) => key === "custom" && custom && (custom.from || custom.to) ? customName(custom) : (PERIODS.find((p) => p[0] === key) || PERIODS.find((p) => p[0] === "all"))[1];
+function customName(cu) {
+  const r = periodRange("custom", Date.now(), cu);
+  return r ? spanName(r.from, r.to) : "Custom range";
+}
 var MAX_PIVOT_ROWS = 30;
 var MAX_PIVOT_COLS = 12;
 function chainFields(ctx, formId) {
@@ -2087,53 +2245,80 @@ function filterReaches(ctx, def, ref) {
   return !!ref && chainOf(ctx, def.form).includes(ref.form);
 }
 function rowsFor(ctx, def, extra = {}) {
-  let list2 = ctx.records.filter((r) => r.formId === def.form);
+  let list3 = ctx.records.filter((r) => r.formId === def.form);
   const conds = (def.conditions || []).filter((c) => c && c.ref && fieldOf(ctx, c.ref) && c.value !== void 0 && c.value !== "");
   if (conds.length) {
-    list2 = list2.filter((r) => def.join === "or" ? conds.some((c) => condHit(ctx, r, c)) : conds.every((c) => condHit(ctx, r, c)));
+    list3 = list3.filter((r) => def.join === "or" ? conds.some((c) => condHit(ctx, r, c)) : conds.every((c) => condHit(ctx, r, c)));
   }
   (extra.fields || []).forEach((ff) => {
     if (!ff || !ff.values || !ff.values.length || !filterReaches(ctx, def, ff.ref)) return;
-    list2 = list2.filter((r) => ff.values.some((v) => condHit(ctx, r, { ref: ff.ref, op: "is", value: v })));
+    list3 = list3.filter((r) => ff.values.some((v) => condHit(ctx, r, { ref: ff.ref, op: "is", value: v })));
   });
   if (extra.range) {
     const dref = dateRefOf(ctx, def);
-    list2 = list2.filter((r) => {
+    list3 = list3.filter((r) => {
       const t = timeOf(valueOf(ctx, r, dref));
       return t != null && t >= extra.range.from && t < extra.range.to;
     });
   }
-  return list2;
+  return list3;
 }
-function periodRange(key, now) {
-  const d = new Date(now);
-  const y = d.getFullYear(), m = d.getMonth();
-  const at = (yy, mm, dd = 1) => new Date(yy, mm, dd).getTime();
+function periodRange(key, now, custom) {
+  const day2 = (k = 0) => nextOf(startOf(now, "day"), "day", k);
+  const of = (iv, k, label, prevLabel) => {
+    const s = nextOf(startOf(now, iv), iv, k);
+    return { from: s, to: nextOf(s, iv), prevFrom: nextOf(s, iv, -1), prevTo: s, label, prevLabel };
+  };
+  const back = (n, label) => {
+    const to = day2(1), from = day2(1 - n);
+    return { from, to, prevFrom: day2(1 - 2 * n), prevTo: from, label, prevLabel: `the ${n} days before` };
+  };
   switch (key) {
+    case "today":
+      return of("day", 0, "today", "yesterday");
+    case "yesterday":
+      return of("day", -1, "yesterday", "the day before");
+    case "7d":
+      return back(7, "the last 7 days");
+    case "30d":
+      return back(30, "the last 30 days");
+    case "week":
+      return of("week", 0, "this week", "last week");
+    case "lastweek":
+      return of("week", -1, "last week", "the week before");
     case "month":
-      return { from: at(y, m), to: at(y, m + 1), prevFrom: at(y, m - 1), prevTo: at(y, m), label: "this month", prevLabel: "last month" };
-    case "30d": {
-      const to = new Date(y, m, d.getDate() + 1).getTime();
-      const day2 = 864e5;
-      return { from: to - 30 * day2, to, prevFrom: to - 60 * day2, prevTo: to - 30 * day2, label: "the last 30 days", prevLabel: "the 30 days before" };
-    }
-    case "quarter": {
-      const q = Math.floor(m / 3) * 3;
-      return { from: at(y, q), to: at(y, q + 3), prevFrom: at(y, q - 3), prevTo: at(y, q), label: "this quarter", prevLabel: "last quarter" };
-    }
+      return of("month", 0, "this month", "last month");
+    case "lastmonth":
+      return of("month", -1, "last month", "the month before");
+    case "quarter":
+      return of("quarter", 0, "this quarter", "last quarter");
+    case "lastquarter":
+      return of("quarter", -1, "last quarter", "the quarter before");
     case "year":
-      return { from: at(y, 0), to: at(y + 1, 0), prevFrom: at(y - 1, 0), prevTo: at(y, 0), label: "this year", prevLabel: "last year" };
+      return of("year", 0, "this year", "last year");
+    case "lastyear":
+      return of("year", -1, "last year", "the year before");
+    case "custom": {
+      const a = custom && parseLocal(custom.from), z = custom && parseLocal(custom.to);
+      if (a == null && z == null) return null;
+      const from = a ?? -864e13, to = z != null ? nextOf(z, "day") : 864e13;
+      if (from >= to) return null;
+      if (a == null || z == null) return { from, to, prevFrom: null, prevTo: null, label: a == null ? "up to " + dayName(z) : "since " + dayName(a), prevLabel: "" };
+      const days = Math.round((to - from) / 864e5);
+      return { from, to, prevFrom: nextOf(from, "day", -days), prevTo: from, label: spanName(from, to), prevLabel: days === 1 ? "the day before" : `the ${days} days before` };
+    }
     default:
       return null;
   }
 }
 function kpiOf(ctx, def, extra, now) {
-  const range = extra.range ? periodRange(extra.periodKey, now) : null;
+  const range = extra.range ? periodRange(extra.periodKey, now, extra.custom) : null;
   const cur = rowsFor(ctx, def, extra);
   const value = measureOf(ctx, def, cur);
   if (!def.compare) return { value, n: cur.length };
   const r = range || periodRange("month", now);
   const curRows = range ? cur : rowsFor(ctx, def, { ...extra, range: { from: r.from, to: r.to } });
+  if (r.prevFrom == null) return { value: range ? value : measureOf(ctx, def, curRows), n: curRows.length, prev: null, delta: null, noPrev: true, label: r.label, prevLabel: r.prevLabel };
   const prevRows = rowsFor(ctx, def, { ...extra, range: { from: r.prevFrom, to: r.prevTo } });
   const a = measureOf(ctx, def, curRows), b = measureOf(ctx, def, prevRows);
   const delta = b ? (a - b) / Math.abs(b) * 100 : null;
@@ -2150,24 +2335,14 @@ function orderKeys(f, keys, totals) {
   if (f.type === "date" || f.type === "datetime" || f.id === "_created" || f.id === "_updated") return keys.sort();
   return keys.sort((a, b) => (totals.get(b) || 0) - (totals.get(a) || 0) || a.localeCompare(b));
 }
-var BYS = [["week", "Week"], ["month", "Month"], ["quarter", "Quarter"], ["year", "Year"]];
+var BYS = [["day", "Day"], ["week", "Week"], ["month", "Month"], ["quarter", "Quarter"], ["year", "Year"]];
 var BY_IDS = BYS.map((b) => b[0]);
-var MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 var groupable = (x) => ["group", "key", "num", "date"].includes(x.kind) && x.f.type !== "color";
 var isDateField = (f) => kindOf2(f) === "date";
 function bucketOf(t, by) {
-  const d = new Date(t);
-  const y = d.getFullYear(), m = d.getMonth();
-  if (by === "year") return { k: String(y), s: new Date(y, 0, 1).getTime() };
-  if (by === "quarter") {
-    const q = Math.floor(m / 3);
-    return { k: `Q${q + 1} ${y}`, s: new Date(y, q * 3, 1).getTime() };
-  }
-  if (by === "week") {
-    const st = new Date(y, m, d.getDate() - (d.getDay() + 6) % 7);
-    return { k: `Week of ${MON[st.getMonth()]} ${st.getDate()}, ${st.getFullYear()}`, s: st.getTime() };
-  }
-  return { k: `${MON[m]} ${y}`, s: new Date(y, m, 1).getTime() };
+  const iv = BY_IDS.includes(by) ? by : "month";
+  const s = startOf(t, iv);
+  return { k: bucketName(s, iv), s };
 }
 function groupKeys(ctx, f, v, ref) {
   if (isDateField(f)) {
@@ -2189,11 +2364,11 @@ function groupLabel(ctx, ref) {
   const by = isDateField(f) && BYS.find((b) => b[0] === ref.by);
   return f.label + (by ? " by " + by[1].toLowerCase() : "");
 }
-function groupRows(ctx, def, ref, list2) {
+function groupRows(ctx, def, ref, list3) {
   const f = fieldOf(ctx, ref);
   if (!f) return [];
   const m = /* @__PURE__ */ new Map(), sorts = /* @__PURE__ */ new Map();
-  list2.forEach((r) => groupKeys(ctx, f, valueOf(ctx, r, ref), ref).forEach(({ k, s }) => {
+  list3.forEach((r) => groupKeys(ctx, f, valueOf(ctx, r, ref), ref).forEach(({ k, s }) => {
     if (!m.has(k)) m.set(k, []);
     m.get(k).push(r);
     if (s != null && !sorts.has(k)) sorts.set(k, s);
@@ -2203,10 +2378,10 @@ function groupRows(ctx, def, ref, list2) {
   const ordered = isDateField(f) || kindOf2(f) === "num" ? keys.sort((a, b) => (sorts.has(a) ? 0 : 1) - (sorts.has(b) ? 0 : 1) || (sorts.get(a) ?? 0) - (sorts.get(b) ?? 0) || a.localeCompare(b)) : orderKeys(f, keys, totals);
   return ordered.map((k) => ({ key: k, rows: m.get(k), value: totals.get(k) }));
 }
-function slicesOf(ctx, def, list2, max = 8) {
+function slicesOf(ctx, def, list3, max = 8) {
   const f = fieldOf(ctx, def.group);
   const ordered = !!f && (kindOf2(f) === "num" || isDateField(f));
-  let items = groupRows(ctx, def, def.group, list2).map(({ key, value, rows }) => ({ key, value, rows, keys: [key] }));
+  let items = groupRows(ctx, def, def.group, list3).map(({ key, value, rows }) => ({ key, value, rows, keys: [key] }));
   const notOne = (def.conditions || []).filter((c) => c.op === "not" && sameRef(c.ref, def.group)).map((c) => String(c.value));
   if (notOne.length) items = items.filter((x) => !notOne.includes(x.key));
   const lim = def.limit === "all" ? Infinity : [8, 12, 20].includes(+def.limit) ? +def.limit : max;
@@ -2218,11 +2393,11 @@ function slicesOf(ctx, def, list2, max = 8) {
   }
   return items.map(({ rows, ...x }) => x);
 }
-function pivotOf(ctx, def, list2) {
+function pivotOf(ctx, def, list3) {
   const rf = fieldOf(ctx, def.group), cf = fieldOf(ctx, def.col);
   if (!rf || !cf) return null;
-  const rows = groupRows(ctx, def, def.group, list2);
-  const cols = groupRows(ctx, def, def.col, list2);
+  const rows = groupRows(ctx, def, def.group, list3);
+  const cols = groupRows(ctx, def, def.col, list3);
   const colKeys = cols.slice(0, MAX_PIVOT_COLS).map((c) => c.key);
   const out = rows.slice(0, MAX_PIVOT_ROWS).map((r) => {
     const byCol = new Map(colKeys.map((k) => [k, []]));
@@ -2235,7 +2410,7 @@ function pivotOf(ctx, def, list2) {
     cols: colKeys,
     rows: out,
     colTotals: cols.slice(0, MAX_PIVOT_COLS).map((c) => c.value),
-    grand: measureOf(ctx, def, list2),
+    grand: measureOf(ctx, def, list3),
     moreRows: Math.max(0, rows.length - MAX_PIVOT_ROWS),
     moreCols: Math.max(0, cols.length - MAX_PIVOT_COLS)
   };
@@ -2260,9 +2435,9 @@ function titleKey(ctx, rec, depth = 0) {
   return sortKey(ctx, rec, { form: form.id, id: tf.id }, depth + 1);
 }
 var natural = (a, b) => typeof a === "number" && typeof b === "number" ? a - b : String(a).localeCompare(String(b), void 0, { numeric: true, sensitivity: "base" });
-function sortRecs(ctx, list2, ref, dir) {
-  if (!ref) return list2;
-  return list2.map((r) => ({ r, k: sortKey(ctx, r, ref) })).sort((a, b) => {
+function sortRecs(ctx, list3, ref, dir) {
+  if (!ref) return list3;
+  return list3.map((r) => ({ r, k: sortKey(ctx, r, ref) })).sort((a, b) => {
     if (a.k == null || b.k == null) return a.k == null && b.k == null ? 0 : a.k == null ? 1 : -1;
     return natural(a.k, b.k) * (dir < 0 ? -1 : 1);
   }).map((x) => x.r);
@@ -2301,7 +2476,7 @@ function normalizeDef(ctx, def0) {
       const own = fields.find((x) => x.kind === "date" && !x.f.system && x.ref.form === def.form);
       def.time = own ? own.ref : { form: def.form, id: "_created" };
     }
-    def.interval = ["week", "month", "quarter", "year"].includes(def.interval) ? def.interval : "month";
+    def.interval = ["auto", "day", "week", "month", "quarter", "year"].includes(def.interval) ? def.interval : "month";
     def.span = ["fit", "last", "custom"].includes(def.span) ? def.span : "fit";
     ["from", "to"].forEach((k) => {
       if (!(typeof def[k] === "string" && /^\d{4}-\d{2}-\d{2}$/.test(def[k]))) delete def[k];
@@ -2321,10 +2496,10 @@ var clampTile = (t) => {
   return { ...t, w, h: Math.max(minH(t), Math.min(80, Math.round(t.h ?? 8))), x: Math.max(0, Math.min(CANVAS_COLS - w, Math.round(t.x || 0))), y: Math.max(0, Math.round(t.y || 0)) };
 };
 function placedRaw(tiles) {
-  const list2 = tiles || [];
-  if (list2.every((t) => t.x != null && t.y != null)) return list2.map((t) => ({ ...t }));
-  const L = layout(list2.map((t) => ({ ...t, cols: t.cols || t.w || 6, rows: t.rows || 2 })));
-  return list2.map((t) => t.x != null && t.y != null ? { ...t } : { ...t, x: L[t.id].c0, y: L[t.id].r0 * 2, w: L[t.id].c, h: L[t.id].h * 2 });
+  const list3 = tiles || [];
+  if (list3.every((t) => t.x != null && t.y != null)) return list3.map((t) => ({ ...t }));
+  const L = layout(list3.map((t) => ({ ...t, cols: t.cols || t.w || 6, rows: t.rows || 2 })));
+  return list3.map((t) => t.x != null && t.y != null ? { ...t } : { ...t, x: L[t.id].c0, y: L[t.id].r0 * 2, w: L[t.id].c, h: L[t.id].h * 2 });
 }
 var strip = ({ cols, rows, ...rest }) => rest;
 function canvasTiles(tiles) {
@@ -2399,11 +2574,11 @@ var hourText = (h) => {
 var ord = (n) => n + (n % 10 === 1 && n !== 11 ? "st" : n % 10 === 2 && n !== 12 ? "nd" : n % 10 === 3 && n !== 13 ? "rd" : "th");
 function scheduleText(s) {
   if (!s) return "";
-  const at = " at " + hourText(s.hour ?? 8);
-  if (s.freq === "weekly") return "Every " + DAYS[(+s.day || 0) % 7] + at;
-  if (s.freq === "monthly") return "On the " + ord(Math.min(28, Math.max(1, +s.day || 1))) + " of every month" + at;
-  if (s.freq === "daily") return "Every day" + at;
-  return "Every weekday" + at;
+  const at2 = " at " + hourText(s.hour ?? 8);
+  if (s.freq === "weekly") return "Every " + DAYS[(+s.day || 0) % 7] + at2;
+  if (s.freq === "monthly") return "On the " + ord(Math.min(28, Math.max(1, +s.day || 1))) + " of every month" + at2;
+  if (s.freq === "daily") return "Every day" + at2;
+  return "Every weekday" + at2;
 }
 function partsIn(ms, timeZone) {
   const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23", weekday: "short" }).formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
@@ -2417,11 +2592,11 @@ function dueSlot(s, parts) {
 }
 function recipients(s, people, roleHolders = () => []) {
   const to = s && s.to ? s.to : {};
-  const list2 = [];
-  (to.people || []).forEach((u) => list2.push(people.get(u)?.email || ""));
-  (to.roles || []).forEach((r) => roleHolders(r).forEach((u) => list2.push(people.get(u)?.email || "")));
-  String(to.addresses || "").split(/[,;\s]+/).forEach((a) => list2.push(a));
-  return [...new Set(list2.map((x) => String(x).trim().toLowerCase()).filter((x) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x)))].slice(0, 50);
+  const list3 = [];
+  (to.people || []).forEach((u) => list3.push(people.get(u)?.email || ""));
+  (to.roles || []).forEach((r) => roleHolders(r).forEach((u) => list3.push(people.get(u)?.email || "")));
+  String(to.addresses || "").split(/[,;\s]+/).forEach((a) => list3.push(a));
+  return [...new Set(list3.map((x) => String(x).trim().toLowerCase()).filter((x) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x)))].slice(0, 50);
 }
 var esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 var INK = "#141826";
@@ -2438,12 +2613,6 @@ var barCell = (v, max, color = BAR) => {
   return `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse"><tr><td style="width:${w}%;height:10px;background:${color};border-radius:3px;font-size:0;line-height:0">&nbsp;</td>${w < 100 ? `<td style="width:${100 - w}%;font-size:0;line-height:0">&nbsp;</td>` : ""}</tr></table>`;
 };
 var more = (n, what) => n > 0 ? `<p style="margin:6px 0 0;font-size:12px;color:${MUTED}">and ${n} more ${what}</p>` : "";
-function periodLabel(iv, d) {
-  if (iv === "week") return "Week of " + d.toLocaleDateString("en-CA", { month: "short", day: "numeric" });
-  if (iv === "month") return d.toLocaleDateString("en-CA", { month: "short", year: "numeric" });
-  if (iv === "quarter") return "Q" + (Math.floor(d.getMonth() / 3) + 1) + " " + d.getFullYear();
-  return String(d.getFullYear());
-}
 function reportBlock(c, def, extra, now) {
   const form = c.formById(def.form);
   if (!form) return { html: `<p style="color:${MUTED};font-size:13px">This report\u2019s form isn\u2019t available.</p>`, text: "(form not available)" };
@@ -2453,10 +2622,10 @@ function reportBlock(c, def, extra, now) {
     const cmp = def.compare && k.delta != null ? `${k.delta >= 0 ? "\u25B2 +" : "\u25BC "}${Math.round(k.delta)}% vs ${esc(k.prevLabel)} (${esc(fmtMeasure(c, def, k.prev))})` : "";
     return { html: `<div style="font-size:30px;font-weight:700;color:${INK};line-height:1.15">${esc(v)}</div><div style="font-size:13px;color:${MUTED};margin-top:4px">${esc(measureLabel(c, def))}${cmp ? " \xB7 " + cmp : ""}</div>`, text: `${measureLabel(c, def)}: ${v}${cmp ? " (" + cmp.replace(/<[^>]+>/g, "") + ")" : ""}` };
   }
-  const list2 = rowsFor(c, def, extra);
-  if (!list2.length) return { html: `<p style="color:${MUTED};font-size:13px;margin:0">No records match this report.</p>`, text: "No records match." };
+  const list3 = rowsFor(c, def, extra);
+  if (!list3.length) return { html: `<p style="color:${MUTED};font-size:13px;margin:0">No records match this report.</p>`, text: "No records match." };
   if (def.type === "bar" || def.type === "donut") {
-    const items = slicesOf(c, def, list2).filter((x) => def.type === "bar" || x.value > 0);
+    const items = slicesOf(c, def, list3).filter((x) => def.type === "bar" || x.value > 0);
     const shown2 = items.slice(0, 15);
     const max = Math.max(0, ...shown2.map((x) => x.value)) || 1, total = items.reduce((a, b) => a + b.value, 0) || 1;
     const rows = shown2.map((x, i) => `<tr>${td(esc(x.key), "width:34%")}${td(barCell(x.value, def.type === "donut" ? total : max, def.type === "donut" ? COLORS2[i % COLORS2.length] : BAR), "width:44%")}${td(esc(fmtMeasure(c, def, x.value)) + (def.type === "donut" ? ` <span style="color:${MUTED}">${Math.round(x.value / total * 100)}%</span>` : ""), "text-align:right;white-space:nowrap")}</tr>`).join("");
@@ -2464,14 +2633,15 @@ function reportBlock(c, def, extra, now) {
   }
   if (def.type === "line" || def.type === "area") {
     if (!fieldOf(c, def.time)) return { html: "", text: "" };
-    const iv = def.interval || "month";
-    const b = bucketsOf(c, def, list2, now, extra.range).slice(-12);
+    let all = bucketsOf(c, def, list3, now, extra.range);
+    for (let i = INTERVALS.indexOf(all.iv) + 1; all.length > 14 && i < INTERVALS.length; i++) all = bucketsOf(c, { ...def, interval: INTERVALS[i] }, list3, now, extra.range);
+    const iv = all.iv, b = all.slice(-12);
     const max = Math.max(0, ...b.map((x) => x.value)) || 1;
-    const rows = b.map((x) => `<tr>${td(esc(periodLabel(iv, x.date)), "width:34%;white-space:nowrap")}${td(barCell(x.value, max), "width:44%")}${td(esc(fmtMeasure(c, def, x.value)), "text-align:right;white-space:nowrap")}</tr>`).join("");
-    return { html: table(rows), text: b.map((x) => `${periodLabel(iv, x.date)}: ${fmtMeasure(c, def, x.value)}`).join("; ") };
+    const rows = b.map((x) => `<tr>${td(esc(bucketName(x.start, iv) + (x.partial ? " (so far)" : "")), "width:34%;white-space:nowrap")}${td(barCell(x.value, max), "width:44%")}${td(esc(fmtMeasure(c, def, x.value)), "text-align:right;white-space:nowrap")}</tr>`).join("");
+    return { html: table(rows), text: b.map((x) => `${bucketName(x.start, iv)}${x.partial ? " (so far)" : ""}: ${fmtMeasure(c, def, x.value)}`).join("; ") };
   }
   if (def.type === "pivot") {
-    const p = pivotOf(c, def, list2);
+    const p = pivotOf(c, def, list3);
     if (!p) return { html: "", text: "" };
     const cols2 = p.cols.slice(0, 8), rows = p.rows.slice(0, 20);
     const head2 = `<tr>${th(esc(groupLabel(c, def.group) || ""))}${cols2.map((k) => th(esc(k), "text-align:right")).join("")}${th("Total", "text-align:right")}</tr>`;
@@ -2480,17 +2650,17 @@ function reportBlock(c, def, extra, now) {
     return { html: table(body2 + tot, head2) + more(p.rows.length - rows.length + p.moreRows, "rows"), text: `${p.rows.length} rows, total ${fmtMeasure(c, def, p.grand)}` };
   }
   if (def.type === "grouped") {
-    const groups = groupRows(c, def, def.group, list2);
+    const groups = groupRows(c, def, def.group, list3);
     const shown2 = groups.slice(0, 20);
     const rows = shown2.map((g) => `<tr>${td(esc(g.key))}${td(String(g.rows.length), `text-align:right;color:${MUTED}`)}${td(esc(fmtMeasure(c, def, g.value)), "text-align:right")}</tr>`).join("");
     const head2 = `<tr>${th(esc(groupLabel(c, def.group) || "Group"))}${th("Records", "text-align:right")}${th(esc(measureLabel(c, def)), "text-align:right")}</tr>`;
-    const tot = `<tr>${td("<b>Total</b>", `background:${SOFT}`)}${td("<b>" + list2.length + "</b>", `text-align:right;background:${SOFT}`)}${td("<b>" + esc(fmtMeasure(c, def, measureOf(c, def, list2))) + "</b>", `text-align:right;background:${SOFT}`)}</tr>`;
+    const tot = `<tr>${td("<b>Total</b>", `background:${SOFT}`)}${td("<b>" + list3.length + "</b>", `text-align:right;background:${SOFT}`)}${td("<b>" + esc(fmtMeasure(c, def, measureOf(c, def, list3))) + "</b>", `text-align:right;background:${SOFT}`)}</tr>`;
     return { html: table(rows + tot, head2) + more(groups.length - shown2.length, "groups"), text: shown2.map((g) => `${g.key}: ${fmtMeasure(c, def, g.value)}`).join("; ") };
   }
   const cols = (def.columns || []).filter((r) => fieldOf(c, r)).slice(0, 6);
   if (!cols.length) return { html: "", text: "" };
   const sref = def.sort && cols[def.sort.i] || cols[0];
-  const sorted = sortRecs(c, list2, sref, def.sort?.dir || 1);
+  const sorted = sortRecs(c, list3, sref, def.sort?.dir || 1);
   const shown = sorted.slice(0, 15);
   const head = `<tr>${cols.map((r) => th(esc(refLabel(c, r, def.form)), isNumRef(c, r) ? "text-align:right" : "")).join("")}</tr>`;
   const body = shown.map((rec) => `<tr>${cols.map((r) => td(esc(cellText(c, r, rec) || "\u2013"), isNumRef(c, r) ? "text-align:right;white-space:nowrap" : "")).join("")}</tr>`).join("");
@@ -2498,11 +2668,12 @@ function reportBlock(c, def, extra, now) {
 }
 function dashEmail(c, dash, reports, { now = Date.now(), link = "", schedule = null, company = "" } = {}) {
   const periodKey = dash.filters?.period || "all";
-  const range = periodRange(periodKey, now);
-  const extra = { periodKey, range: range ? { from: range.from, to: range.to } : null, fields: [] };
-  const date = new Date(now).toLocaleDateString("en-CA", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
-  const periodName = (PERIODS.find((p) => p[0] === periodKey) || PERIODS[0])[1];
-  const parts = [], text = [`${dash.name || "Dashboard"} \xB7 ${periodName} \xB7 ${date}`, ""];
+  const custom = periodKey === "custom" ? { from: dash.filters?.from || "", to: dash.filters?.to || "" } : null;
+  const range = periodRange(periodKey, now, custom);
+  const extra = { periodKey, custom, range: range ? { from: range.from, to: range.to } : null, fields: [] };
+  const date = dayName(now, { weekday: true });
+  const pName = periodName(periodKey, custom);
+  const parts = [], text = [`${dash.name || "Dashboard"} \xB7 ${pName} \xB7 ${date}`, ""];
   readingOrder(canvasTiles(dash.tiles || []).filter((t) => t.report || t.text)).forEach((t) => {
     if (t.text) {
       parts.push(`<tr><td style="padding:14px 0 6px">${t.text.title ? `<div style="font-size:15px;font-weight:700;color:${INK}">${esc(t.text.title)}</div>` : ""}${String(t.text.body || "").split(/\n{2,}/).filter(Boolean).map((p) => `<p style="margin:6px 0 0;font-size:13px;color:${INK}">${esc(p)}</p>`).join("")}</td></tr>`);
@@ -2520,34 +2691,178 @@ function dashEmail(c, dash, reports, { now = Date.now(), link = "", schedule = n
   const foot = `${schedule ? esc(scheduleText(schedule)) + ". " : ""}Sent by Formwright${company ? " for " + esc(String(company).replace(/\.$/, "")) : ""}. An administrator can change who gets this on the dashboard (Email schedule).`;
   const html = `<!doctype html><html><body style="margin:0;padding:0;background:${SOFT}"><table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;background:${SOFT}"><tr><td align="center" style="padding:20px 12px">
     <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;max-width:680px;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
-      <tr><td style="padding:0 0 14px"><div style="font-size:22px;font-weight:700;color:${INK}">${esc(dash.name || "Dashboard")}</div><div style="font-size:13px;color:${MUTED};margin-top:2px">${esc(periodName)} \xB7 ${esc(date)}${link ? ` \xB7 <a href="${esc(link)}" style="color:${BAR}">Open the dashboard</a>` : ""}</div></td></tr>
+      <tr><td style="padding:0 0 14px"><div style="font-size:22px;font-weight:700;color:${INK}">${esc(dash.name || "Dashboard")}</div><div style="font-size:13px;color:${MUTED};margin-top:2px">${esc(pName)} \xB7 ${esc(date)}${link ? ` \xB7 <a href="${esc(link)}" style="color:${BAR}">Open the dashboard</a>` : ""}</div></td></tr>
       ${parts.join("")}
       <tr><td style="padding:10px 0 0;font-size:12px;color:${MUTED}">${foot}</td></tr>
     </table></td></tr></table></body></html>`;
   if (link) text.push("", "Open the dashboard: " + link);
-  return { subject: `${dash.name || "Dashboard"} \xB7 ${new Date(now).toLocaleDateString("en-CA", { month: "short", day: "numeric" })}`.slice(0, 200), html, text: text.join("\n") };
+  return { subject: `${dash.name || "Dashboard"} \xB7 ${dayName(now, { year: false })}`.slice(0, 200), html, text: text.join("\n") };
+}
+
+// src/autosched.js
+var FREQS = [
+  { key: "day", one: "day", many: "days", max: 365 },
+  { key: "week", one: "week", many: "weeks", max: 52 },
+  { key: "month", one: "month", many: "months", max: 24 },
+  { key: "quarter", one: "quarter", many: "quarters", max: 8 },
+  { key: "year", one: "year", many: "years", max: 10 }
+];
+var WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+var MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+var NTHS = [{ v: 1, label: "first" }, { v: 2, label: "second" }, { v: 3, label: "third" }, { v: 4, label: "fourth" }, { v: -1, label: "last" }];
+var DEFAULT_HOUR = 17;
+var pad = (n) => String(n).padStart(2, "0");
+var utc = (key) => {
+  const [y, m, d] = key.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d));
+};
+var keyOf2 = (dt) => dt.toISOString().slice(0, 10);
+var addDays = (key, n) => keyOf2(new Date(utc(key).getTime() + n * 864e5));
+var isoDow = (key) => (utc(key).getUTCDay() + 6) % 7 + 1;
+var daysBetween = (a, b) => Math.round((utc(b) - utc(a)) / 864e5);
+var monthIdx = (key) => {
+  const [y, m] = key.split("-").map(Number);
+  return y * 12 + (m - 1);
+};
+var freqOf = (k) => FREQS.find((f) => f.key === k) || FREQS[2];
+var hourOf = (t) => {
+  const h = Math.round(Number(t?.hour));
+  return Number.isFinite(h) && h >= 0 && h <= 23 ? h : DEFAULT_HOUR;
+};
+function lastDay(monthKey) {
+  const [y, m] = monthKey.split("-").map(Number);
+  return keyOf2(new Date(Date.UTC(y, m, 0)));
+}
+function normalize(t0) {
+  const t = { ...t0 || {} };
+  if (!t.freq) {
+    t.freq = "month";
+    t.on = t.every === "monthEnd" ? { kind: "date", day: "last" } : { kind: "nth", nth: -1, what: "biz" };
+  }
+  delete t.every;
+  const f = freqOf(t.freq);
+  t.freq = f.key;
+  t.n = Math.min(f.max, Math.max(1, Math.round(Number(t.n) || 1)));
+  t.hour = hourOf(t);
+  if (t.freq === "week") t.days = [...new Set((Array.isArray(t.days) ? t.days : []).map(Number).filter((d) => d >= 1 && d <= 7))].sort((a, b) => a - b);
+  if (["month", "quarter", "year"].includes(t.freq)) {
+    const o = t.on || {};
+    t.on = o.kind === "nth" ? { kind: "nth", nth: [1, 2, 3, 4, -1].includes(Number(o.nth)) ? Number(o.nth) : 1, what: o.what === "biz" ? "biz" : Math.min(7, Math.max(1, Number(o.what) || 1)) } : { kind: "date", day: o.day === "last" ? "last" : Math.min(31, Math.max(1, Math.round(Number(o.day) || 1))) };
+  }
+  if (t.freq === "quarter") t.qmonth = t.qmonth === "last" ? "last" : "first";
+  if (t.freq === "year") t.month = Math.min(12, Math.max(1, Math.round(Number(t.month) || 1)));
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(t.start || ""))) delete t.start;
+  return t;
+}
+function onMatches(on, key) {
+  const last = lastDay(key.slice(0, 7)), dom = Number(key.slice(8, 10));
+  if (on.kind === "date") return dom === (on.day === "last" ? Number(last.slice(8)) : Math.min(on.day, Number(last.slice(8))));
+  const hits = [];
+  for (let d = 1; d <= Number(last.slice(8)); d++) {
+    const k = key.slice(0, 8) + pad(d), w = isoDow(k);
+    if (on.what === "biz" ? w <= 5 : w === on.what) hits.push(d);
+  }
+  return dom === (on.nth === -1 ? hits[hits.length - 1] : hits[on.nth - 1]);
+}
+function isRunDay(t0, key) {
+  const t = normalize(t0);
+  if (t.start && key < t.start) return false;
+  const start = t.start || key;
+  const every = (diff) => diff % t.n === 0;
+  switch (t.freq) {
+    case "day":
+      if (t.weekdaysOnly && isoDow(key) > 5) return false;
+      return every(daysBetween(start, key));
+    case "week": {
+      if (!t.days.includes(isoDow(key))) return false;
+      const mon = (k) => addDays(k, 1 - isoDow(k));
+      return every(daysBetween(mon(start), mon(key)) / 7);
+    }
+    case "month":
+      return every(monthIdx(key) - monthIdx(start)) && onMatches(t.on, key);
+    case "quarter": {
+      const m = Number(key.slice(5, 7)), want = t.qmonth === "last" ? [3, 6, 9, 12] : [1, 4, 7, 10];
+      if (!want.includes(m)) return false;
+      const q = (k) => Math.floor(monthIdx(k) / 3);
+      return every(q(key) - q(start)) && onMatches(t.on, key);
+    }
+    case "year":
+      return Number(key.slice(5, 7)) === t.month && every(Number(key.slice(0, 4)) - Number(start.slice(0, 4))) && onMatches(t.on, key);
+  }
+  return false;
+}
+function scheduleNow(t0, local) {
+  const t = normalize(t0);
+  const today = local.slice(0, 10), late = Number(local.slice(11, 13)) >= t.hour, tomorrow = addDays(today, 1);
+  return { period: today, run: late && isRunDay(t, today), headsPeriod: tomorrow, headsUp: !!t.headsUp && t.freq !== "day" && late && isRunDay(t, tomorrow) };
+}
+function nextRuns(t0, local, count = 3) {
+  const t = normalize(t0), out = [];
+  let k = local.slice(0, 10);
+  if (Number(local.slice(11, 13)) >= t.hour) k = addDays(k, 1);
+  if (t.start && k < t.start) k = t.start;
+  for (let i = 0; i < 12e3 && out.length < count; i++, k = addDays(k, 1)) if (isRunDay(t, k)) out.push(k);
+  return out;
+}
+var nextRun = (t, local) => nextRuns(t, local, 1)[0] || null;
+function hourText2(h) {
+  const n = hourOf({ hour: h });
+  return n === 0 ? "midnight" : n === 12 ? "noon" : `${n % 12}:00 ${n < 12 ? "a.m." : "p.m."}`;
+}
+var dayText = (key) => utc(key).toLocaleDateString("en-CA", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "UTC" });
+var longDate = (key) => utc(key).toLocaleDateString("en-CA", { year: "numeric", month: "long", day: "numeric", timeZone: "UTC" });
+var ordinal = (n) => {
+  const s = ["th", "st", "nd", "rd"], v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+};
+var list2 = (xs) => xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`;
+function onText(on) {
+  if (on.kind === "date") return on.day === "last" ? "the last day" : `the ${ordinal(on.day)}`;
+  return `the ${NTHS.find((x) => x.v === on.nth)?.label || "first"} ${on.what === "biz" ? "business day" : WEEKDAYS[on.what - 1]}`;
+}
+function scheduleText2(t0) {
+  const t = normalize(t0), f = freqOf(t.freq);
+  const every = t.n === 1 ? `Every ${f.one}` : `Every ${t.n} ${f.many}`;
+  let s;
+  if (t.freq === "day") s = t.n === 1 && t.weekdaysOnly ? "Every weekday (Monday to Friday)" : every + (t.weekdaysOnly ? ", weekdays only" : "");
+  else if (t.freq === "week") s = `${every} on ${t.days.length ? list2(t.days.map((d) => WEEKDAYS[d - 1])) : "(pick a day)"}`;
+  else if (t.freq === "month") s = `${every} on ${onText(t.on)}`;
+  else if (t.freq === "quarter") {
+    const of = t.qmonth === "last" ? "last" : "first";
+    s = `${every} on ${onText(t.on)} of the quarter\u2019s ${of} month`;
+  } else s = `${every} on ${t.on.kind === "date" && t.on.day !== "last" ? `${MONTHS[t.month - 1]} ${t.on.day}` : `${onText(t.on)} of ${MONTHS[t.month - 1]}`}`;
+  return `${s} at ${hourText2(t.hour)}${t.n > 1 && t.start ? `, starting ${longDate(t.start)}` : ""}`;
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   ACTION_LABEL,
   COLORS,
   assigneeFor,
+  autoScheduleText,
   dashEmail,
   dayKey,
+  dayText,
   daysOverdue,
   drawPdf,
   dueSlot,
   fileName,
   fillTemplate,
   firstStage,
+  hourText,
   itemName,
   makeKit,
+  nextRun,
+  nextRuns,
+  normalizeCal,
+  normalizeSchedule,
   opOf,
   overdueStep,
   partsIn,
   recipients,
   ruleFires,
+  scheduleNow,
   scheduleText,
+  setCalendar,
   stageDue,
   testCond,
   wfOn

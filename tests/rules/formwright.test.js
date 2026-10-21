@@ -348,6 +348,22 @@ describe('default home dashboard', () => {
   });
 });
 
+describe('company calendar (Settings → Dates and time)', () => {
+  test('admins set it; everyone let in reads it; only sensible values', async () => {
+    const ok = (by, o = {}) => ({ timeZone: 'America/Toronto', weekStart: 1, fyStart: 4, updatedAt: 1, updatedBy: by, ...o });
+    await assertSucceeds(setDoc(doc(db('admin'), 'settings', 'calendar'), ok('admin')));
+    await assertSucceeds(setDoc(doc(db('admin'), 'settings', 'calendar'), ok('admin', { weekStart: 0, fyStart: 1 })));
+    await assertFails(setDoc(doc(db('admin'), 'settings', 'calendar'), ok('admin', { weekStart: 3 })));
+    await assertFails(setDoc(doc(db('admin'), 'settings', 'calendar'), ok('admin', { fyStart: 13 })));
+    await assertFails(setDoc(doc(db('admin'), 'settings', 'calendar'), ok('admin', { timeZone: '' })));
+    await assertFails(setDoc(doc(db('admin'), 'settings', 'calendar'), { ...ok('admin'), extra: 1 }));
+    await assertFails(setDoc(doc(db('admin'), 'settings', 'calendar'), ok('alice')));
+    await assertFails(setDoc(doc(db('olivia'), 'settings', 'calendar'), ok('olivia')));
+    await assertSucceeds(getDoc(doc(db('vera'), 'settings', 'calendar')));
+    await assertFails(getDoc(doc(db('ned'), 'settings', 'calendar')));
+  });
+});
+
 describe('reports', () => {
   const report = (owner, extra = {}) => ({ name: 'Pipeline', ownerId: owner, shared: false, widgets: [{ id: 'w1', type: 'kpi' }], createdAt: 1, updatedAt: 1, ...extra });
   beforeEach(async () => {
