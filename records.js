@@ -44,6 +44,15 @@
 
   /* ---------- titles (mirrors Formwright's recTitle) ---------- */
   const formById = (id) => st.forms.find((f) => f.id === id) || null;
+  // a form's icon, drawn from plain shapes only (the same rules as Formwright's icons.js)
+  const ICON_TAGS = { path: 1, circle: 1, rect: 1, line: 1, polyline: 1, polygon: 1, ellipse: 1 };
+  const ICON_ATTRS = { d: 1, cx: 1, cy: 1, r: 1, rx: 1, ry: 1, x: 1, y: 1, width: 1, height: 1, x1: 1, y1: 1, x2: 1, y2: 1, points: 1 };
+  function iconSvg(icon) {
+    const shapes = (Array.isArray(icon.shapes) ? icon.shapes : []).filter((x) => Array.isArray(x) && ICON_TAGS[x[0]] && x[1] && typeof x[1] === 'object').slice(0, 40);
+    if (!shapes.length) return '';
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" focusable="false">' +
+      shapes.map(([tag, a]) => '<' + tag + Object.keys(a).filter((k) => ICON_ATTRS[k] && a[k] != null && String(a[k]).length <= 4000).map((k) => ' ' + k + '="' + String(a[k]).replace(/[^0-9a-zA-Z .,\-+]/g, '') + '"').join('') + '/>').join('') + '</svg>';
+  }
   const colorOf = (f) => COLORS[((f && f.color) || 0) % COLORS.length];
   const itemName = (f) => ((f && f.itemName) || '').trim() || ((f && f.name) || 'Record').replace(/s$/i, '') || 'Record';
   const isEmpty = (v) => v == null || v === '' || (Array.isArray(v) && !v.length);
@@ -147,6 +156,12 @@
         .sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || String(a.name || '').localeCompare(String(b.name || '')));
     },
     form: formById,
+    /** a form's mark beside its records: its icon (Formwright → Form designer → Badge), else a coloured square */
+    mark(id, removed) {
+      const f = !removed && formById(id);
+      const svg = f && f.badge === 'icon' && f.icon ? iconSvg(f.icon) : '';
+      return svg ? '<i class="ricon" aria-hidden="true">' + svg + '</i>' : '<i class="rdot"></i>';
+    },
     formName(id) { const f = formById(id); return f ? f.name || 'Untitled form' : ''; },
     formColor(id) { const f = formById(id); return f ? colorOf(f) : null; },
     records(formId) { return (st.byForm.get(formId) || []).slice(); },
@@ -197,7 +212,7 @@
       if (!l) return '';
       return '<button type="button" class="record-tag' + (compact ? ' compact' : '') + (l.removed ? ' removed' : '') + '" data-record-link="' + esc(t.recordId) + '"' +
         ' title="' + esc(l.removed ? 'This record was deleted in Formwright' : (l.form ? l.form + ': ' : '') + l.title) + '" style="--c:' + esc(l.color) + '">' +
-        '<i class="rdot"></i><span>' + esc(l.removed ? 'Record removed' : l.title) + '</span></button>';
+        R.mark(t.formId, l.removed) + '<span>' + esc(l.removed ? 'Record removed' : l.title) + '</span></button>';
     },
     /** [{ id, title, color }] for "&record" in quick add */
     index() {
@@ -229,7 +244,7 @@
             .filter((r) => !v || r.t.toLowerCase().includes(v) || fname.toLowerCase().includes(v))
             .sort((a, b) => a.t.localeCompare(b.t));
           if (!recs.length) return;
-          items.push({ head: fname, hex: colorOf(f) });
+          items.push({ head: fname, hex: colorOf(f), fid: f.id });
           recs.forEach((r) => items.push(r));
         });
         ui.items = items.filter((it) => !it.head).slice(0, 300);
@@ -237,7 +252,7 @@
         let n = -1;
         const status = st.status;
         list.innerHTML = ui.items.length ? items.map((it) => {
-          if (it.head) return '<div class="pk-head" style="--c:' + it.hex + '"><i class="rdot"></i>' + esc(it.head) + '</div>';
+          if (it.head) return '<div class="pk-head" style="--c:' + it.hex + '">' + R.mark(it.fid) + esc(it.head) + '</div>';
           n++;
           if (n >= 300) return '';
           return '<button type="button" class="pk-item' + (n === ui.idx ? ' on' : '') + (it.id === o.current ? ' current' : '') + '" data-i="' + n + '" role="option">' +

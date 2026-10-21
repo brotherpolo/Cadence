@@ -134,7 +134,7 @@
       if (ro) {
         if (!l) return '';
         return '<div class="field"><span class="field-label">On a record</span><div class="ed-node">' +
-          '<span class="chip on static ed-rec" style="--c:' + esc(l.color) + '"><i class="rdot"></i><span>' + esc(l.title) + '</span>' + (l.form ? '<span class="ed-rec-form">' + esc(l.form) + '</span>' : '') + '</span>' +
+          '<span class="chip on static ed-rec" style="--c:' + esc(l.color) + '">' + R.mark(draft.formId) + '<span>' + esc(l.title) + '</span>' + (l.form ? '<span class="ed-rec-form">' + esc(l.form) + '</span>' : '') + '</span>' +
           (R.url(draft.recordId) ? '<button type="button" class="btn sm ghost" data-act="record-go">' + icon('external') + '<span>Open in Formwright</span></button>' : '') +
           '</div></div>';
       }
@@ -142,7 +142,7 @@
       if (!l && R.status() === 'ready' && !R.forms().length) return '';
       return '<div class="field"><span class="field-label">On a record</span><div class="ed-node">' +
         '<button type="button" class="chip ed-node-pick ed-rec' + (l ? ' on' : '') + '" data-act="record"' + (l ? ' style="--c:' + (l.removed ? 'var(--ink-3)' : esc(l.color)) + '"' : '') + ' aria-haspopup="listbox">' +
-        (l ? '<i class="rdot"></i><span>' + esc(l.removed ? 'Record removed' : l.title) + '</span>' + (l.form && !l.removed ? '<span class="ed-rec-form">' + esc(l.form) + '</span>' : '')
+        (l ? R.mark(draft.formId, l.removed) + '<span>' + esc(l.removed ? 'Record removed' : l.title) + '</span>' + (l.form && !l.removed ? '<span class="ed-rec-form">' + esc(l.form) + '</span>' : '')
            : icon('file') + '<span>Link to a record</span>') + icon('chevD') + '</button>' +
         (l ? '<button type="button" class="icon-btn sm" data-act="record-clear" aria-label="Unlink from the record" title="Unlink">' + icon('x') + '</button>' +
           (!l.removed && R.url(draft.recordId) ? '<button type="button" class="btn sm ghost" data-act="record-go">' + icon('external') + '<span>Open in Formwright</span></button>' : '') : '') +

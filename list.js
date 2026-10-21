@@ -230,7 +230,7 @@
       st.types.map((t) => '<button type="button" class="chip' + (ui.types.has(t.id) ? ' on' : '') + '" data-ft="' + t.id + '" aria-pressed="' + ui.types.has(t.id) + '" style="--c:' + t.color + '">' + icon(t.glyph) + esc(t.name) + '</button>').join('') +
       '<span class="chip-sep" aria-hidden="true"></span>' +
       st.levels.map((l) => '<button type="button" class="chip' + (ui.levels.has(l.id) ? ' on' : '') + '" data-fl="' + l.id + '" aria-pressed="' + ui.levels.has(l.id) + '" style="--c:' + l.color + '"><i class="dot"></i>' + esc(l.name) + '</button>').join('') +
-      (linked.size ? '<span class="chip-sep" aria-hidden="true"></span>' + [...linked].map(([id, f]) => '<button type="button" class="chip' + (ui.forms.has(id) ? ' on' : '') + '" data-fform="' + esc(id) + '" aria-pressed="' + ui.forms.has(id) + '" style="--c:' + esc(f.color) + '" title="Tasks linked to ' + esc(f.name) + ' records"><i class="rdot"></i>' + esc(f.name) + '</button>').join('') : '') +
+      (linked.size ? '<span class="chip-sep" aria-hidden="true"></span>' + [...linked].map(([id, f]) => '<button type="button" class="chip' + (ui.forms.has(id) ? ' on' : '') + '" data-fform="' + esc(id) + '" aria-pressed="' + ui.forms.has(id) + '" style="--c:' + esc(f.color) + '" title="Tasks linked to ' + esc(f.name) + ' records">' + (C.records ? C.records.mark(id) : '<i class="rdot"></i>') + esc(f.name) + '</button>').join('') : '') +
       (any ? '<button type="button" class="chip clear" data-fclear>' + icon('x') + 'Clear filters</button>' : '') +
       '</div>';
   }
