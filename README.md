@@ -406,6 +406,15 @@ Cadence is served from Firebase Hosting at its own site (for example `https://ca
 - `index.html` sends visitors on the old GitHub Pages address to the Firebase address, keeping `?task=`, `?record=` and `?addTaskFor=` links. If you change the site name, change it in that script too.
 - Pages and the manifest are served with `no-cache`, so an upload shows up on the next reload.
 
+## Working with no signal (version 33)
+
+Once Cadence has been opened on a phone or computer with a signal, it opens and works there with none.
+
+- **Opening offline:** the service worker (`firebase-messaging-sw.js`, which also shows push notifications) now starts for everyone, not only people with notifications on. After each visit with a signal it keeps `index.html`, every file it loads (with its `?v=`), the icons and manifest, and the Firebase code on the device. Page loads try the network first (up to 6 seconds), so a new version is never held back; the device copy opens only when there's no answer. A new version's files replace the old ones.
+- **Tasks:** Firestore keeps a copy of your tasks on the device (`enablePersistence` in `firebase-sync.js`), so ticking off, adding and editing tasks offline works and survives closing the app. The **Offline** pill shows while you're offline, and changes sync when you're back. If two people change the same task, the change that reaches the server last wins.
+- **Needs a signal:** signing in for the first time on a device, and attaching files.
+- No rules or functions changes: upload the website files only.
+
 ## Updating the app
 
 **Don't overwrite your `firebase-config.js`.** Update zips from here leave it out, so your filled-in copy on GitHub stays as it is.

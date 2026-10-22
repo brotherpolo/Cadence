@@ -19,3 +19,10 @@
     }
   } catch (e) { /* storage blocked: the device's setting */ }
 })();
+
+/* Opening with no signal (version 33): the service worker keeps Cadence's files on this device
+   after each visit with a signal (and shows push notifications, when they're on). */
+(function () {
+  if (!('serviceWorker' in navigator) || !/^https:|^http:\/\/(localhost|127\.0\.0\.1)/.test(location.href) || /\.github\.io$/.test(location.hostname)) return;
+  window.addEventListener('load', function () { navigator.serviceWorker.register('firebase-messaging-sw.js', { scope: './' }).catch(function () { /* not supported here */ }); });
+})();

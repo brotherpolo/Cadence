@@ -64,6 +64,9 @@
     try {
       db.settings(window.CADENCE_FORCE_LONG_POLLING ? { experimentalForceLongPolling: true, merge: true } : { experimentalAutoDetectLongPolling: true, merge: true });
     } catch (e) { /* settings already applied */ }
+    // keep a copy on this device (version 33): Cadence opens and works with no signal, and changes
+    // made offline survive closing the app until they're sent
+    if (!FB.persisting) { FB.persisting = true; try { await db.enablePersistence({ synchronizeTabs: true }); } catch (e) { console.warn('[cadence] offline copy not available here:', e && e.code); } }
 
     // Email/password accounts must verify their address before the app opens.
     // A verified email is what lets other people find you and assign you tasks
