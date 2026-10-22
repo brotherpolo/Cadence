@@ -232,6 +232,10 @@ firebase deploy --only functions --project tasks-2ae9d
 
 A saved view (`listViews/{id}`) can keep a `layout` map: `{ kind: 'table' | 'board' | 'timeline', by, sum, start, end, color, zoom: 'week' | 'month' | 'quarter' }` (Formwright's Board and Timeline). The rules check its keys and values; a table view saves without one, as before.
 
+### Attachments fields (Formwright)
+
+The audit trail notes which files were added or removed from an Attachments field ("Added Permit.pdf · Removed Storefront.jpg"), not the whole list, and an upload finishing later isn't counted as a change (`functions/audit.js`). Needs `bash deploy.sh functions`.
+
 ### Problems (Formwright → Settings → Problems and backups)
 
 When something goes wrong, a short report goes to `problems/{id}`: from people's browsers (Formwright's `src/problems.js` and Cadence's `problems.js`, each person only their own, size-limited and checked by the rules) and from the server (every `oops(...)` in `functions/index.js`, which also logs as before; a few per place per 10 minutes at most). Browser noise, extensions and a lost connection aren't reported. Only administrators read or clear them. `problemsDigest` (7:05 a.m.) emails administrators who switched on **Email me each morning** (`settings/problems.notify`) when there's something new, and clears reports older than 30 days. `functions/problems.js` is unit-tested.

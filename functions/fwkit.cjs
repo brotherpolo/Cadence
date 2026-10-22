@@ -332,6 +332,7 @@ function fieldKind(type) {
   if (type === "image") return "image";
   if (type === "signature") return "signature";
   if (type === "file") return "file";
+  if (type === "attachments") return "long";
   if (type === "rating") return "rating";
   if (type === "color") return "color";
   return "text";
@@ -626,6 +627,21 @@ function layoutRich(blocks, width, measure, { size = 10.5, lh = 14 } = {}) {
   });
   return out;
 }
+
+// src/filelist.js
+function asFiles(v) {
+  if (Array.isArray(v)) return v.filter((x) => x && typeof x === "object");
+  if (v && typeof v === "object" && (v.name || v.url || v.path)) return [v];
+  return [];
+}
+function filesText(v) {
+  const n = asFiles(v).length;
+  return n ? `${n} file${n === 1 ? "" : "s"}` : "";
+}
+var fileNames = (v) => asFiles(v).map((x) => String(x.name || "File"));
+var fsize2 = (n) => n < 1024 ? n + " B" : n < 1048576 ? (n / 1024).toFixed(0) + " KB" : (n / 1048576).toFixed(1) + " MB";
+var sizeText = (n) => n ? fsize2(n) : "";
+var fileLines = (v) => asFiles(v).map((x) => [x.name || "File", sizeText(x.size)].filter(Boolean).join(" \xB7 ")).join("\n");
 
 // src/fieldnames.js
 var lc = (s) => String(s ?? "").trim().toLowerCase();
@@ -1198,7 +1214,7 @@ function daysOverdue(dueKey, todayKey) {
 }
 
 // src/server/recordkit.js
-var POPUP = /* @__PURE__ */ new Set(["textarea", "file", "image", "signature", "location", "multiselect"]);
+var POPUP = /* @__PURE__ */ new Set(["textarea", "file", "image", "signature", "location", "multiselect", "attachments"]);
 var COLORS = ["#3346c8", "#0f7b6c", "#b4531a", "#8a3fb8", "#b42367", "#3d6b1f", "#56607a", "#0b6aa2"];
 var isEmpty2 = (v) => v == null || v === "" || Array.isArray(v) && !v.length || typeof v === "object" && !Array.isArray(v) && !Object.values(v).some((x) => x != null && x !== "");
 var lc2 = (s) => String(s || "").trim().toLowerCase();
@@ -1270,6 +1286,8 @@ function makeKit({ forms = [], records = [], locale = "en-CA", timeZone = "Ameri
         case "file":
         case "image":
           return v.name || "File";
+        case "attachments":
+          return filesText(v);
         case "signature":
           return "Signed";
         case "autonumber":
@@ -1298,6 +1316,7 @@ function makeKit({ forms = [], records = [], locale = "en-CA", timeZone = "Ameri
     }
     if (f.type === "location") return v?.address || "";
     if (f.type === "file" || f.type === "image") return v?.name || "";
+    if (f.type === "attachments") return fileNames(v).join(", ");
     return v ?? null;
   }
   function evalFormula(form, f, rec, depth = 0) {
@@ -1386,7 +1405,7 @@ function makeKit({ forms = [], records = [], locale = "en-CA", timeZone = "Ameri
     const rs = rulesFor(form, rec), sv = stageView(form, rec.stage);
     const items = (form.fields || []).filter((f) => !rs.hiddenFields.has(f.id) && !rs.hidden.has("f:" + f.id) && !sv.hide.has(f.id) && !sv.keys.has("f:" + f.id)).map((f) => {
       const v = f.type === "heading" || rs.cleared.has(f.id) ? null : valOf(f, rec, form);
-      const it = fieldItem(f, v, f.type === "heading" ? "" : f.type === "rating" ? isEmpty2(v) ? "" : `${v} of ${f.max || 5}` : text(form, { ...rec, values: { ...rec.values, [f.id]: v } }, f), f.type === "textarea" && v != null && !f.plain ? richBlocks(rec.values, f.id) : null);
+      const it = fieldItem(f, v, f.type === "heading" ? "" : f.type === "rating" ? isEmpty2(v) ? "" : `${v} of ${f.max || 5}` : f.type === "attachments" ? fileLines(v) : text(form, { ...rec, values: { ...rec.values, [f.id]: v } }, f), f.type === "textarea" && v != null && !f.plain ? richBlocks(rec.values, f.id) : null);
       return it;
     });
     const sections = [];
@@ -1957,9 +1976,10 @@ function titleFieldOf(form) {
   const fs = form.fields || [];
   return fs.find((f) => f.id === form.titleField) || fs.find((f) => ["text", "email", "phone", "url"].includes(f.type)) || fs.find((f) => f.type !== "heading");
 }
+var ASSIGNEE = { id: "_assignee", label: "Person responsible", type: "owner", system: true };
 function reportFields(form) {
   const own = (form.fields || []).filter((f) => !["heading", "signature"].includes(f.type));
-  return own.concat(SYSTEM);
+  return own.concat(SYSTEM, form.workflow?.on && (form.workflow.stages || []).length ? [ASSIGNEE] : []);
 }
 function fieldOf(ctx, ref) {
   if (!ref) return null;
@@ -1996,6 +2016,7 @@ function valueOf(ctx, rec, ref) {
   if (ref.id === "_created") return r.createdAt;
   if (ref.id === "_updated") return r.updatedAt || r.createdAt;
   if (ref.id === "_owner") return r.ownerId;
+  if (ref.id === "_assignee") return r.assignee || null;
   const form = ctx.formById(ref.form);
   const f = form && (form.fields || []).find((x) => x.id === ref.id);
   if (!f) return void 0;
@@ -2244,6 +2265,9 @@ function dateRefOf(ctx, def) {
 function filterReaches(ctx, def, ref) {
   return !!ref && chainOf(ctx, def.form).includes(ref.form);
 }
+function ffReach(ctx, def, ff) {
+  return ((ff && ff.refs && ff.refs.length ? ff.refs : [ff && ff.ref]) || []).find((r) => r && fieldOf(ctx, r) && filterReaches(ctx, def, r)) || null;
+}
 function rowsFor(ctx, def, extra = {}) {
   let list3 = ctx.records.filter((r) => r.formId === def.form);
   const conds = (def.conditions || []).filter((c) => c && c.ref && fieldOf(ctx, c.ref) && c.value !== void 0 && c.value !== "");
@@ -2251,8 +2275,21 @@ function rowsFor(ctx, def, extra = {}) {
     list3 = list3.filter((r) => def.join === "or" ? conds.some((c) => condHit(ctx, r, c)) : conds.every((c) => condHit(ctx, r, c)));
   }
   (extra.fields || []).forEach((ff) => {
-    if (!ff || !ff.values || !ff.values.length || !filterReaches(ctx, def, ff.ref)) return;
-    list3 = list3.filter((r) => ff.values.some((v) => condHit(ctx, r, { ref: ff.ref, op: "is", value: v })));
+    if (!ff || !(ff.values && ff.values.length || ff.range)) return;
+    const ref = ffReach(ctx, def, ff);
+    if (!ref) return;
+    if (ff.hit) {
+      list3 = list3.filter((r) => drillHit(ctx, r, { ...ff.hit, ref }));
+      return;
+    }
+    if (ff.range) {
+      list3 = list3.filter((r) => {
+        const t = timeOf(valueOf(ctx, r, ref));
+        return t != null && t >= ff.range.from && t < ff.range.to;
+      });
+      return;
+    }
+    list3 = list3.filter((r) => ff.values.some((v) => condHit(ctx, r, { ref, op: "is", value: v })));
   });
   if (extra.range) {
     const dref = dateRefOf(ctx, def);
@@ -2393,6 +2430,16 @@ function slicesOf(ctx, def, list3, max = 8) {
   }
   return items.map(({ rows, ...x }) => x);
 }
+function drillHit(ctx, rec, flt) {
+  const f = fieldOf(ctx, flt.ref);
+  if (!f) return true;
+  const v = valueOf(ctx, rec, flt.ref);
+  if (flt.from != null) {
+    const t = timeOf(v);
+    return t != null && t >= flt.from && t < flt.to;
+  }
+  return groupKeys(ctx, f, v, flt.ref).some(({ k }) => flt.keys.includes(k));
+}
 function pivotOf(ctx, def, list3) {
   const rf = fieldOf(ctx, def.group), cf = fieldOf(ctx, def.col);
   if (!rf || !cf) return null;
@@ -2490,7 +2537,7 @@ function normalizeDef(ctx, def0) {
 }
 var CANVAS_COLS = 24;
 var MIN_W = 3;
-var minH = (t) => t && (t.text || t.link) ? 2 : 3;
+var minH = (t) => t && (t.text || t.link || t.filter) ? 2 : 3;
 var clampTile = (t) => {
   const w = Math.max(MIN_W, Math.min(CANVAS_COLS, Math.round(t.w ?? 12)));
   return { ...t, w, h: Math.max(minH(t), Math.min(80, Math.round(t.h ?? 8))), x: Math.max(0, Math.min(CANVAS_COLS - w, Math.round(t.x || 0))), y: Math.max(0, Math.round(t.y || 0)) };

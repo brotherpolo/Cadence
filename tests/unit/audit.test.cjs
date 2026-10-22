@@ -171,3 +171,15 @@ test('Undo: whoever deleted it, for 10 minutes, if they can still add to that fo
   // admins can undo anyone's, any time in 90 days
   assert.equal((await restoreRecord(seed({ 'audit/a1': del('amy', now - 60 * min) }), 'boss', { recordId: 'r1' }, now)).recordId, 'r1');
 });
+
+test('Attachments fields: which files were added and removed, not a whole list', () => {
+  const f2 = { ...form, fields: [...form.fields, { id: 'att', type: 'attachments', label: 'Files' }] };
+  const A = { name: 'Permit.pdf', path: 'uploads/f/u/1-Permit.pdf', url: 'https://x/a', size: 10 };
+  const B = { name: 'Roof.jpg', path: 'uploads/f/u/2-Roof.jpg', url: '', pending: 'up-1', size: 20 };
+  const e = recordEntry('r1', rec({ st: 'A', att: [A] }), rec({ st: 'A', att: [B] }), f2, who, 1);
+  assert.deepEqual(e.changes, [{ key: 'att', label: 'Files', type: 'attachments', from: null, to: 'Added Roof.jpg · Removed Permit.pdf' }]);
+  // an upload finishing later (the link filled in) isn't a change
+  assert.equal(recordEntry('r1', rec({ st: 'A', att: [B] }), rec({ st: 'A', att: [{ ...B, url: 'https://x/b', pending: null }] }, { updatedAt: 2 }), f2, who, 2), null);
+  const made = recordEntry('r2', null, rec({ att: [A, B] }), f2, who, 3);
+  assert.deepEqual(made.changes.find((c) => c.key === 'att').to, 'Added Permit.pdf, Roof.jpg');
+});

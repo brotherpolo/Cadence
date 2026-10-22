@@ -34,6 +34,17 @@ function auditValue(v, type) {
   return v;
 }
 
+/** Attachments fields: "Added Permit.pdf · Removed Storefront.jpg" ('' when only an upload finished). Same as Formwright's filelist.js. */
+function filesChange(before, after) {
+  const list = (v) => (Array.isArray(v) ? v.filter((x) => x && typeof x === 'object') : v && typeof v === 'object' && (v.name || v.url || v.path) ? [v] : []);
+  const key = (x) => x.path || x.pending || x.url || x.name;
+  const a = list(before), b = list(after), had = new Set(a.map(key)), has = new Set(b.map(key));
+  const nm = (x) => String(x.name || 'File').slice(0, 200);
+  const added = b.filter((x) => !had.has(key(x))).map(nm), removed = a.filter((x) => !has.has(key(x))).map(nm);
+  const t = [added.length ? 'Added ' + added.join(', ') : '', removed.length ? 'Removed ' + removed.join(', ') : ''].filter(Boolean).join(' · ');
+  return t.length > MAX_TEXT ? t.slice(0, MAX_TEXT) + '…' : t;
+}
+
 /** The record's title, roughly as the app shows it. */
 function titleOf(rec, form) {
   if (!rec) return '';
@@ -97,6 +108,7 @@ function fieldChanges(before, after, form) {
   const out = [];
   const br = bv._rich || {}, ar = av._rich || {};
   fields.forEach((f) => {
+    if (f.type === 'attachments') { const t = filesChange(bv[f.id], av[f.id]); if (t) out.push({ key: f.id, label: f.label || 'Untitled field', type: 'attachments', from: null, to: t }); return; }
     if (!same(bv[f.id], av[f.id])) out.push({ key: f.id, label: f.label || 'Untitled field', type: f.type, from: auditValue(bv[f.id], f.type), to: auditValue(av[f.id], f.type) });
     // formatted long text: the words stayed the same, the formatting changed
     else if (f.type === 'textarea' && (br[f.id] || '') !== (ar[f.id] || '')) out.push({ key: f.id, label: (f.label || 'Untitled field') + ' (formatting)', type: 'text', from: null, to: 'changed' });
