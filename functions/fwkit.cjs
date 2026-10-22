@@ -473,7 +473,7 @@ function wrapText(text, width, measure) {
   });
   return lines;
 }
-function colWidths(cols, rows, measure, avail, { min = 36, cap = 220, pad: pad2 = 10 } = {}) {
+function colWidths(cols, rows, measure, avail, { min = 36, cap = 220, pad: pad3 = 10 } = {}) {
   const n = cols.length;
   if (!n) return [];
   const want = cols.map((c, i) => {
@@ -481,7 +481,7 @@ function colWidths(cols, rows, measure, avail, { min = 36, cap = 220, pad: pad2 
     rows.forEach((r) => {
       w2 = Math.max(w2, Math.min(cap, measure(String(r[i] ?? ""))));
     });
-    return Math.max(min, Math.min(cap, w2) + pad2);
+    return Math.max(min, Math.min(cap, w2) + pad3);
   });
   const total = want.reduce((a, b) => a + b, 0);
   if (total <= avail) {
@@ -510,7 +510,7 @@ function fitBox(w, h, maxW, maxH, scaleMax = 1) {
   const s = Math.min(maxW / w, maxH / h, scaleMax);
   return { w: w * s, h: h * s };
 }
-function planTable(cols, rows, measure, { spaces, sizes = [9.5, 8.5, 7.5, 7], pad: pad2 = 10, cap = 230, maxWord = 0.4, short = 20 } = {}) {
+function planTable(cols, rows, measure, { spaces, sizes = [9.5, 8.5, 7.5, 7], pad: pad3 = 10, cap = 230, maxWord = 0.4, short = 20 } = {}) {
   const sum = (a) => a.reduce((x, y) => x + y, 0);
   const tryFit = (sp2, size2, strict, roomy) => {
     const mF = measure(size2, false), mB = measure(size2, true);
@@ -529,8 +529,8 @@ function planTable(cols, rows, measure, { spaces, sizes = [9.5, 8.5, 7.5, 7], pa
       });
       let keep = c.num ? full : Math.max(strict ? whole : 0, Math.min(longest, sp2.avail * maxWord));
       if (roomy && !c.num) keep = Math.max(keep, Math.min(full, sp2.avail * 0.22));
-      minW[i] = Math.max(head, keep) + pad2 + 0.5;
-      want[i] = Math.max(minW[i], Math.min(cap, full) + pad2 + 0.5);
+      minW[i] = Math.max(head, keep) + pad3 + 0.5;
+      want[i] = Math.max(minW[i], Math.min(cap, full) + pad3 + 0.5);
     });
     if (sum(minW) > sp2.avail + 0.01) return null;
     const total = sum(want);
@@ -547,7 +547,7 @@ function planTable(cols, rows, measure, { spaces, sizes = [9.5, 8.5, 7.5, 7], pa
     }
   }
   const sp = spaces[spaces.length - 1], size = sizes[sizes.length - 1];
-  const widths = colWidths(cols.map((c) => ({ label: c.label })), rows, (t, b) => measure(size, b)(t), sp.avail, { min: 30, cap, pad: pad2 });
+  const widths = colWidths(cols.map((c) => ({ label: c.label })), rows, (t, b) => measure(size, b)(t), sp.avail, { min: 30, cap, pad: pad3 });
   return { size, widths, landscape: !!sp.landscape, broken: true };
 }
 function layoutRich(blocks, width, measure, { size = 10.5, lh = 14 } = {}) {
@@ -643,12 +643,81 @@ var fsize2 = (n) => n < 1024 ? n + " B" : n < 1048576 ? (n / 1024).toFixed(0) + 
 var sizeText = (n) => n ? fsize2(n) : "";
 var fileLines = (v) => asFiles(v).map((x) => [x.name || "File", sizeText(x.size)].filter(Boolean).join(" \xB7 ")).join("\n");
 
+// src/fixedlogic.js
+var LAYOUT = /* @__PURE__ */ new Set(["heading", "instructions"]);
+var isLayout = (f) => !!f && LAYOUT.has(f.type);
+var DEFAULT_TYPES = /* @__PURE__ */ new Set(["text", "textarea", "email", "phone", "url", "number", "decimal", "currency", "percent", "rating", "range", "date", "time", "datetime", "checkbox", "select", "radio", "multiselect", "color"]);
+var canDefault = (f) => !!f && DEFAULT_TYPES.has(f.type);
+var NUMS = /* @__PURE__ */ new Set(["number", "decimal", "currency", "percent", "rating", "range"]);
+var blank = (v) => v == null || v === "" || Array.isArray(v) && !v.length;
+var hasDefault = (f) => canDefault(f) && !blank(f.defaultValue);
+var isFixed = (f) => !!f && !!f.readOnly && hasDefault(f);
+var pad = (n) => String(n).padStart(2, "0");
+function clock(now = /* @__PURE__ */ new Date(), timeZone) {
+  if (timeZone) {
+    try {
+      const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(now).map((x) => [x.type, x.value]));
+      return { day: `${p.year}-${p.month}-${p.day}`, time: `${p.hour}:${p.minute}` };
+    } catch (e) {
+    }
+  }
+  return { day: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`, time: `${pad(now.getHours())}:${pad(now.getMinutes())}` };
+}
+function defaultFor(f, now = /* @__PURE__ */ new Date(), timeZone) {
+  if (!hasDefault(f)) return null;
+  const v = f.defaultValue;
+  const c = () => clock(now, timeZone);
+  switch (f.type) {
+    case "date":
+      return v === "today" ? c().day : /^\d{4}-\d{2}-\d{2}$/.test(String(v)) ? String(v) : null;
+    case "time":
+      return v === "now" ? c().time : /^\d{2}:\d{2}/.test(String(v)) ? String(v).slice(0, 5) : null;
+    case "datetime": {
+      if (v === "now") {
+        const k = c();
+        return k.day + "T" + k.time;
+      }
+      return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(String(v)) ? String(v).slice(0, 16) : null;
+    }
+    case "checkbox":
+      return v === true || v === "yes" ? true : v === false || v === "no" ? false : null;
+    case "select":
+    case "radio":
+      return (f.options || []).includes(v) ? v : null;
+    case "multiselect": {
+      const o = f.options || [];
+      const l = (Array.isArray(v) ? v : [v]).filter((x) => o.includes(x));
+      return l.length ? l : null;
+    }
+    default:
+      if (NUMS.has(f.type)) {
+        const n = Number(v);
+        return Number.isFinite(n) ? n : null;
+      }
+      return String(v);
+  }
+}
+function withFixed(rec, form, now = /* @__PURE__ */ new Date(), timeZone) {
+  const fx = (form?.fields || []).filter(isFixed);
+  if (!rec || !fx.length) return rec;
+  const values = { ...rec.values || {} };
+  let changed = false;
+  fx.forEach((f) => {
+    const d = defaultFor(f, now, timeZone);
+    if (JSON.stringify(values[f.id] ?? null) !== JSON.stringify(d)) {
+      values[f.id] = d;
+      changed = true;
+    }
+  });
+  return changed ? { ...rec, values } : rec;
+}
+
 // src/fieldnames.js
 var lc = (s) => String(s ?? "").trim().toLowerCase();
 var sysOf = (f) => String(f?.sysName || "").trim() || String(f?.label || "").trim();
 function fieldByName(form, name) {
   const n = lc(name);
-  const fs = (form?.fields || []).filter((f) => f.type !== "heading");
+  const fs = (form?.fields || []).filter((f) => f.type !== "heading" && f.type !== "instructions");
   return fs.find((f) => lc(sysOf(f)) === n) || fs.find((f) => f.id === name) || (() => {
     const c = fs.filter((f) => lc(f.label) === n);
     return c.length === 1 ? c[0] : void 0;
@@ -657,7 +726,7 @@ function fieldByName(form, name) {
 function sharedCaptions(fields) {
   const n = /* @__PURE__ */ new Map();
   (fields || []).forEach((f) => {
-    if (f.type !== "heading") n.set(lc(f.label), (n.get(lc(f.label)) || 0) + 1);
+    if (f.type !== "heading" && f.type !== "instructions") n.set(lc(f.label), (n.get(lc(f.label)) || 0) + 1);
   });
   return new Set([...n].filter(([, c]) => c > 1).map(([k]) => k));
 }
@@ -697,7 +766,7 @@ var ACTIONS = [
   { key: "clear", label: "Clear value" }
 ];
 var ACTION_LABEL = Object.fromEntries(ACTIONS.map((a) => [a.key, a.label]));
-var NO_VALUE = /* @__PURE__ */ new Set(["heading", "formula", "autonumber"]);
+var NO_VALUE = /* @__PURE__ */ new Set(["heading", "instructions", "formula", "autonumber"]);
 var holdsValue = (f) => !!f && !NO_VALUE.has(f.type);
 function kindOf(f) {
   if (!f) return "other";
@@ -830,20 +899,20 @@ function evaluate(form, get) {
   const rules = (form?.rules || []).filter((r) => r && !r.off);
   const byId = new Map(fields.map((f) => [f.id, f]));
   const under = headingOf(fields);
-  let blank = /* @__PURE__ */ new Set();
+  let blank2 = /* @__PURE__ */ new Set();
   let st = null;
   for (let pass = 0; pass < 6; pass++) {
     const look = (c) => {
       if (!c.src || c.src === "self") {
         const f = byId.get(c.field);
         if (!f) return null;
-        return { f, v: blank.has(f.id) ? null : get("self", c.field)?.v };
+        return { f, v: blank2.has(f.id) ? null : get("self", c.field)?.v };
       }
       return get(c.src, c.field);
     };
     st = once(rules, fields, byId, under, look);
-    if (sameSet(st.blank, blank)) break;
-    blank = st.blank;
+    if (sameSet(st.blank, blank2)) break;
+    blank2 = st.blank;
   }
   return st;
 }
@@ -883,7 +952,7 @@ function once(rules, fields, byId, under, look) {
     const f = byId.get(k.slice(2));
     if (k.startsWith("f:") && holdsValue(f) && !hiddenFields.has(f.id)) cleared.add(f.id);
   });
-  const blank = new Set([...hiddenFields, ...cleared].filter((id) => holdsValue(byId.get(id))));
+  const blank2 = new Set([...hiddenFields, ...cleared].filter((id) => holdsValue(byId.get(id))));
   const required = (f) => {
     if (!f || !holdsValue(f) || hiddenFields.has(f.id) || cleared.has(f.id)) return false;
     const k = "f:" + f.id;
@@ -892,7 +961,7 @@ function once(rules, fields, byId, under, look) {
     if (req.has(k)) return false;
     return !!f.required;
   };
-  return { hidden, hiddenFields, cleared, required, fired, blank };
+  return { hidden, hiddenFields, cleared, required, fired, blank: blank2 };
 }
 var sameSet = (a, b) => a.size === b.size && [...a].every((x) => b.has(x));
 var NO_RULES = { hidden: /* @__PURE__ */ new Set(), hiddenFields: /* @__PURE__ */ new Set(), cleared: /* @__PURE__ */ new Set(), required: (f) => !!(f && f.required && holdsValue(f)), fired: /* @__PURE__ */ new Map(), blank: /* @__PURE__ */ new Set() };
@@ -1150,6 +1219,10 @@ function stageView(form, stageId) {
       if (m === "hide") out.keys.add("f:" + f.id);
       return;
     }
+    if (f.type === "instructions") {
+      if (m === "hide" || hm === "hide") out.hide.add(f.id);
+      return;
+    }
     if (m === "hide" || hm === "hide") out.hide.add(f.id);
     else if (m === "view" || hm === "view") out.view.add(f.id);
     else if (m === "req" && !["formula", "autonumber"].includes(f.type)) out.req.add(f.id);
@@ -1219,8 +1292,9 @@ var COLORS = ["#3346c8", "#0f7b6c", "#b4531a", "#8a3fb8", "#b42367", "#3d6b1f", 
 var isEmpty2 = (v) => v == null || v === "" || Array.isArray(v) && !v.length || typeof v === "object" && !Array.isArray(v) && !Object.values(v).some((x) => x != null && x !== "");
 var lc2 = (s) => String(s || "").trim().toLowerCase();
 var itemName = (f) => (f?.itemName || "").trim() || (f?.name || "Record").replace(/s$/i, "");
-function makeKit({ forms = [], records = [], locale = "en-CA", timeZone = "America/Toronto" } = {}) {
+function makeKit({ forms = [], records: stored = [], locale = "en-CA", timeZone = "America/Toronto" } = {}) {
   const formMap = new Map(forms.map((f) => [f.id, f]));
+  const records = stored.map((r) => withFixed(r, formMap.get(r.formId), /* @__PURE__ */ new Date(), timeZone));
   const recMap = new Map(records.map((r) => [r.id, r]));
   const kids = /* @__PURE__ */ new Map();
   records.forEach((r) => {
@@ -1234,7 +1308,7 @@ function makeKit({ forms = [], records = [], locale = "en-CA", timeZone = "Ameri
   const childrenOf = (id, formId) => (kids.get(id) || []).filter((r) => !formId || r.formId === formId);
   const titleFieldOf2 = (form) => {
     const fs = form?.fields || [];
-    return fs.find((f) => f.id === form.titleField) || fs.find((f) => ["text", "email", "phone", "url"].includes(f.type)) || fs.find((f) => f.type !== "heading");
+    return fs.find((f) => f.id === form.titleField) || fs.find((f) => ["text", "email", "phone", "url"].includes(f.type)) || fs.find((f) => !isLayout(f));
   };
   const num = (v, o) => Number(v).toLocaleString(locale, o);
   function fmtCalc(f, v) {
@@ -1355,6 +1429,7 @@ function makeKit({ forms = [], records = [], locale = "en-CA", timeZone = "Ameri
   function valOf(f, rec, form) {
     if (f.id === STAGE_FIELD) return stageName(form || formById(rec.formId), rec);
     if (f.type === "autonumber") return rec.nums?.[f.id] ?? null;
+    if (isFixed(f)) return defaultFor(f, /* @__PURE__ */ new Date(), timeZone);
     if (f.type !== "formula") return rec.values?.[f.id];
     form = form || formById(rec.formId);
     try {
@@ -1371,7 +1446,7 @@ function makeKit({ forms = [], records = [], locale = "en-CA", timeZone = "Ameri
     const t = f ? fmt(f, valOf(f, rec, form)) : "";
     return t || "Untitled " + itemName(form).toLowerCase();
   }
-  const text = (form, rec, f) => f.type === "heading" ? "" : f.type === "textarea" ? String(valOf(f, rec, form) ?? "") : fmt(f, valOf(f, rec, form));
+  const text = (form, rec, f) => isLayout(f) ? "" : f.type === "textarea" ? String(valOf(f, rec, form) ?? "") : fmt(f, valOf(f, rec, form));
   const fieldText = (form, rec, label) => {
     const f = fieldByName(form, label);
     return f ? text(form, rec, f) : void 0;
@@ -1403,7 +1478,7 @@ function makeKit({ forms = [], records = [], locale = "en-CA", timeZone = "Ameri
   }
   function pdfModel(form, rec, { stamp = "", userName = (id) => "" } = {}) {
     const rs = rulesFor(form, rec), sv = stageView(form, rec.stage);
-    const items = (form.fields || []).filter((f) => !rs.hiddenFields.has(f.id) && !rs.hidden.has("f:" + f.id) && !sv.hide.has(f.id) && !sv.keys.has("f:" + f.id)).map((f) => {
+    const items = (form.fields || []).filter((f) => f.type !== "instructions" && !rs.hiddenFields.has(f.id) && !rs.hidden.has("f:" + f.id) && !sv.hide.has(f.id) && !sv.keys.has("f:" + f.id)).map((f) => {
       const v = f.type === "heading" || rs.cleared.has(f.id) ? null : valOf(f, rec, form);
       const it = fieldItem(f, v, f.type === "heading" ? "" : f.type === "rating" ? isEmpty2(v) ? "" : `${v} of ${f.max || 5}` : f.type === "attachments" ? fileLines(v) : text(form, { ...rec, values: { ...rec.values, [f.id]: v } }, f), f.type === "textarea" && v != null && !f.plain ? richBlocks(rec.values, f.id) : null);
       return it;
@@ -1420,7 +1495,7 @@ function makeKit({ forms = [], records = [], locale = "en-CA", timeZone = "Ameri
       const isGrid = rel.display === "grid";
       if (rs.hidden.has((isGrid ? "g:" : "c:") + cf.id) || sv.keys.has((isGrid ? "g:" : "c:") + cf.id)) return;
       const rows = childrenOf(rec.id, cf.id).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-      const usable = (cf.fields || []).filter((f) => f.type !== "heading");
+      const usable = (cf.fields || []).filter((f) => !isLayout(f));
       const num2 = (f) => ["number", "decimal", "currency", "percent", "range"].includes(f.type) || f.type === "formula";
       if (isGrid) {
         const picked = Array.isArray(rel.cols) && rel.cols.length ? rel.cols.map((id) => usable.find((f) => f.id === id)).filter(Boolean) : usable.filter((f) => !POPUP.has(f.type)).slice(0, 8);
@@ -1974,11 +2049,11 @@ var SYSTEM = [
 ];
 function titleFieldOf(form) {
   const fs = form.fields || [];
-  return fs.find((f) => f.id === form.titleField) || fs.find((f) => ["text", "email", "phone", "url"].includes(f.type)) || fs.find((f) => f.type !== "heading");
+  return fs.find((f) => f.id === form.titleField) || fs.find((f) => ["text", "email", "phone", "url"].includes(f.type)) || fs.find((f) => f.type !== "heading" && f.type !== "instructions");
 }
 var ASSIGNEE = { id: "_assignee", label: "Person responsible", type: "owner", system: true };
 function reportFields(form) {
-  const own = (form.fields || []).filter((f) => !["heading", "signature"].includes(f.type));
+  const own = (form.fields || []).filter((f) => !["heading", "instructions", "signature"].includes(f.type));
   return own.concat(SYSTEM, form.workflow?.on && (form.workflow.stages || []).length ? [ASSIGNEE] : []);
 }
 function fieldOf(ctx, ref) {
@@ -2758,7 +2833,7 @@ var WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturda
 var MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 var NTHS = [{ v: 1, label: "first" }, { v: 2, label: "second" }, { v: 3, label: "third" }, { v: 4, label: "fourth" }, { v: -1, label: "last" }];
 var DEFAULT_HOUR = 17;
-var pad = (n) => String(n).padStart(2, "0");
+var pad2 = (n) => String(n).padStart(2, "0");
 var utc = (key) => {
   const [y, m, d] = key.split("-").map(Number);
   return new Date(Date.UTC(y, m - 1, d));
@@ -2806,7 +2881,7 @@ function onMatches(on, key) {
   if (on.kind === "date") return dom === (on.day === "last" ? Number(last.slice(8)) : Math.min(on.day, Number(last.slice(8))));
   const hits = [];
   for (let d = 1; d <= Number(last.slice(8)); d++) {
-    const k = key.slice(0, 8) + pad(d), w = isoDow(k);
+    const k = key.slice(0, 8) + pad2(d), w = isoDow(k);
     if (on.what === "biz" ? w <= 5 : w === on.what) hits.push(d);
   }
   return dom === (on.nth === -1 ? hits[hits.length - 1] : hits[on.nth - 1]);
