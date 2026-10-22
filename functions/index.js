@@ -230,13 +230,15 @@ async function remindOne(uid, prefs, now, lastCheck) {
   const hasDevice = !(await ref.collection('devices').limit(1).get()).empty;
   if (!hasDevice) return done();
 
-  const mine = (snap) => snap.docs.map((d) => Object.assign({ id: d.id }, d.data())).filter((t) => !t.done && !t.sample && doerOf(t) === uid);
+  // snoozed by this person (task.snooze[uid] is a day still to come): no reminder until it's back on their list
+  const awake = (t) => !(t.snooze && typeof t.snooze[uid] === 'string' && t.snooze[uid] > today);
+  const mine = (snap) => snap.docs.map((d) => Object.assign({ id: d.id }, d.data())).filter((t) => !t.done && !t.sample && doerOf(t) === uid && awake(t));
   // tasks given to a role this person holds (Formwright → Roles): theirs to do as well
   let roleTasks = null;
   const byRole = async () => {
     if (roleTasks) return roleTasks;
     const roles = ((await db.collection('users').doc(uid).get()).get('roles') || []).filter((r) => typeof r === 'string').slice(0, 10);
-    roleTasks = roles.length ? (await db.collection('tasks').where('assigneeRole', 'in', roles).get()).docs.map((d) => Object.assign({ id: d.id }, d.data())).filter((t) => !t.done && !t.sample && t.due) : [];
+    roleTasks = roles.length ? (await db.collection('tasks').where('assigneeRole', 'in', roles).get()).docs.map((d) => Object.assign({ id: d.id }, d.data())).filter((t) => !t.done && !t.sample && t.due && awake(t)) : [];
     return roleTasks;
   };
   const plus = (list, extra) => { const ids = new Set(list.map((t) => t.id)); return list.concat(extra.filter((t) => !ids.has(t.id))); };

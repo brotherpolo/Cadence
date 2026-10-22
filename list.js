@@ -3,7 +3,7 @@
   const C = window.Cadence;
   const { D, esc, icon } = C;
   const S = () => C.store;
-  const ui = { scope: 'all', types: new Set(), levels: new Set(), node: null, record: null, recordLabel: '', forms: new Set(), q: '', tableSort: { key: 'due', dir: 1 }, flash: null, collapsed: new Set() };
+  const ui = { snoozed: false, snz: null, scope: 'all', types: new Set(), levels: new Set(), node: null, record: null, recordLabel: '', forms: new Set(), q: '', tableSort: { key: 'due', dir: 1 }, flash: null, collapsed: new Set() };
   let el = null;
 
   const view = (C.views = C.views || {}).list = {
@@ -69,8 +69,12 @@
         const row = e.target.closest('[data-row]');
         if (row && e.target === row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); C.openEditor(row.dataset.row); }
         if (row && e.target === row && (e.key === 'x' || e.key === 'X')) { e.preventDefault(); C.completeTask(row.dataset.row); }
+        if (row && e.target === row && (e.key === 'z' || e.key === 'Z') && !S().get(row.dataset.row)?.done) { e.preventDefault(); ui.snz = row.dataset.row; renderBody(); el.querySelector('.snz-menu .snz-mi')?.focus(); }
+        if (e.key === 'Escape' && ui.snz) { e.preventDefault(); const id = ui.snz; ui.snz = null; renderBody(); el.querySelector('[data-row="' + id + '"] [data-snz]')?.focus(); }
       });
       attachSwipe(body);
+      body.addEventListener('change', (e) => { const d = e.target.closest('[data-snz-date]'); if (!d || !d.value) return; const r = d.closest('[data-row]'); if (r && d.value > D.todayKey()) snooze(r.dataset.row, d.value); });
+      document.addEventListener('click', (e) => { if (ui.snz && el && el.isConnected && !e.target.closest('.snz-wrap')) { ui.snz = null; renderBody(); } });
       view.update();
     },
     update() {
@@ -206,7 +210,9 @@
 
   function renderFilters() {
     const st = S().state;
-    const any = ui.types.size || ui.levels.size || ui.scope !== 'all' || ui.node || ui.record || ui.forms.size;
+    const any = ui.snoozed || ui.types.size || ui.levels.size || ui.scope !== 'all' || ui.node || ui.record || ui.forms.size;
+    const nSnz = st.tasks.filter((t) => !t.done && C.snoozedUntil(t)).length;
+    if (!nSnz) ui.snoozed = false;
     // forms that open tasks are linked to, for the form chips
     const linked = new Map();
     st.tasks.forEach((t) => {
@@ -220,6 +226,7 @@
     const open = st.tasks.filter((t) => !t.done);
     el.querySelector('#ls-filters').innerHTML =
       '<div class="chips scroll-x">' +
+      (nSnz ? '<button type="button" class="chip snz-chip' + (ui.snoozed ? ' on' : '') + '" data-fsnoozed aria-pressed="' + ui.snoozed + '" title="Tasks you’ve snoozed">' + icon('moon') + 'Snoozed <span class="mono muted">' + nSnz + '</span></button><span class="chip-sep" aria-hidden="true"></span>' : '') +
       (nd ? '<button type="button" class="chip on node-filter" data-fnode style="--c:' + C.map.colorHex(nd.color) + '" title="Show all tasks"><i class="dot"></i>On “' + esc(C.map.title(nd)) + '”' + icon('x') + '</button><span class="chip-sep" aria-hidden="true"></span>' : '') +
       (ui.record ? '<button type="button" class="chip on node-filter rec-filter" data-frecord style="--c:' + esc(recFilterColor()) + '" title="Show all tasks"><i class="rdot"></i>On “' + esc(recFilterLabel()) + '”' + icon('x') + '</button><span class="chip-sep" aria-hidden="true"></span>' : '') +
       (S().sharing() && st.tasks.some((t) => S().isWithOthers(t)) ?
@@ -242,7 +249,8 @@
     else if (b.hasAttribute('data-fnode')) ui.node = null;
     else if (b.hasAttribute('data-frecord')) ui.record = null;
     else if (b.dataset.fform) toggleSet(ui.forms, b.dataset.fform);
-    else if (b.hasAttribute('data-fclear')) { ui.types.clear(); ui.levels.clear(); ui.scope = 'all'; ui.node = null; ui.record = null; ui.forms.clear(); }
+    else if (b.hasAttribute('data-fsnoozed')) ui.snoozed = !ui.snoozed;
+    else if (b.hasAttribute('data-fclear')) { ui.snoozed = false; ui.types.clear(); ui.levels.clear(); ui.scope = 'all'; ui.node = null; ui.record = null; ui.forms.clear(); }
     filtersChanged();
   }
   const toggleSet = (set, v) => (set.has(v) ? set.delete(v) : set.add(v));
@@ -262,8 +270,11 @@
   /* ---------- filtering, sorting, grouping ---------- */
   function visibleTasks(includeDone) {
     const q = ui.q.trim().toLowerCase();
+    const tk = D.todayKey(), me = C.snoozeWho();
     return S().state.tasks.filter((t) =>
       (includeDone || !t.done) &&
+      // snoozed: off the list until its day (a search still finds it; the Snoozed chip shows only those)
+      (ui.snoozed ? !t.done && !!C.snoozedUntil(t, me, tk) : !C.snoozedUntil(t, me, tk) || !!q) &&
       inScope(t) &&
       (!ui.types.size || ui.types.has(t.typeId)) &&
       (!ui.levels.size || ui.levels.has(t.levelId)) &&
@@ -350,7 +361,7 @@
     if (!S().state.ready) { body.innerHTML = '<div class="skeleton">' + '<i></i>'.repeat(4) + '</div>'; return; }
     if (p.listMode === 'table') { body.innerHTML = renderTable(tasks.filter((t) => p.showDone || !t.done)); return flash(body); }
     const gs = groups(tasks);
-    const filtered = ui.q || ui.types.size || ui.levels.size || ui.scope !== 'all' || ui.node || ui.record || ui.forms.size;
+    const filtered = ui.snoozed || ui.q || ui.types.size || ui.levels.size || ui.scope !== 'all' || ui.node || ui.record || ui.forms.size;
     if (!gs.some((g) => g.items.length)) {
       body.innerHTML = '<div class="empty">' + icon(filtered ? 'search' : 'check', 'empty-ic') +
         '<h3>' + (filtered ? 'No tasks match' : 'All clear') + '</h3><p>' +
@@ -377,6 +388,27 @@
     ui.flash = null;
   }
 
+  /** ⏾ Snooze: off your list until a day; the due date stays as it is. */
+  function snoozeMenu(t) {
+    const tk = D.todayKey(), cur = C.snoozedUntil(t);
+    const fmt = (k) => C.F.wday.format(D.parse(k)) + ', ' + C.F.short.format(D.parse(k));
+    return '<div class="snz-menu" role="menu" aria-label="Snooze until">' +
+      '<p class="snz-h">Snooze until… <span class="muted">(the due date stays)</span></p>' +
+      C.snoozeChoices(tk, S().state.prefs.weekStart).map((o) => '<button type="button" role="menuitem" class="snz-mi" data-snz-pick="' + o.key + '"><span>' + esc(o.label) + '</span><span class="muted mono">' + esc(fmt(o.key)) + '</span></button>').join('') +
+      '<label class="snz-day"><span>Pick a day</span><input type="date" data-snz-date min="' + D.addKey(tk, 1) + '"' + (cur ? ' value="' + cur + '"' : '') + '></label>' +
+      (cur ? '<button type="button" role="menuitem" class="snz-mi snz-off" data-snz-off><span>Unsnooze: back on the list now</span></button>' : '') +
+      '</div>';
+  }
+  function snooze(id, key) {
+    const t = S().get(id); if (!t) return;
+    const me = C.snoozeWho(), prev = t.snooze || null;
+    ui.snz = null;
+    S().updateTask(id, { snooze: C.snoozeSet(prev, me, key) });
+    C.toast(key ? 'Snoozed until ' + C.relDate(key) + '. It’s back on your list then.' : 'Back on your list', { action: 'Undo', onAction: () => S().updateTask(id, { snooze: prev || {} }) });
+    renderAll();
+  }
+  function renderAll() { renderFilters(); renderBody(); }
+
   function row(t) {
     const S_ = S();
     const ty = S_.typeOf(t), lv = S_.levelOf(t);
@@ -387,6 +419,8 @@
     const meta = [];
     const who = C.whoChip(t);
     if (who) meta.push(who);
+    const snz = !t.done && C.snoozedUntil(t);
+    if (snz) meta.push('<span class="meta-snz" title="Snoozed: back on your list ' + esc(C.relDate(snz)) + '">' + icon('moon') + 'Snoozed until ' + esc(C.relDate(snz)) + '</span>');
     if (t.due) meta.push('<span class="meta-due' + (overdue ? ' overdue' : t.due === tk ? ' today' : '') + '">' + icon('calendar') + C.relDate(t.due) + (overdue ? ' · ' + (-D.diff(t.due, tk)) + 'd late' : '') + (t.time ? ' · ' + C.fmtTime(t.time) : '') + '</span>');
     if (ty) meta.push('<span class="type-tag" style="--c:' + ty.color + '">' + icon(ty.glyph) + esc(ty.name) + '</span>');
     if (t.nodeId && C.map && S_.isOwner(t)) meta.push(C.map.chip(t.nodeId));
@@ -401,6 +435,7 @@
       '<div class="task-main"><div class="task-title">' + esc(t.title) + '</div>' + (meta.length ? '<div class="task-meta">' + meta.join('') + '</div>' : '') + '</div>' +
       (lv ? '<span class="lv-tag" title="Importance: ' + esc(lv.name) + '">' + esc(lv.name) + '</span>' : '') +
       '<div class="task-acts">' +
+      (!t.done ? '<span class="snz-wrap"><button type="button" class="icon-btn sm" data-snz aria-haspopup="menu" aria-expanded="' + (ui.snz === t.id) + '" title="Snooze (Z)" aria-label="Snooze: off your list until a day you choose">' + icon('moon') + '</button>' + (ui.snz === t.id ? snoozeMenu(t) : '') + '</span>' : '') +
       (!t.done ? '<button type="button" class="icon-btn sm" data-snooze title="Move to tomorrow" aria-label="Move to tomorrow">' + icon('chevR') + '</button>' : '') +
       (S_.canDelete(t) ? '<button type="button" class="icon-btn sm" data-del title="Delete" aria-label="Delete">' + icon('trash') + '</button>' : '') + '</div>' +
       '</div></div>';
@@ -449,6 +484,12 @@
     const r = e.target.closest('[data-row]'); if (!r) return;
     const id = r.dataset.row;
     if (e.target.closest('[data-check]')) return C.completeTask(id, r);
+    if (e.target.closest('[data-snz-date]')) return; // picking a day: wait for the change
+    if (e.target.closest('[data-snz]')) { ui.snz = ui.snz === id ? null : id; renderBody(); const m = el.querySelector('.snz-menu .snz-mi'); if (m) m.focus(); else el.querySelector('[data-row="' + id + '"] [data-snz]')?.focus(); return; }
+    const pick = e.target.closest('[data-snz-pick]');
+    if (pick) return snooze(id, pick.dataset.snzPick);
+    if (e.target.closest('[data-snz-off]')) return snooze(id, null);
+    if (e.target.closest('.snz-menu')) return;
     if (e.target.closest('[data-snooze]')) {
       const t = S().get(id); const prev = t.due, was = { moved: t.moved || 0, pushed: t.pushed || 0 };
       S().updateTask(id, { due: D.addKey(D.todayKey(), 1) });

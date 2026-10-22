@@ -224,6 +224,10 @@ The rules let administrators add versions under `forms/{id}/versions/` (as thems
 firebase deploy --only functions --project tasks-2ae9d
 ```
 
+### Starred records (Formwright)
+
+`stars/{uid}` holds `{ ids: [recordId], updatedAt }`: the records a person starred, newest first, at most 100. Only that person can read or change it; removing an account deletes it.
+
 ### Saved list views: Board and Timeline
 
 A saved view (`listViews/{id}`) can keep a `layout` map: `{ kind: 'table' | 'board' | 'timeline', by, sum, start, end, color, zoom: 'week' | 'month' | 'quarter' }` (Formwright's Board and Timeline). The rules check its keys and values; a table view saves without one, as before.
@@ -313,6 +317,7 @@ In the task editor, **Assigned to** lists **Me** and everyone with an account (f
 - **Photos:** signing in with Google saves your Google photo to your profile (refreshed each sign-in); avatars show it over your initials, and initials show for anyone without one or whose photo can't load. New photos appear without a reload.
 - **Tasks given to a role:** everyone holding the role sees the task ("Accounts · from Amy") and any of them can do it; the owner is told who finished it.
 - The app shows a notice when someone assigns you a task, and when an assignee completes or hands back one of yours. Use the **Assigned to me** / **Assigned to others** filters on the Tasks page to see just those.
+- **Version 32: Snooze.** ⏾ on a task (or **Z** on a focused task, or **Snooze** in the task editor on phones) takes it off your list until a day: Tomorrow, This weekend, Next week or one you pick. The due date stays as it is, so overdue still means overdue; it's back on your list that morning, and reminders and the morning summary skip it until then. Each person's snooze is their own (`task.snooze = { uid: 'YYYY-MM-DD' }`): the owner and the person it's given to snooze separately. The **Snoozed** chip shows what's snoozed, with **Unsnooze**; a search still finds them. The next occurrence of a repeating task isn't snoozed. Needs the rules and functions in this update.
 - **Version 31:** problems in Cadence (a failed save, an error) are reported to Formwright's Settings → Problems and backups for administrators (`problems.js`). Needs the rules in this update.
 - **Version 30:** reads form icons as Formwright now saves them (a list of shapes, each a plain object), so they show again once a form with an icon saves. No rules change.
 - **Version 29:** a task linked to a Formwright record shows that form's icon (when the form uses one: Formwright → Form designer → Settings → Badge) instead of the coloured square, on the task, in the task editor and on the form filter chips. Drawn from plain shapes only. No rules change.

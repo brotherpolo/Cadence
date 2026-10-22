@@ -133,6 +133,12 @@ describe('tasks: owner and assignee (unchanged from v21)', () => {
     await assertFails(updateDoc(ref, { title: 'Renamed', updatedAt: 4 }));
   });
 
+  test('snooze: the owner and the assignee each snooze for themselves', async () => {
+    await assertSucceeds(updateDoc(doc(db('bob'), 'tasks', 't_shared'), { snooze: { bob: '2026-10-30' }, updatedAt: 5 }));
+    await assertSucceeds(updateDoc(doc(db('owen'), 'tasks', 't_shared'), { snooze: { bob: '2026-10-30', owen: '2026-11-02' }, updatedAt: 6 }));
+    await assertFails(updateDoc(doc(db('owen'), 'tasks', 't_shared'), { snooze: 'tomorrow', updatedAt: 7 }), 'a map of days');
+  });
+
   test('assignee can hand the task back', async () => {
     await assertSucceeds(updateDoc(doc(db('bob'), 'tasks', 't_shared'), {
       assigneeId: null, assigneeName: null, assigneeEmail: null, members: ['owen'], updatedAt: 2,

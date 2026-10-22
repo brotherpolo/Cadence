@@ -883,3 +883,14 @@ describe('Problems and backups (Settings → Problems and backups)', () => {
     await assertFails(setDoc(doc(db('olivia'), 'settings', 'problems'), ok('olivia')));
   });
 });
+
+describe('Starred records (yours only)', () => {
+  test('each person reads and writes only their own stars', async () => {
+    await assertSucceeds(setDoc(doc(db('alice'), 'stars', 'alice'), { ids: ['r1', 'r2'], updatedAt: 1 }));
+    await assertSucceeds(getDoc(doc(db('alice'), 'stars', 'alice')));
+    await assertFails(getDoc(doc(db('admin'), 'stars', 'alice')), 'not even an administrator');
+    await assertFails(setDoc(doc(db('bob'), 'stars', 'alice'), { ids: [], updatedAt: 1 }));
+    await assertFails(setDoc(doc(db('alice'), 'stars', 'alice'), { ids: Array.from({ length: 101 }, (_, i) => 'r' + i) }));
+    await assertFails(setDoc(doc(db('alice'), 'stars', 'alice'), { ids: [], other: 1 }));
+  });
+});

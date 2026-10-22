@@ -255,7 +255,7 @@ service cloud.firestore {
                'assigneeId', 'assigneeName', 'assigneeEmail', 'members',
                'typeSnap', 'levelSnap', 'nodeId', 'moved', 'pushed', 'doneBy', 'reassignedBy', 'reassignedAt',
                'recordId', 'formId', 'recordSnap',
-               'assigneeRole', 'assigneeRoleName', 'doneByName'
+               'assigneeRole', 'assigneeRoleName', 'doneByName', 'snooze'
              ])
           && d.keys().hasAll(['id', 'title', 'done', 'ownerId', 'members'])
           && d.id == taskId
@@ -275,6 +275,8 @@ service cloud.firestore {
           && optString(d, 'assigneeRole', 100)
           && optString(d, 'assigneeRoleName', 80)
           && optString(d, 'doneByName', 200)
+          // snooze: { uid: 'YYYY-MM-DD' }, each person's own day the task comes back on their list
+          && (!('snooze' in d) || (d.snooze is map && d.snooze.size() <= 20))
           && okSnap(d, 'typeSnap')
           && okSnap(d, 'levelSnap')
           && isDateKey(d.get('due', null))
@@ -401,7 +403,7 @@ service cloud.firestore {
           // (never the record link). The first to tick it off is credited (doneBy, doneByName).
           || ((isAssignee() || isRoleHolder())
              && changed().hasOnly(['done', 'doneAt', 'due', 'time', 'subtasks',
-                                   'notes', 'updatedAt', 'spawnedNext', 'moved', 'pushed', 'doneBy', 'doneByName']))
+                                   'notes', 'updatedAt', 'spawnedNext', 'moved', 'pushed', 'doneBy', 'doneByName', 'snooze']))
           // assignee: hand it back to the owner
           || (isAssignee()
              && request.resource.data.get('assigneeId', null) == null
@@ -741,6 +743,15 @@ service cloud.firestore {
         && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 80
         && optString(request.resource.data, 'description', 500);
       allow delete: if isAdmin();
+    }
+
+    // Starred records (Formwright): each person's own, private (nobody else reads them)
+    match /stars/{userId} {
+      allow read, delete: if signedIn() && userId == request.auth.uid;
+      allow create, update: if signedIn() && userId == request.auth.uid
+        && request.resource.data.keys().hasOnly(['ids', 'updatedAt'])
+        && request.resource.data.ids is list && request.resource.data.ids.size() <= 100
+        && (!('updatedAt' in request.resource.data) || request.resource.data.updatedAt is int);
     }
 
     match /profiles/{userId} {

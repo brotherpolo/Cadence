@@ -98,6 +98,13 @@
         (existing && existing.moved ? '<p class="fine ed-moved">' + icon('repeat') + 'Rescheduled ' + (existing.moved === 1 ? 'once' : existing.moved + ' times') + (existing.pushed ? ' · pushed back ' + existing.pushed + ' day' + (existing.pushed === 1 ? '' : 's') + ' in all' : '') + '</p>' : '') +
         '</div>' +
 
+        (existing && !draft.done ? (() => {
+          const cur = C.snoozedUntil(draft), tk = D.todayKey();
+          return '<div class="field ed-snz"><span class="field-label">Snooze <span class="muted">· off your list until then; the due date stays</span></span>' +
+            '<div class="chips"><button type="button" class="chip' + (!cur ? ' on' : '') + '" data-snzk="">Not snoozed</button>' +
+            C.snoozeChoices(tk, S.state.prefs.weekStart).map((o) => '<button type="button" class="chip' + (cur === o.key ? ' on' : '') + '" data-snzk="' + o.key + '">' + icon('moon') + esc(o.label) + '</button>').join('') + '</div>' +
+            '<label class="input-wrap"><span class="sr">Snooze until</span>' + icon('moon') + '<input id="ed-snooze" type="date" min="' + D.addKey(tk, 1) + '" value="' + (cur || '') + '"></label></div>';
+        })() : '') +
         '<div class="field"><span class="field-label">Checklist <span class="muted mono">' + (sub.length ? sub.filter((x) => x.done).length + '/' + sub.length : '') + '</span></span>' +
         '<ul class="subs">' + sub.map((x, i) => '<li class="sub"><button type="button" class="check sm' + (x.done ? ' on' : '') + '" data-sub-toggle="' + i + '" aria-label="Toggle step">' + icon('check') + '</button>' +
           '<input id="ed-sub-' + x.id + '" class="sub-input' + (x.done ? ' done' : '') + '" value="' + esc(x.title) + '" data-sub-edit="' + i + '" aria-label="Step" enterkeyhint="enter" autocomplete="off">' +
@@ -215,6 +222,8 @@
       draft.due = body.querySelector('#ed-date').value || null;
       draft.time = body.querySelector('#ed-time').value || null;
       draft.repeat = body.querySelector('#ed-repeat').value;
+      const sz = body.querySelector('#ed-snooze');
+      if (sz) draft.snooze = C.snoozeSet(draft.snooze, C.snoozeWho(), sz.value && sz.value > D.todayKey() ? sz.value : null);
     }
     /* ---------- checklist helpers ---------- */
     // "- milk", "• eggs", "1. bread", "[ ] jam" → "milk", "eggs", "bread", "jam"
@@ -319,6 +328,7 @@
       }
       if (b.dataset.level) { sync(); draft.levelId = b.dataset.level; render(); }
       else if (b.dataset.type != null) { sync(); draft.typeId = b.dataset.type || null; render(); }
+      else if (b.dataset.snzk != null) { sync(); draft.snooze = C.snoozeSet(draft.snooze, C.snoozeWho(), b.dataset.snzk || null); render(); }
       else if (b.dataset.due != null) { sync(); draft.due = b.dataset.due || null; if (!draft.due) draft.time = null; render(); }
       else if (b.dataset.subToggle != null) { sync(); const x = draft.subtasks[+b.dataset.subToggle]; x.done = !x.done; render(); }
       else if (b.dataset.subDel != null) { sync(); draft.subtasks.splice(+b.dataset.subDel, 1); render(); }
@@ -343,8 +353,8 @@
       if (existing) {
         const wasDone = existing.done;
         const patch = ro
-          ? { notes: draft.notes, due: draft.due, time: draft.due ? draft.time : null, subtasks: draft.subtasks }
-          : Object.assign({ title: draft.title, notes: draft.notes, typeId: draft.typeId, levelId: draft.levelId, due: draft.due, time: draft.due ? draft.time : null, repeat: draft.repeat, subtasks: draft.subtasks, nodeId: draft.nodeId || null }, linkOf(), who);
+          ? { notes: draft.notes, due: draft.due, time: draft.due ? draft.time : null, subtasks: draft.subtasks, ...(draft.snooze ? { snooze: draft.snooze } : {}) }
+          : Object.assign({ title: draft.title, notes: draft.notes, typeId: draft.typeId, levelId: draft.levelId, due: draft.due, time: draft.due ? draft.time : null, repeat: draft.repeat, subtasks: draft.subtasks, nodeId: draft.nodeId || null }, draft.snooze ? { snooze: draft.snooze } : {}, linkOf(), who);
         S.updateTask(existing.id, patch);
         if (draft.done !== wasDone) C.completeTask(existing.id);
         close(true);

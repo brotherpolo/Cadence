@@ -1379,3 +1379,18 @@ th.num .cb-tsort { flex-direction: row-reverse; }
 
 /* Date and time boxes open their picker on any click (utils.js) */
 input[type="date"]:not(:disabled):not([readonly]),input[type="datetime-local"]:not(:disabled):not([readonly]),input[type="time"]:not(:disabled):not([readonly]){cursor:pointer}
+
+/* Snooze (list.js, editor.js): off your list until a day, the due date untouched */
+.snz-wrap { position: relative; display: inline-flex; }
+.snz-menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 40; min-width: 250px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-md); box-shadow: var(--shadow-3); padding: 6px; display: flex; flex-direction: column; gap: 2px; text-align: left; }
+.snz-h { margin: 4px 8px 6px; font-size: 12.5px; font-weight: 600; }
+.snz-mi { all: unset; display: flex; justify-content: space-between; gap: 12px; padding: 8px 10px; border-radius: 8px; font-size: 14px; cursor: pointer; }
+.snz-mi:hover, .snz-mi:focus-visible { background: var(--surface-2); outline: none; }
+.snz-off { color: var(--accent); }
+.snz-day { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 10px; font-size: 14px; }
+.snz-day input { font: inherit; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: inherit; }
+.meta-snz { display: inline-flex; align-items: center; gap: 4px; color: var(--ink-3); font-size: 12px; }
+.meta-snz svg { width: 13px; height: 13px; }
+.snz-chip svg { width: 14px; height: 14px; }
+.task:has(.snz-menu) .task-acts { opacity: 1; }
+.task:has(.snz-menu) { z-index: 30; }

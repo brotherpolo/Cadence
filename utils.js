@@ -1,7 +1,7 @@
 /* Cadence — helpers: dates, formatting, escaping, natural-language quick add */
 (function () {
   const C = (window.Cadence = window.Cadence || {});
-  C.VERSION = '31'; // keep in step with the ?v= numbers in index.html
+  C.VERSION = '32'; // keep in step with the ?v= numbers in index.html
   // Date and time boxes open their calendar or clock wherever they're clicked, not only on the
   // small icon: nobody has to type a date. Typing still works from the keyboard.
   const PICK = { date: 1, 'datetime-local': 1, time: 1, month: 1, week: 1 };
@@ -56,6 +56,31 @@
     if (n === -1) return 'Yesterday';
     if (n > 1 && n < 7) return F.wdayLong.format(d);
     return d.getFullYear() === new Date().getFullYear() ? F.short.format(d) : F.shortY.format(d);
+  };
+  /* ---------- snooze: off your lists until a day, without touching the due date ----------
+     A task's snooze is per person: task.snooze = { [uid]: 'YYYY-MM-DD' } (the owner and the
+     person it's given to each snooze for themselves). It's over once that day comes. */
+  C.snoozeWho = () => (C.store && C.store.state && C.store.state.owner) || 'local';
+  C.snoozedUntil = function (t, who, today) {
+    const k = t && t.snooze && t.snooze[who || C.snoozeWho()];
+    return typeof k === 'string' && k > (today || D.todayKey()) ? k : null;
+  };
+  /** The quick choices: Tomorrow, This weekend (Mon–Thu), Next week (the next week-start day). */
+  C.snoozeChoices = function (today, weekStart) {
+    const ws = weekStart == null ? 1 : +weekStart, dow = D.parse(today).getDay();
+    const out = [{ id: 'tomorrow', label: 'Tomorrow', key: D.addKey(today, 1) }];
+    if (dow >= 1 && dow <= 4) out.push({ id: 'weekend', label: 'This weekend', key: D.addKey(today, 6 - dow) });
+    const toNext = ((ws - dow + 7) % 7) || 7;
+    const nw = D.addKey(today, toNext);
+    if (!out.some((o) => o.key === nw)) out.push({ id: 'week', label: 'Next week', key: nw });
+    return out;
+  };
+  /** A task's snooze map with one person's day set (or cleared, key null); finished snoozes are tidied away. */
+  C.snoozeSet = function (map, who, key, today) {
+    const t = today || D.todayKey(), out = {};
+    Object.keys(map || {}).forEach((k) => { if (typeof map[k] === 'string' && map[k] > t) out[k] = map[k]; });
+    if (key) out[who] = key; else delete out[who];
+    return out;
   };
   C.fmtTime = function (t) {
     if (!t) return '';
