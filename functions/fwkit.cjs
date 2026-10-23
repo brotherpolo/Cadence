@@ -712,6 +712,75 @@ function withFixed(rec, form, now = /* @__PURE__ */ new Date(), timeZone) {
   return changed ? { ...rec, values } : rec;
 }
 
+// src/lookuplogic.js
+var isLookup = (f) => !!f && f.type === "lookup";
+var MAX_STEPS = 2;
+var pathOf = (f) => Array.isArray(f?.via) ? f.via.filter((s) => typeof s === "string" && /^[fp]:./.test(s)).slice(0, MAX_STEPS) : [];
+function stepForm(form, step, formById) {
+  if (!form) return null;
+  if (step.startsWith("f:")) {
+    const lf = (form.fields || []).find((x) => x.id === step.slice(2) && x.type === "relation");
+    return lf && formById(lf.relForm) || null;
+  }
+  const pf = formById(step.slice(2));
+  return pf && (pf.children || []).some((c) => c.formId === form.id) ? pf : null;
+}
+function lookupTarget(form, f, formById) {
+  const path = pathOf(f);
+  if (!path.length || !f.show) return null;
+  let cur = form;
+  const forms = [];
+  for (const s of path) {
+    cur = stepForm(cur, s, formById);
+    if (!cur) return null;
+    forms.push(cur);
+  }
+  const field = (cur.fields || []).find((x) => x.id === f.show && x.type !== "heading" && x.type !== "instructions");
+  return field ? { form: cur, field, forms } : null;
+}
+function lookupRecord(rec, f, recById) {
+  let r = rec;
+  for (const s of pathOf(f)) {
+    if (!r) return null;
+    if (s.startsWith("f:")) {
+      const id = r.values?.[s.slice(2)];
+      r = typeof id === "string" && id ? recById(id) || null : null;
+    } else {
+      const p = r.parentId ? recById(r.parentId) : null;
+      r = p && p.formId === s.slice(2) ? p : null;
+    }
+  }
+  return r && r !== rec ? r : null;
+}
+function lookupValue(rec, f, h, depth = 0) {
+  if (!rec || depth > 3) return null;
+  const form = h.formById(rec.formId);
+  const t = lookupTarget(form, f, h.formById);
+  const r = t && lookupRecord(rec, f, h.recById);
+  if (!r) return null;
+  const g = t.field;
+  if (g.type === "lookup") return lookupValue(r, g, h, depth + 1);
+  if (g.type === "formula") return h.valOf ? h.valOf(g, r, t.form) ?? null : null;
+  if (g.type === "autonumber") return r.nums?.[g.id] ?? null;
+  return r.values?.[g.id] ?? null;
+}
+function shownField(form, f, formById, depth = 0) {
+  const t = lookupTarget(form, f, formById);
+  if (!t) return null;
+  return t.field.type === "lookup" && depth < 3 ? shownField(t.form, t.field, formById, depth + 1) : t.field;
+}
+function withLookups(rec, form, h) {
+  const lk = (form?.fields || []).filter(isLookup);
+  if (!rec || !lk.length) return rec;
+  const values = { ...rec.values || {} };
+  lk.forEach((f) => {
+    const v = lookupValue(rec, f, h);
+    if (v == null) delete values[f.id];
+    else values[f.id] = v;
+  });
+  return { ...rec, values };
+}
+
 // src/fieldnames.js
 var lc = (s) => String(s ?? "").trim().toLowerCase();
 var sysOf = (f) => String(f?.sysName || "").trim() || String(f?.label || "").trim();
@@ -1294,7 +1363,9 @@ var lc2 = (s) => String(s || "").trim().toLowerCase();
 var itemName = (f) => (f?.itemName || "").trim() || (f?.name || "Record").replace(/s$/i, "");
 function makeKit({ forms = [], records: stored = [], locale = "en-CA", timeZone = "America/Toronto" } = {}) {
   const formMap = new Map(forms.map((f) => [f.id, f]));
-  const records = stored.map((r) => withFixed(r, formMap.get(r.formId), /* @__PURE__ */ new Date(), timeZone));
+  const fixed = stored.map((r) => withFixed(r, formMap.get(r.formId), /* @__PURE__ */ new Date(), timeZone));
+  const fixedMap = new Map(fixed.map((r) => [r.id, r]));
+  const records = fixed.map((r) => withLookups(r, formMap.get(r.formId), { recById: (id) => fixedMap.get(id), formById: (id) => formMap.get(id) }));
   const recMap = new Map(records.map((r) => [r.id, r]));
   const kids = /* @__PURE__ */ new Map();
   records.forEach((r) => {
@@ -1333,7 +1404,13 @@ function makeKit({ forms = [], records: stored = [], locale = "en-CA", timeZone 
       return String(v);
     }
   }
+  const fieldForm = /* @__PURE__ */ new Map();
+  forms.forEach((fm) => (fm.fields || []).forEach((x) => fieldForm.set(x, fm)));
   function fmt(f, v) {
+    if (f.type === "lookup") {
+      const g = fieldForm.has(f) && shownField(fieldForm.get(f), f, formById);
+      return g ? fmt(g, v) : v == null ? "" : String(v);
+    }
     if (f.type !== "formula" && isEmpty2(v)) return "";
     try {
       switch (f.type) {
@@ -1383,6 +1460,10 @@ function makeKit({ forms = [], records: stored = [], locale = "en-CA", timeZone 
   }
   function rawFor(f, rec, form, depth) {
     if (f.type === "formula") return evalFormula(form, f, rec, depth + 1);
+    if (f.type === "lookup") {
+      const t = lookupTarget(form, f, formById), r = t && lookupRecord(rec, f, recById);
+      return r && depth < 20 ? rawFor(t.field, r, t.form, depth + 1) : null;
+    }
     const v = f.type === "autonumber" ? rec.nums?.[f.id] : rec.values?.[f.id];
     if (f.type === "relation") {
       const r = v && recById(v);
@@ -1430,6 +1511,7 @@ function makeKit({ forms = [], records: stored = [], locale = "en-CA", timeZone 
     if (f.id === STAGE_FIELD) return stageName(form || formById(rec.formId), rec);
     if (f.type === "autonumber") return rec.nums?.[f.id] ?? null;
     if (isFixed(f)) return defaultFor(f, /* @__PURE__ */ new Date(), timeZone);
+    if (f.type === "lookup") return lookupValue(rec, f, { recById, formById, valOf });
     if (f.type !== "formula") return rec.values?.[f.id];
     form = form || formById(rec.formId);
     try {
@@ -2095,7 +2177,7 @@ function valueOf(ctx, rec, ref) {
   const form = ctx.formById(ref.form);
   const f = form && (form.fields || []).find((x) => x.id === ref.id);
   if (!f) return void 0;
-  if (f.type === "formula") {
+  if (f.type === "formula" || f.type === "lookup") {
     const saved = r.values && r.values[f.id];
     if (saved !== void 0 && saved !== null && saved !== "") return saved;
     return ctx.valOf ? ctx.valOf(f, r, form) : void 0;

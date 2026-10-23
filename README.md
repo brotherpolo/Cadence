@@ -232,6 +232,10 @@ firebase deploy --only functions --project tasks-2ae9d
 
 A saved view (`listViews/{id}`) can keep a `layout` map: `{ kind: 'table' | 'board' | 'timeline', by, sum, start, end, color, zoom: 'week' | 'month' | 'quarter' }` (Formwright's Board and Timeline). The rules check its keys and values; a table view saves without one, as before.
 
+### Lookup fields (Formwright)
+
+Lookups aren't stored on records; `functions/fwkit.cjs` works them out for emails, PDFs and automation conditions, like the app. Needs `bash deploy.sh functions`.
+
 ### Read only fields with a set value (Formwright)
 
 A Formwright field that's read only with a default value isn't stored on records; `functions/fwkit.cjs` shows the form's value in emails, PDFs and automations, like the app. Needs `bash deploy.sh functions`.
