@@ -1,34 +1,34 @@
-/* Cadence — design tokens
+/* Wayholm Plan (was Cadence) — design tokens
    Layout concept: a quiet sidebar "rail" + a wide working canvas; on phones the rail
    becomes a bottom tab bar with a floating add button. One bold move: the big
    Bricolage date headline. Everything else stays calm and cool. */
 :root {
-  /* color — cool porcelain neutrals biased toward the ultramarine accent */
-  --bg: #F3F5F9;
+  /* color — Wayholm: sand, granite, and Moss green for Plan */
+  --bg: #F5F1EA;
   --surface: #FFFFFF;
-  --surface-2: #EBEEF5;
-  --surface-3: #E1E5EF;
-  --line: #DCE1EC;
-  --line-strong: #C6CDDC;
-  --ink: #121726;
-  --ink-2: #485168;
-  --ink-3: #7A8399;
-  --accent: #3446E6;
+  --surface-2: #EEE8DD;
+  --surface-3: #E5DED1;
+  --line: #E0D9CC;
+  --line-strong: #C7BEAE;
+  --ink: #1E2528;
+  --ink-2: #4F5354;
+  --ink-3: #7A7468;
+  --accent: #4B7A3C;
   --accent-ink: #FFFFFF;
-  --accent-soft: #E2E6FF;
+  --accent-soft: #E6EFDF;
   --danger: #D13438;
   --ok: #178A5E;
   --warn: #B87800;
-  --shadow-1: 0 1px 2px rgb(18 23 38 / .06), 0 1px 1px rgb(18 23 38 / .04);
-  --shadow-2: 0 10px 30px -12px rgb(18 23 38 / .22), 0 2px 6px rgb(18 23 38 / .06);
-  --shadow-3: 0 30px 80px -20px rgb(18 23 38 / .35), 0 6px 18px rgb(18 23 38 / .10);
-  --scrim: rgb(14 18 30 / .38);
-  --dot-grid: rgb(52 70 230 / .10);
+  --shadow-1: 0 1px 2px rgb(30 37 40 / .06), 0 1px 1px rgb(30 37 40 / .04);
+  --shadow-2: 0 10px 30px -12px rgb(30 37 40 / .22), 0 2px 6px rgb(30 37 40 / .06);
+  --shadow-3: 0 30px 80px -20px rgb(30 37 40 / .35), 0 6px 18px rgb(30 37 40 / .10);
+  --scrim: rgb(20 24 26 / .38);
+  --dot-grid: rgb(75 122 60 / .12);
 
   /* type */
   --font-display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
-  --font-body: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --font-body: "Instrument Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --fs-xs: .75rem;
   --fs-sm: .8125rem;
   --fs-md: .9375rem;
@@ -50,18 +50,18 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #0C0F17;
-    --surface: #141925;
-    --surface-2: #1A2030;
-    --surface-3: #222A3D;
-    --line: #262E42;
-    --line-strong: #353F58;
-    --ink: #E8EBF4;
-    --ink-2: #A6AEC3;
-    --ink-3: #6F7891;
-    --accent: #7E8CFF;
-    --accent-ink: #0C0F17;
-    --accent-soft: #222A5A;
+    --bg: #101416;
+    --surface: #171C1E;
+    --surface-2: #1D2326;
+    --surface-3: #252C30;
+    --line: #2A3236;
+    --line-strong: #3B4549;
+    --ink: #EDE8DF;
+    --ink-2: #BDB6AA;
+    --ink-3: #8A8478;
+    --accent: #93BE7E;
+    --accent-ink: #10180C;
+    --accent-soft: #24331E;
     --danger: #FF6B6E;
     --ok: #3FCF95;
     --warn: #F0B341;
@@ -69,23 +69,23 @@
     --shadow-2: 0 12px 30px -12px rgb(0 0 0 / .7), 0 2px 6px rgb(0 0 0 / .35);
     --shadow-3: 0 30px 80px -20px rgb(0 0 0 / .8), 0 6px 18px rgb(0 0 0 / .4);
     --scrim: rgb(0 0 0 / .55);
-    --dot-grid: rgb(126 140 255 / .10);
+    --dot-grid: rgb(147 190 126 / .10);
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
-  --bg: #0C0F17;
-  --surface: #141925;
-  --surface-2: #1A2030;
-  --surface-3: #222A3D;
-  --line: #262E42;
-  --line-strong: #353F58;
-  --ink: #E8EBF4;
-  --ink-2: #A6AEC3;
-  --ink-3: #6F7891;
-  --accent: #7E8CFF;
-  --accent-ink: #0C0F17;
-  --accent-soft: #222A5A;
+  --bg: #101416;
+  --surface: #171C1E;
+  --surface-2: #1D2326;
+  --surface-3: #252C30;
+  --line: #2A3236;
+  --line-strong: #3B4549;
+  --ink: #EDE8DF;
+  --ink-2: #BDB6AA;
+  --ink-3: #8A8478;
+  --accent: #93BE7E;
+  --accent-ink: #10180C;
+  --accent-soft: #24331E;
   --danger: #FF6B6E;
   --ok: #3FCF95;
   --warn: #F0B341;
@@ -93,6 +93,6 @@
   --shadow-2: 0 12px 30px -12px rgb(0 0 0 / .7), 0 2px 6px rgb(0 0 0 / .35);
   --shadow-3: 0 30px 80px -20px rgb(0 0 0 / .8), 0 6px 18px rgb(0 0 0 / .4);
   --scrim: rgb(0 0 0 / .55);
-  --dot-grid: rgb(126 140 255 / .10);
+  --dot-grid: rgb(147 190 126 / .10);
   color-scheme: dark;
 }

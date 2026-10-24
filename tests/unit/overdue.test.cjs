@@ -19,5 +19,5 @@ test('the emails and the audit note', () => {
   assert.equal(e.subject, 'Still overdue: Invoice 58 (Approve, with Accounts)');
   assert.match(e.text, /3 working days overdue/);
   const a = od.auditEntry({ recordId: 'r1', rec: { formId: 'f' }, formName: 'Invoices', title: '58', stage: 'Approve', kind: 'escalate', to: ['a@x'], now: 1 });
-  assert.deepEqual([a.kind, a.byName, a.note], ['overdue', 'Formwright', 'Still overdue at Approve: emailed a@x']);
+  assert.deepEqual([a.kind, a.byName, a.note], ['overdue', 'Wayholm Forms', 'Still overdue at Approve: emailed a@x']);
 });

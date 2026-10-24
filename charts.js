@@ -769,7 +769,7 @@
   function summaryText() {
     if (problem()) return '';
     const usesMoves = ['moved', 'pushed'].includes(cfg.y) || ['moves', 'moved', 'pushed'].includes(cfg.x);
-    if (usesMoves && !S().state.tasks.some((t) => !t.sample && t.moved)) return 'Nothing has been rescheduled yet. Cadence counts due-date changes from version 19 on, so this fills in as you move tasks to new dates.';
+    if (usesMoves && !S().state.tasks.some((t) => !t.sample && t.moved)) return 'Nothing has been rescheduled yet. Wayholm Plan counts due-date changes from version 19 on, so this fills in as you move tasks to new dates.';
     const unit = (NUMS[cfg.y] || NUMS.count).unit, isCount = cfg.y === 'count';
     const amt = (v) => fmt(v, unit) + (isCount ? (Math.round(v) === 1 ? ' task' : ' tasks') : '');
     if (cfg.type === 'kpi') {

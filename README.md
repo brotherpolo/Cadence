@@ -1,6 +1,6 @@
-# Cadence
+# Wayholm Plan
 
-A build-free task app: plain HTML, CSS and JavaScript files. No bundler, no npm install.
+*Formerly Cadence.* A build-free task app: plain HTML, CSS and JavaScript files. No bundler, no npm install.
 
 - **Tasks**: natural-language quick add, inventory summary, filters, grouping, agenda and table layouts, swipe gestures on phones
 - **Calendar**: month and week views; drag tasks between days or onto "Unscheduled"
@@ -22,6 +22,15 @@ A build-free task app: plain HTML, CSS and JavaScript files. No bundler, no npm 
 - **Map: Canvas, Outline, Table**: one mind map shown three ways. The canvas has nodes in eight shapes, colors and fills, connections and dotted flows, fold/focus/tidy for branches, box select, a minimap, a node inspector, undo/redo, and PNG export. The outline is a keyboard-driven indented list with PDF export. The table lets you sort, filter, edit cells inline and change many nodes at once
 - **Tasks on the map**: link any task to a node (in the editor, or with `@node` in quick add). Nodes show their open-task count, the inspector lists their tasks, and the Tasks page can filter by node or group by map cluster
 - **Settings**: task types (name, color, icon, order), importance levels (name, color, rank, default), theme, week start, backup and restore
+
+## The Wayholm brand
+
+Wayholm Plan (this app, formerly Cadence) and Wayholm Forms (formerly Formwright) are one family. The code folders (this one is still `cadence`), the Firebase project and every stored field keep their old names, so nothing about your data changes.
+
+- **Logo:** three stacked stones. The top stone is the app's colour: **squared, Lake blue (#2F5E9E) for Forms**; **round, Moss green (#4B7A3C) for Plan**. The family mark has an Ember (#C8643A) top stone.
+- **Colours:** Granite text (#1E2528), Sand background (#F5F1EA), Lichen for quiet text, each with a dark-mode partner. Pass, fail and overdue colours are unchanged.
+- **Fonts:** Bricolage Grotesque (logo, titles), Instrument Sans (text), JetBrains Mono (numbers).
+- **Icons:** app icons in the app's colour with cream stones (`icon-192.png`, `icon-512.png`, `icon-maskable-512.png`, `apple-touch-icon.png`, favicon).
 
 ## Run it
 
@@ -112,7 +121,7 @@ uploads/... (Storage)        files attached to records
 
 ### Linking tasks to records
 
-A task can link to one Formwright record through `recordId`, `formId` and `recordSnap` (a copy of the record's title and the form's name and colour, so an assignee without access to that form still sees what the task is about).
+A task can link to one Formwright record through `recordId`, `formId` and `recordSnap` (a copy of the record's title and the form's name and colour, so an assignee without access to that form still sees what the task is about). A task added from a failed checklist answer in Formwright also has `checklistItem` (*field id:item id*, up to 200 characters), so it's listed under that item.
 
 - Only the task's owner can set, change or clear the link, and only to a record they can see in Formwright.
 - The assignee can't change the link.
@@ -230,7 +239,17 @@ firebase deploy --only functions --project tasks-2ae9d
 
 ### Saved list views: Board and Timeline
 
-A saved view (`listViews/{id}`) can keep a `layout` map: `{ kind: 'table' | 'board' | 'timeline', by, sum, start, end, color, zoom: 'week' | 'month' | 'quarter' }` (Formwright's Board and Timeline). The rules check its keys and values; a table view saves without one, as before.
+A saved view (`listViews/{id}`) can keep a `layout` map: `{ kind: 'table' | 'board' | 'timeline', by, sum, start, end, color, zoom: 'week' | 'month' | 'quarter' }` (Formwright's Board and Timeline). The rules check its keys and values; a table view saves without one, as before. It can also keep `colors`, a list of up to 20 colour rules (`{ id, conds: [{ field, op, value }], color, bold, cell }`, Formwright's colour rules); a view without any saves without it.
+
+Checklists (Formwright's Settings › Checklists): `checklistTypes`, `answerSets`, `checklistQuestions` and `checklistCats` (the question pool) and `checklists` are written by administrators and read by anyone in a security group; `checklistVersions/{checklistId}@{version}` keeps each saved version and can't be changed or deleted, so records filled in on an old version still show it. The functions show a record's Checklist field as its score line ("14 / 18 · 78% · Fail · 9 of 10 answered").
+
+### Record templates (Formwright → + New ▾)
+
+`recordTemplates/{id}` holds Formwright's record templates. `firestore.rules`: anyone who can add records to the template's form reads it (the app asks one form at a time); administrators create, change and delete them. Needs `bash deploy.sh firestore:rules`.
+
+### Rollup fields (Formwright)
+
+Rollups aren't stored on records; `functions/fwkit.cjs` works them out (counts, totals, latest, lists of the records under or linking to a record) for emails, PDFs and automations, like the app. Needs `bash deploy.sh functions`.
 
 ### Lookup fields (Formwright)
 

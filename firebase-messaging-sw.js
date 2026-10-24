@@ -1,8 +1,8 @@
 /* Cadence — service worker for push notifications.
-   Firebase Cloud Messaging hands each push to this file, even when no Cadence
+   Firebase Cloud Messaging hands each push to this file, even when no Wayholm Plan
    tab is open. It shows the notification and, when it's tapped, opens the app
    (or brings an open one to the front) on the task it's about.
-   It also lets Cadence open with no signal (version 33): the app's files and the Firebase code
+   It also lets Wayholm Plan open with no signal (version 33): the app's files and the Firebase code
    are kept on the device after each visit with a signal. Page loads try the network first,
    so an update is never held back; the device copy opens only when there's no signal.
    Firestore keeps the tasks themselves (firebase-sync.js turns its offline copy on). */

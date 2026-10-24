@@ -142,7 +142,7 @@
         if (!l) return '';
         return '<div class="field"><span class="field-label">On a record</span><div class="ed-node">' +
           '<span class="chip on static ed-rec" style="--c:' + esc(l.color) + '">' + R.mark(draft.formId) + '<span>' + esc(l.title) + '</span>' + (l.form ? '<span class="ed-rec-form">' + esc(l.form) + '</span>' : '') + '</span>' +
-          (R.url(draft.recordId) ? '<button type="button" class="btn sm ghost" data-act="record-go">' + icon('external') + '<span>Open in Formwright</span></button>' : '') +
+          (R.url(draft.recordId) ? '<button type="button" class="btn sm ghost" data-act="record-go">' + icon('external') + '<span>Open in Forms</span></button>' : '') +
           '</div></div>';
       }
       if (!R.enabled() && !l) return '';
@@ -152,8 +152,8 @@
         (l ? R.mark(draft.formId, l.removed) + '<span>' + esc(l.removed ? 'Record removed' : l.title) + '</span>' + (l.form && !l.removed ? '<span class="ed-rec-form">' + esc(l.form) + '</span>' : '')
            : icon('file') + '<span>Link to a record</span>') + icon('chevD') + '</button>' +
         (l ? '<button type="button" class="icon-btn sm" data-act="record-clear" aria-label="Unlink from the record" title="Unlink">' + icon('x') + '</button>' +
-          (!l.removed && R.url(draft.recordId) ? '<button type="button" class="btn sm ghost" data-act="record-go">' + icon('external') + '<span>Open in Formwright</span></button>' : '') : '') +
-        '</div>' + (l && l.removed ? '<p class="field-msg muted">This record was deleted in Formwright. Unlink it, or pick another.</p>' : '') + '</div>';
+          (!l.removed && R.url(draft.recordId) ? '<button type="button" class="btn sm ghost" data-act="record-go">' + icon('external') + '<span>Open in Forms</span></button>' : '') : '') +
+        '</div>' + (l && l.removed ? '<p class="field-msg muted">This record was deleted in Forms. Unlink it, or pick another.</p>' : '') + '</div>';
     }
     function fromNote() {
       const o = { uid: existing.ownerId, name: existing.ownerName, email: existing.ownerEmail };
@@ -180,7 +180,7 @@
       const favOn = (f) => !!(assignee && (((assignee.email || '').toLowerCase() === f.email) || (f.uid && assignee.uid === f.uid)));
       return '<div class="field"><span class="field-label">Assigned to</span>' +
         '<div class="chips">' +
-        (keepRole ? '<button type="button" class="chip on" data-assign-role aria-pressed="true" title="Given to a role in Formwright: anyone in it can do it">' + C.avatar({ uid: 'role:' + existing.assigneeRole, name: existing.assigneeRoleName || 'Role' }) + esc(existing.assigneeRoleName || 'A role') + ' (role)</button>' : '') +
+        (keepRole ? '<button type="button" class="chip on" data-assign-role aria-pressed="true" title="Given to a role in Forms: anyone in it can do it">' + C.avatar({ uid: 'role:' + existing.assigneeRole, name: existing.assigneeRoleName || 'Role' }) + esc(existing.assigneeRoleName || 'A role') + ' (role)</button>' : '') +
         '<button type="button" class="chip' + (!assignee && !keepRole ? ' on' : '') + '" data-assign="" aria-pressed="' + (!assignee && !keepRole) + '">' + C.avatar({ uid: S.state.owner, name: me.name, email: me.email }) + 'Me</button>' +
         favs.map((f) => '<button type="button" class="chip' + (favOn(f) ? ' on' : '') + '" data-assign-email="' + esc(f.email) + '" aria-pressed="' + favOn(f) + '" title="' + esc(f.email) + '"' + (assignBusy ? ' disabled' : '') + '>' + C.avatar(f) + esc(f.name) + '</button>').join('') +
         people.map((p) => '<button type="button" class="chip' + (assignee && assignee.uid === p.uid ? ' on' : '') + '" data-assign="' + esc(p.uid) + '" aria-pressed="' + !!(assignee && assignee.uid === p.uid) + '" title="' + esc(p.email || '') + '">' + C.avatar(p) + esc(p.name || p.email) + '</button>').join('') +
@@ -208,7 +208,7 @@
           if (!fromPill) assignQuery = '';
           assignMsg = '';
         }
-        else assignMsg = 'No one has signed in to Cadence with ' + e + ' yet. Ask them to sign in once with Google, then try again.';
+        else assignMsg = 'No one has signed in to Wayholm Plan with ' + e + ' yet. Ask them to sign in once with Google, then try again.';
       } catch (err) {
         assignMsg = 'Couldn’t look that up: ' + ((err && (err.code || err.message)) || 'unknown error') + '.';
       }

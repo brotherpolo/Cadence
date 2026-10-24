@@ -19,8 +19,8 @@
   let current = null;
   C.currentRoute = () => current;
 
-  const LOGO = '<svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="2" width="28" height="28" rx="9" class="logo-bg"/>' +
-    '<rect x="8.5" y="16" width="3.6" height="8" rx="1.8" class="logo-bar"/><rect x="14.2" y="11" width="3.6" height="13" rx="1.8" class="logo-bar"/><rect x="19.9" y="7.5" width="3.6" height="16.5" rx="1.8" class="logo-bar hi"/></svg>';
+  // the Wayholm mark: three stones, the top one round and in Plan's colour
+  const LOGO = '<svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><ellipse class="logo-st" cx="32" cy="50" rx="24" ry="8.6" transform="rotate(-3 32 50)"/><ellipse class="logo-st" cx="30.5" cy="33.6" rx="16.5" ry="6.9" transform="rotate(5 30.5 33.6)"/><circle class="logo-tp" cx="33.5" cy="17" r="7"/></svg>';
 
   /* ---------- helpers exposed to views ---------- */
   C.fromParse = (p) => ({
@@ -154,7 +154,7 @@
     const scroll = side.querySelector('.side-scroll');
     const keep = scroll ? scroll.scrollTop : 0;
     side.innerHTML =
-      '<div class="brand">' + LOGO + '<span class="brand-name">Cadence</span>' +
+      '<div class="brand">' + LOGO + '<span class="brand-name">wayholm<span>plan</span></span>' +
       '<button type="button" class="icon-btn sm side-collapse" data-side-compact aria-label="' + (compact ? 'Expand the sidebar' : 'Collapse the sidebar') + '" title="' + (compact ? 'Expand the sidebar' : 'Collapse the sidebar') + '">' + icon('sidebar') + '</button></div>' +
       (onMap
         ? '<button type="button" class="btn primary block" data-new-node title="New node (N)">' + icon('plus') + '<span>New node</span><kbd>N</kbd></button>'
@@ -175,7 +175,7 @@
     const sc = side.querySelector('.side-scroll'); if (sc) sc.scrollTop = keep;
 
     document.getElementById('topbar').innerHTML =
-      '<div class="brand">' + LOGO + '<span class="brand-name">Cadence</span></div><span class="spacer"></span>' + C.syncPill(true) +
+      '<div class="brand">' + LOGO + '<span class="brand-name">wayholm<span>plan</span></span></div><span class="spacer"></span>' + C.syncPill(true) +
       '<button type="button" class="icon-btn" data-pal aria-label="Search">' + icon('search') + '</button>' +
       '<button type="button" class="icon-btn" data-theme-toggle aria-label="Toggle dark mode">' + icon(isDark() ? 'sun' : 'moon') + '</button>' +
       '<a href="#settings" class="icon-btn' + (r === 'settings' ? ' on' : '') + '" aria-label="Settings"' + (r === 'settings' ? ' aria-current="page"' : '') + '>' + icon('settings') + '</a>';
@@ -309,7 +309,7 @@
       v.innerHTML = '';
       const fresh = v.cloneNode(false); v.replaceWith(fresh); // drop old listeners
       C.views[r].mount(fresh);
-      document.title = C.views[r].title + ' · Cadence';
+      document.title = C.views[r].title + ' · Wayholm Plan';
       renderChrome();
       window.scrollTo(0, 0);
     }, prevIdx < 0 ? null : ROUTES.indexOf(r) > prevIdx ? 'fwd' : 'back');

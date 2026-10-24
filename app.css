@@ -132,11 +132,11 @@ textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent
   border-bottom: 1px solid color-mix(in oklab, var(--line) 60%, transparent);
 }
 .brand { display: flex; align-items: center; gap: 10px; }
-.brand-name { font-family: var(--font-display); font-weight: 750; font-size: 1.2rem; letter-spacing: -.02em; }
-.logo { width: 30px; height: 30px; }
-.logo-bg { fill: var(--ink); }
-.logo-bar { fill: var(--bg); opacity: .55; }
-.logo-bar.hi { fill: var(--accent); opacity: 1; }
+.brand-name { font-family: var(--font-display); font-weight: 700; font-size: 1.25rem; letter-spacing: -.005em; line-height: 1; white-space: nowrap; }
+.brand-name span { font-weight: 500; color: var(--accent); margin-left: .24em; }
+.logo { width: 30px; height: 30px; flex: none; }
+.logo-st { fill: var(--ink); }
+.logo-tp { fill: var(--accent); }
 
 .tabbar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;

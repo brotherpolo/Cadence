@@ -184,7 +184,7 @@ function userEntry(userId, before, after, who, now, groupNames = new Map(), name
   if (!same([...(before.groups || [])].sort(), [...(after.groups || [])].sort())) changes.push({ key: 'groups', label: 'Security groups', type: 'multiselect', from: gn(before.groups), to: gn(after.groups) });
   const rn = (ids) => (ids || []).map((r) => roleNames.get(r) || r).sort();
   if (!same([...(before.roles || [])].sort(), [...(after.roles || [])].sort())) changes.push({ key: 'roles', label: 'Roles', type: 'multiselect', from: rn(before.roles), to: rn(after.roles) });
-  if (!!before.cadence !== !!after.cadence) changes.push({ key: 'cadence', label: 'Can use Cadence', type: 'checkbox', from: !!before.cadence, to: !!after.cadence });
+  if (!!before.cadence !== !!after.cadence) changes.push({ key: 'cadence', label: 'Can use Plan', type: 'checkbox', from: !!before.cadence, to: !!after.cadence });
   return changes.length ? { ...base, kind: 'changed', changes } : null;
 }
 

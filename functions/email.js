@@ -35,7 +35,7 @@ async function sendRecordEmail(db, send, callerUid, data, opts = {}) {
   if (!callerUid) fail('unauthenticated', 'Sign in first.');
   const me = await db.collection('users').doc(callerUid).get();
   if (!me.exists || me.get('role') !== 'admin') fail('permission-denied', 'Only administrators can email records.');
-  if (!opts.from || !opts.ready) fail('failed-precondition', 'Email isn’t set up yet: Formwright needs a Gmail address and app password. See “Email PDF” in the Cadence instructions.');
+  if (!opts.from || !opts.ready) fail('failed-precondition', 'Email isn’t set up yet: Wayholm Forms needs a Gmail address and app password. See “Email PDF” in the Wayholm Plan instructions.');
 
   const recordId = data && typeof data.recordId === 'string' ? data.recordId : '';
   if (!recordId) fail('invalid-argument', 'Say which record.');

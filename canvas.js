@@ -1191,7 +1191,7 @@
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.drawImage(nodesCanvas, 0, 0);
       restore();
-      M().download(out.toDataURL('image/png'), 'Cadence map ' + C.D.todayKey() + '.png');
+      M().download(out.toDataURL('image/png'), 'Wayholm Plan map ' + C.D.todayKey() + '.png');
       C.toast('Saved the canvas as a PNG');
     }).catch((err) => { console.error('PNG export failed', err); restore(); C.toast('Couldn’t export the PNG. ' + (err && err.message ? err.message : '')); });
   }

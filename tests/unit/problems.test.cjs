@@ -26,9 +26,9 @@ test('the same thing groups together, whatever the numbers and IDs', () => {
 test('the morning email: grouped, most frequent first, who it happened to', () => {
   const p = (at, name, where, message, app = 'formwright') => ({ at, app, uid: name, name, where, message });
   const m = digestEmail([p(1, 'Amy', 'save-form', 'Nested arrays'), p(2, 'Bo', 'save-form', 'Nested arrays'), p(3, 'Server', 'Nightly backup', 'PERMISSION_DENIED', 'server'), p(4, 'Amy', 'save-form', 'Nested arrays')], 'https://fw.example/#/problems');
-  assert.equal(m.subject, '4 new problems in Formwright and Cadence');
+  assert.equal(m.subject, '4 new problems in Forms and Plan');
   const lines = m.text.split('\n').filter((l) => l.startsWith('• '));
-  assert.match(lines[0], /^• Formwright · save-form: Nested arrays \(3 times\) · Amy, Bo · last /);
+  assert.match(lines[0], /^• Forms · save-form: Nested arrays \(3 times\) · Amy, Bo · last /);
   assert.match(lines[1], /^• Server · Nightly backup: PERMISSION_DENIED · last /, 'no person for the server');
   assert.match(m.html, /<a href="https:\/\/fw.example\/#\/problems">/);
   assert.doesNotMatch(digestEmail([p(1, '<b>x</b>', 'w', '<script>')], '').html, /<script>|<b>x/, 'escaped');

@@ -340,7 +340,7 @@
         if (tail) { pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9); pdf.setTextColor(tc.overdue ? 209 : 122, tc.overdue ? 52 : 131, tc.overdue ? 56 : 153); pdf.text(tail, W - mg, y, { align: 'right' }); }
         y += lines.length * lh + 4;
       });
-      pdf.save('Cadence outline ' + C.D.todayKey() + '.pdf');
+      pdf.save('Wayholm Plan outline ' + C.D.todayKey() + '.pdf');
       C.toast('Saved the outline as a PDF');
     }).catch((err) => C.toast('Couldn’t export the PDF. ' + (err.message || '')));
   }

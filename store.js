@@ -591,7 +591,7 @@
         const r = C.map.importWorkmap(data);
         return { added: r.tasks, total: r.tasks, nodes: r.nodes, workmap: true };
       }
-      if (!data || !Array.isArray(data.tasks)) throw new Error('That file has no "tasks" list. Choose a file exported from Cadence.');
+      if (!data || !Array.isArray(data.tasks)) throw new Error('That file has no "tasks" list. Choose a file exported from Wayholm Plan.');
       if (Array.isArray(data.types)) state.types = data.types;
       if (Array.isArray(data.levels) && data.levels.length) state.levels = data.levels;
       commit('settings', true);

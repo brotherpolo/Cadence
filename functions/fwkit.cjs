@@ -643,6 +643,21 @@ var fsize2 = (n) => n < 1024 ? n + " B" : n < 1048576 ? (n / 1024).toFixed(0) + 
 var sizeText = (n) => n ? fsize2(n) : "";
 var fileLines = (v) => asFiles(v).map((x) => [x.name || "File", sizeText(x.size)].filter(Boolean).join(" \xB7 ")).join("\n");
 
+// src/checklistlogic.js
+var BUILT_IN = [["text", "Text"], ["date", "Date"], ["decimal", "Decimal"], ["percent", "Percent"]];
+var BUILT = new Set(BUILT_IN.map((x) => x[0]));
+var isBlankValue = (v) => !v || typeof v !== "object" || !v.a || !Object.keys(v.a).length;
+function summaryText(v) {
+  const s = v?.s;
+  if (!s || isBlankValue(v)) return "";
+  const parts = [];
+  if (s.max > 0) parts.push(`${fmtN(s.score)} / ${fmtN(s.max)}`, `${fmtN(s.pct)}%`);
+  if (s.result) parts.push(s.result === "pass" ? "Pass" : "Fail");
+  parts.push(`${s.answered} of ${s.total} answered`);
+  return parts.join(" \xB7 ");
+}
+var fmtN = (n) => typeof n === "number" ? Number.isInteger(n) ? String(n) : n.toFixed(1).replace(/\.0$/, "") : "";
+
 // src/fixedlogic.js
 var LAYOUT = /* @__PURE__ */ new Set(["heading", "instructions"]);
 var isLayout = (f) => !!f && LAYOUT.has(f.type);
@@ -1035,6 +1050,105 @@ function once(rules, fields, byId, under, look) {
 var sameSet = (a, b) => a.size === b.size && [...a].every((x) => b.has(x));
 var NO_RULES = { hidden: /* @__PURE__ */ new Set(), hiddenFields: /* @__PURE__ */ new Set(), cleared: /* @__PURE__ */ new Set(), required: (f) => !!(f && f.required && holdsValue(f)), fired: /* @__PURE__ */ new Map(), blank: /* @__PURE__ */ new Set() };
 
+// src/rolluplogic.js
+var AGGS = [["count", "Count"], ["sum", "Sum"], ["avg", "Average"], ["min", "Min"], ["max", "Max"], ["latest", "Latest"], ["earliest", "Earliest"], ["list", "List"]];
+var AGG_WORD = Object.fromEntries(AGGS);
+var MAX_WHERE = 3;
+var pathOf2 = (f) => Array.isArray(f?.from) ? f.from.filter((s) => typeof s === "string" && /^(c:[^:]+|l:[^:]+:[^:]+)$/.test(s)).slice(0, 2) : [];
+function stepForm2(form, step, formById) {
+  if (!form) return null;
+  if (step.startsWith("c:")) {
+    const id = step.slice(2);
+    return (form.children || []).some((c) => c.formId === id) ? formById(id) || null : null;
+  }
+  const [, fid, lf] = step.split(":");
+  const t = formById(fid);
+  return t && (t.fields || []).some((x) => x.id === lf && x.type === "relation" && x.relForm === form.id) ? t : null;
+}
+function rollupTarget(form, f, formById) {
+  const path = pathOf2(f);
+  if (!path.length) return null;
+  let cur = form;
+  const forms = [];
+  for (const s of path) {
+    cur = stepForm2(cur, s, formById);
+    if (!cur) return null;
+    forms.push(cur);
+  }
+  return { form: cur, forms };
+}
+function rollupRecords(rec, f, h) {
+  let cur = rec && rec.id ? [rec] : [];
+  for (const s of pathOf2(f)) {
+    const next = /* @__PURE__ */ new Map();
+    cur.forEach((r) => {
+      const got = s.startsWith("c:") ? h.childrenOf(r.id, s.slice(2)) : (() => {
+        const [, fid, lf] = s.split(":");
+        return h.linksTo(r.id, fid, lf);
+      })();
+      (got || []).forEach((x) => next.set(x.id, x));
+    });
+    cur = [...next.values()];
+  }
+  return rec && rec.id ? cur : [];
+}
+function rollupValue(rec, f, h, depth = 0) {
+  if (!rec || depth > 3) return null;
+  const form = h.formById(rec.formId);
+  const t = rollupTarget(form, f, h.formById);
+  const agg = AGG_WORD[f.agg] ? f.agg : "count";
+  if (!t) return agg === "count" || agg === "sum" ? 0 : null;
+  const byId = new Map((t.form.fields || []).map((x) => [x.id, x]));
+  const conds = (f.where || []).filter((c) => c && byId.has(c.field)).slice(0, MAX_WHERE);
+  const recs = rollupRecords(rec, f, h).filter((r) => conds.every((c) => {
+    const g2 = byId.get(c.field);
+    return testCond(c, h.valOf(g2, r, t.form), g2);
+  }));
+  if (agg === "count") return recs.length;
+  const g = byId.get(f.of);
+  if (!g) return agg === "sum" ? 0 : null;
+  const vals = recs.map((r) => h.valOf(g, r, t.form)).filter((v) => v != null && v !== "" && !(Array.isArray(v) && !v.length));
+  if (agg === "list") {
+    const out = [];
+    vals.forEach((v) => (Array.isArray(v) ? v : [v]).forEach((x) => {
+      const s = h.fmt ? h.fmt(g, x) : String(x);
+      if (s && !out.includes(s)) out.push(s);
+    }));
+    return out.length ? out : null;
+  }
+  if (agg === "latest" || agg === "earliest") {
+    const ds = vals.map(String).sort();
+    return ds.length ? agg === "latest" ? ds[ds.length - 1] : ds[0] : null;
+  }
+  const ns = vals.map(Number).filter(Number.isFinite);
+  if (agg === "sum") return ns.reduce((a, b) => a + b, 0);
+  if (!ns.length) return null;
+  if (agg === "avg") return ns.reduce((a, b) => a + b, 0) / ns.length;
+  return agg === "min" ? Math.min(...ns) : Math.max(...ns);
+}
+function rollupOf(form, f, formById) {
+  const t = rollupTarget(form, f, formById);
+  return t && f.agg !== "count" ? (t.form.fields || []).find((x) => x.id === f.of) || null : null;
+}
+function recordIndex(records) {
+  const kids = /* @__PURE__ */ new Map(), links = /* @__PURE__ */ new Map();
+  (records || []).forEach((r) => {
+    if (r.parentId) {
+      const k = r.parentId + "|" + r.formId;
+      if (!kids.has(k)) kids.set(k, []);
+      kids.get(k).push(r);
+    }
+    Object.entries(r.values || {}).forEach(([fid, v]) => {
+      if (typeof v === "string" && v) {
+        const k = v + "|" + r.formId + "|" + fid;
+        if (!links.has(k)) links.set(k, []);
+        links.get(k).push(r);
+      }
+    });
+  });
+  return { childrenOf: (id, formId) => kids.get(id + "|" + formId) || [], linksTo: (id, formId, fieldId) => links.get(id + "|" + formId + "|" + fieldId) || [] };
+}
+
 // src/richtext.js
 var RICH_KEY = "_rich";
 var ENT = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: "\xA0" };
@@ -1270,13 +1384,16 @@ var wfOn = (form) => !!(form?.workflow?.on && (form.workflow.stages || []).lengt
 var stagesOf = (form) => wfOn(form) ? form.workflow.stages : [];
 var stageById = (form, id) => stagesOf(form).find((s) => s.id === id) || null;
 var firstStage = (form) => stagesOf(form)[0] || null;
+var BEFORE = "_before";
+var BEFORE_NAME = "Before saving";
+var beforeStage = (form) => ({ id: BEFORE, name: BEFORE_NAME, fields: form?.workflow?.before?.fields || {}, sections: form?.workflow?.before?.sections || {} });
 function withStageField(form) {
   if (!wfOn(form)) return form;
   return { ...form, fields: [...form.fields || [], { id: STAGE_FIELD, type: "select", label: "Stage", options: stagesOf(form).map((s) => s.name), pseudo: true }] };
 }
 var stageName = (form, rec) => stageById(form, rec?.stage)?.name || "";
 function stageView(form, stageId) {
-  const st = stageById(form, stageId);
+  const st = stageId === BEFORE ? wfOn(form) ? beforeStage(form) : null : stageById(form, stageId);
   const out = { hide: /* @__PURE__ */ new Set(), view: /* @__PURE__ */ new Set(), req: /* @__PURE__ */ new Set(), keys: /* @__PURE__ */ new Set() };
   if (!st) return out;
   const fields = form.fields || [];
@@ -1356,7 +1473,7 @@ function daysOverdue(dueKey, todayKey) {
 }
 
 // src/server/recordkit.js
-var POPUP = /* @__PURE__ */ new Set(["textarea", "file", "image", "signature", "location", "multiselect", "attachments"]);
+var POPUP = /* @__PURE__ */ new Set(["textarea", "file", "image", "signature", "location", "multiselect", "attachments", "checklist"]);
 var COLORS = ["#3346c8", "#0f7b6c", "#b4531a", "#8a3fb8", "#b42367", "#3d6b1f", "#56607a", "#0b6aa2"];
 var isEmpty2 = (v) => v == null || v === "" || Array.isArray(v) && !v.length || typeof v === "object" && !Array.isArray(v) && !Object.values(v).some((x) => x != null && x !== "");
 var lc2 = (s) => String(s || "").trim().toLowerCase();
@@ -1404,6 +1521,17 @@ function makeKit({ forms = [], records: stored = [], locale = "en-CA", timeZone 
       return String(v);
     }
   }
+  const idx = recordIndex(records);
+  const RU = { formById, childrenOf: idx.childrenOf, linksTo: idx.linksTo, valOf: (g, r, fm) => valOf(g, r, fm), fmt: (g, v) => fmt(g, v) };
+  function rollupText(f, v) {
+    if (v == null || v === "") return "";
+    if (Array.isArray(v)) return v.join(", ");
+    if (f.agg === "count" || !f.agg) return num(v);
+    const g = fieldForm.has(f) && rollupOf(fieldForm.get(f), f, formById);
+    if (!g) return String(v);
+    if (f.agg === "avg" && g.type === "number") return num(v, { maximumFractionDigits: 2 });
+    return fmt(g.type === "lookup" ? shownField(fieldForm.get(g) || fieldForm.get(f), g, formById) || g : g, v);
+  }
   const fieldForm = /* @__PURE__ */ new Map();
   forms.forEach((fm) => (fm.fields || []).forEach((x) => fieldForm.set(x, fm)));
   function fmt(f, v) {
@@ -1411,6 +1539,7 @@ function makeKit({ forms = [], records: stored = [], locale = "en-CA", timeZone 
       const g = fieldForm.has(f) && shownField(fieldForm.get(f), f, formById);
       return g ? fmt(g, v) : v == null ? "" : String(v);
     }
+    if (f.type === "rollup") return rollupText(f, v);
     if (f.type !== "formula" && isEmpty2(v)) return "";
     try {
       switch (f.type) {
@@ -1439,6 +1568,9 @@ function makeKit({ forms = [], records: stored = [], locale = "en-CA", timeZone 
           return v.name || "File";
         case "attachments":
           return filesText(v);
+        case "checklist":
+          return summaryText(v);
+        // "14 / 18 · 78% · Fail · 9 of 10 answered"
         case "signature":
           return "Signed";
         case "autonumber":
@@ -1464,6 +1596,10 @@ function makeKit({ forms = [], records: stored = [], locale = "en-CA", timeZone 
       const t = lookupTarget(form, f, formById), r = t && lookupRecord(rec, f, recById);
       return r && depth < 20 ? rawFor(t.field, r, t.form, depth + 1) : null;
     }
+    if (f.type === "rollup") {
+      const v2 = rollupValue(rec, f, RU);
+      return Array.isArray(v2) ? v2.join(", ") : v2;
+    }
     const v = f.type === "autonumber" ? rec.nums?.[f.id] : rec.values?.[f.id];
     if (f.type === "relation") {
       const r = v && recById(v);
@@ -1472,6 +1608,7 @@ function makeKit({ forms = [], records: stored = [], locale = "en-CA", timeZone 
     if (f.type === "location") return v?.address || "";
     if (f.type === "file" || f.type === "image") return v?.name || "";
     if (f.type === "attachments") return fileNames(v).join(", ");
+    if (f.type === "checklist") return v?.s?.pct ?? null;
     return v ?? null;
   }
   function evalFormula(form, f, rec, depth = 0) {
@@ -1512,6 +1649,7 @@ function makeKit({ forms = [], records: stored = [], locale = "en-CA", timeZone 
     if (f.type === "autonumber") return rec.nums?.[f.id] ?? null;
     if (isFixed(f)) return defaultFor(f, /* @__PURE__ */ new Date(), timeZone);
     if (f.type === "lookup") return lookupValue(rec, f, { recById, formById, valOf });
+    if (f.type === "rollup") return rollupValue(rec, f, RU);
     if (f.type !== "formula") return rec.values?.[f.id];
     form = form || formById(rec.formId);
     try {
@@ -1670,8 +1808,8 @@ async function drawPdf(L, model, imgs = /* @__PURE__ */ new Map()) {
   const brandName = T(model.brand?.name || "");
   pdf.setTitle([T(model.formName), title].filter(Boolean).join(" - "));
   if (brandName) pdf.setAuthor(brandName);
-  pdf.setCreator("Formwright");
-  pdf.setProducer("Formwright");
+  pdf.setCreator("Wayholm Forms");
+  pdf.setProducer("Wayholm Forms");
   const pics = /* @__PURE__ */ new Map();
   for (const [key, im] of imgs) {
     try {
@@ -2177,7 +2315,7 @@ function valueOf(ctx, rec, ref) {
   const form = ctx.formById(ref.form);
   const f = form && (form.fields || []).find((x) => x.id === ref.id);
   if (!f) return void 0;
-  if (f.type === "formula" || f.type === "lookup") {
+  if (f.type === "formula" || f.type === "lookup" || f.type === "rollup") {
     const saved = r.values && r.values[f.id];
     if (saved !== void 0 && saved !== null && saved !== "") return saved;
     return ctx.valOf ? ctx.valOf(f, r, form) : void 0;
@@ -2803,11 +2941,11 @@ function recipients(s, people, roleHolders = () => []) {
   return [...new Set(list3.map((x) => String(x).trim().toLowerCase()).filter((x) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x)))].slice(0, 50);
 }
 var esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-var INK = "#141826";
-var MUTED = "#5a6174";
-var LINE = "#e3e5ec";
-var BAR = "#3346c8";
-var SOFT = "#f3f4f7";
+var INK = "#1e2528";
+var MUTED = "#625d53";
+var LINE = "#e6e0d5";
+var BAR = "#2f5e9e";
+var SOFT = "#f5f1ea";
 var COLORS2 = ["#3346c8", "#0f7b6c", "#c2410c", "#8a55d6", "#d23f6e", "#0e8fa8", "#a16207", "#5a6174"];
 var td = (s, x = "") => `<td style="padding:6px 8px;border-bottom:1px solid ${LINE};font-size:13px;color:${INK};${x}">${s}</td>`;
 var th = (s, x = "") => `<th style="padding:6px 8px;border-bottom:2px solid ${LINE};font-size:12px;color:${MUTED};text-align:left;font-weight:600;${x}">${s}</th>`;
@@ -2892,7 +3030,7 @@ function dashEmail(c, dash, reports, { now = Date.now(), link = "", schedule = n
     text.push(`${r.name || "Report"}: ${b.text}`);
   });
   if (!parts.length) parts.push(`<tr><td style="font-size:13px;color:${MUTED}">This dashboard has no reports yet.</td></tr>`);
-  const foot = `${schedule ? esc(scheduleText(schedule)) + ". " : ""}Sent by Formwright${company ? " for " + esc(String(company).replace(/\.$/, "")) : ""}. An administrator can change who gets this on the dashboard (Email schedule).`;
+  const foot = `${schedule ? esc(scheduleText(schedule)) + ". " : ""}Sent by Wayholm Forms${company ? " for " + esc(String(company).replace(/\.$/, "")) : ""}. An administrator can change who gets this on the dashboard (Email schedule).`;
   const html = `<!doctype html><html><body style="margin:0;padding:0;background:${SOFT}"><table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;background:${SOFT}"><tr><td align="center" style="padding:20px 12px">
     <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;max-width:680px;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
       <tr><td style="padding:0 0 14px"><div style="font-size:22px;font-weight:700;color:${INK}">${esc(dash.name || "Dashboard")}</div><div style="font-size:13px;color:${MUTED};margin-top:2px">${esc(pName)} \xB7 ${esc(date)}${link ? ` \xB7 <a href="${esc(link)}" style="color:${BAR}">Open the dashboard</a>` : ""}</div></td></tr>

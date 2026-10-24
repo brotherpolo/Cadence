@@ -167,7 +167,7 @@
     const msg = {
       'no-sync': ['Needs sign-in', 'Notifications come from your Firebase account, so turn on sign-in and sync first (README → Turn on sign-in and sync).'],
       'signed-out': ['Needs sign-in', 'Sign in to turn on notifications.'],
-      'ios-install': ['Add Cadence to your Home Screen first', 'On iPhone and iPad, web notifications only work in an installed app (iOS 16.4 or later). Tap the Share button, choose “Add to Home Screen”, open Cadence from the new icon, and come back here.'],
+      'ios-install': ['Add Wayholm Plan to your Home Screen first', 'On iPhone and iPad, web notifications only work in an installed app (iOS 16.4 or later). Tap the Share button, choose “Add to Home Screen”, open Wayholm Plan from the new icon, and come back here.'],
       unsupported: ['Not available in this browser', 'This browser can’t receive web push notifications. Chrome, Edge, Firefox and Safari 16 or later can.'],
       'no-vapid': ['One setup step left', 'Add your Web Push key to firebase-config.js as window.CADENCE_VAPID_KEY. README → Push notifications shows where to find it.'],
       blocked: ['Blocked for this site', 'Notifications were turned down in this browser. Allow them in the site settings (the icon left of the address bar), then reload.'],
@@ -337,7 +337,7 @@
           ui.force = true; render();
           C.toast('Import complete');
         } catch (err) {
-          ui.msg = err instanceof SyntaxError ? f.name + ' is not valid JSON. Choose a backup exported from Cadence.' : err.message;
+          ui.msg = err instanceof SyntaxError ? f.name + ' is not valid JSON. Choose a backup exported from Wayholm Plan.' : err.message;
           ui.force = true; render();
         }
       };
@@ -448,7 +448,7 @@
         ['Assigned to', 'For reference only. Change who a task is assigned to in the app.'],
         ['ID', 'Keep it to update that task. Leave it blank (or delete it) to add a new task.'],
         [''],
-        ['Deleting a row here does not delete the task in Cadence. Tasks someone else assigned to you are skipped on import.']
+        ['Deleting a row here does not delete the task in Wayholm Plan. Tasks someone else assigned to you are skipped on import.']
       ]);
       help['!cols'] = [{ wch: 14 }, { wch: 100 }];
 

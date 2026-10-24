@@ -24,7 +24,7 @@
     const ua = navigator.userAgent;
     const os = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) || (isIOS() && !/iPhone/.test(ua)) ? 'iPad' : /Android/.test(ua) ? 'Android' : /Mac/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : /Linux/.test(ua) ? 'Linux' : 'Device';
     const br = /Edg\//.test(ua) ? 'Edge' : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
-    return (standalone() ? 'Cadence app' : br) + ' on ' + os;
+    return (standalone() ? 'Wayholm Plan app' : br) + ' on ' + os;
   };
   // the folder the app is served from, so links in notifications open this app
   const origin = () => location.origin + location.pathname.replace(/[^/]*$/, '');

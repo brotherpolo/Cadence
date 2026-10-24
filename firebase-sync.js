@@ -277,7 +277,7 @@
   const msg = (e) => ERR[e && e.code] || (e && e.message) || 'Something went wrong. Try again.';
 
   /* Cadence is by approval: a new account sees only a "no access" screen until a Formwright admin turns on
-     "Cadence" for it on the Users screen (users/{uid}.cadence; admins always can).
+     "Wayholm Plan" for it on the Users screen (users/{uid}.cadence; admins always can).
      firestore.rules enforce the same thing, so this screen is only the friendly part. */
   const approved = (d) => !!d && (d.role === 'admin' || d.cadence === true);
   async function approval(db, auth, user) {
@@ -302,7 +302,7 @@
   function renderApprove() {
     const u = currentAuth && currentAuth.currentUser;
     gate.innerHTML = '<div class="gate-card" role="dialog" aria-modal="true" aria-labelledby="gate-title">' +
-      '<div class="brand"><svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="2" width="28" height="28" rx="9" class="logo-bg"/><rect x="8.5" y="16" width="3.6" height="8" rx="1.8" class="logo-bar"/><rect x="14.2" y="11" width="3.6" height="13" rx="1.8" class="logo-bar"/><rect x="19.9" y="7.5" width="3.6" height="16.5" rx="1.8" class="logo-bar hi"/></svg><span class="brand-name">Cadence</span></div>' +
+      '<div class="brand"><svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><ellipse class="logo-st" cx="32" cy="50" rx="24" ry="8.6" transform="rotate(-3 32 50)"/><ellipse class="logo-st" cx="30.5" cy="33.6" rx="16.5" ry="6.9" transform="rotate(5 30.5 33.6)"/><circle class="logo-tp" cx="33.5" cy="17" r="7"/></svg><span class="brand-name">wayholm<span>plan</span></span></div>' +
       '<h1 id="gate-title" class="gate-title">You don’t have access yet</h1>' +
       '<p class="muted gate-sub">Please contact an administrator.</p>' +
       '<p class="gate-note">Signed in as <b>' + esc((u && u.email) || 'this account') + '</b></p>' +
@@ -329,7 +329,7 @@
     if (mode === 'approve') return renderApprove();
     const up = mode === 'signup';
     gate.innerHTML = '<div class="gate-card" role="dialog" aria-modal="true" aria-labelledby="gate-title">' +
-      '<div class="brand"><svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="2" width="28" height="28" rx="9" class="logo-bg"/><rect x="8.5" y="16" width="3.6" height="8" rx="1.8" class="logo-bar"/><rect x="14.2" y="11" width="3.6" height="13" rx="1.8" class="logo-bar"/><rect x="19.9" y="7.5" width="3.6" height="16.5" rx="1.8" class="logo-bar hi"/></svg><span class="brand-name">Cadence</span></div>' +
+      '<div class="brand"><svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><ellipse class="logo-st" cx="32" cy="50" rx="24" ry="8.6" transform="rotate(-3 32 50)"/><ellipse class="logo-st" cx="30.5" cy="33.6" rx="16.5" ry="6.9" transform="rotate(5 30.5 33.6)"/><circle class="logo-tp" cx="33.5" cy="17" r="7"/></svg><span class="brand-name">wayholm<span>plan</span></span></div>' +
       '<h1 id="gate-title" class="gate-title">' + (up ? 'Create your account' : 'Sign in to your tasks') + '</h1>' +
       '<p class="muted gate-sub">' + (up ? 'We’ll email you a link to confirm your address. ' : '') + 'Your tasks sync across your devices. Only you and the people you share a task with can see it.</p>' +
       (providers.google ? '<button type="button" class="btn block gate-google" data-g>' + icon('sparkle') + '<span>Continue with Google</span></button>' : '') +
@@ -349,7 +349,7 @@
     const u = currentAuth && currentAuth.currentUser;
     const email = (u && u.email) || 'your email';
     gate.innerHTML = '<div class="gate-card" role="dialog" aria-modal="true" aria-labelledby="gate-title">' +
-      '<div class="brand"><svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="2" width="28" height="28" rx="9" class="logo-bg"/><rect x="8.5" y="16" width="3.6" height="8" rx="1.8" class="logo-bar"/><rect x="14.2" y="11" width="3.6" height="13" rx="1.8" class="logo-bar"/><rect x="19.9" y="7.5" width="3.6" height="16.5" rx="1.8" class="logo-bar hi"/></svg><span class="brand-name">Cadence</span></div>' +
+      '<div class="brand"><svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><ellipse class="logo-st" cx="32" cy="50" rx="24" ry="8.6" transform="rotate(-3 32 50)"/><ellipse class="logo-st" cx="30.5" cy="33.6" rx="16.5" ry="6.9" transform="rotate(5 30.5 33.6)"/><circle class="logo-tp" cx="33.5" cy="17" r="7"/></svg><span class="brand-name">wayholm<span>plan</span></span></div>' +
       '<h1 id="gate-title" class="gate-title">Verify your email</h1>' +
       '<p class="muted gate-sub">We sent a link to <b>' + esc(email) + '</b>. Open it to confirm the address is yours. That lets other people assign you tasks. Check your spam folder if it doesn’t arrive.</p>' +
       (error ? '<p class="gate-err" role="alert">' + esc(error) + '</p>' : '') + (note ? '<p class="gate-note" role="status">' + esc(note) + '</p>' : '') +

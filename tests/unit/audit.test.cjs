@@ -56,7 +56,7 @@ test('security groups, accounts and settings', () => {
   const g = groupEntry('g1', { name: 'Office', access: { '*': { view: 'all', edit: 'own' } } }, { name: 'Office', access: { '*': { view: 'all', edit: 'all' }, f1: { view: 'none', edit: 'none' } } }, who, 1, new Map([['f1', 'Invoices']]));
   assert.deepEqual(g.changes.map((c) => [c.label, c.from, c.to]), [['Access: every form', 'view All, edit Own', 'view All, edit All'], ['Access: Invoices', null, 'view None, edit None']]);
   const u = userEntry('u1', { role: 'member', groups: ['g1'], access: {} }, { role: 'admin', groups: ['g1', 'g2'], cadence: true, access: { x: 1 } }, who, 1, new Map([['g1', 'Office'], ['g2', 'Field']]), new Map([['u1', 'Jane']]));
-  assert.deepEqual(u.changes.map((c) => [c.label, c.from, c.to]), [['Role', 'member', 'admin'], ['Security groups', ['Office'], ['Field', 'Office']], ['Can use Cadence', false, true]]);
+  assert.deepEqual(u.changes.map((c) => [c.label, c.from, c.to]), [['Role', 'member', 'admin'], ['Security groups', ['Office'], ['Field', 'Office']], ['Can use Plan', false, true]]);
   assert.equal(u.targetName, 'Jane');
   assert.equal(userEntry('u1', { role: 'member', access: {} }, { role: 'member', access: { f: 1 } }, who, 1), null, 'access worked out again is not noted');
   assert.equal(userEntry('u1', null, { email: 'jane@x.com' }, who, 1).note, 'First sign-in (jane@x.com)');

@@ -20,9 +20,9 @@ function holderText({ person, roleName, groupName }) { return person || roleName
 function reminderEmail({ item, title, stage, due, late, link }) {
   const what = `${item} ${title}`.trim();
   const subject = `Overdue: ${what} (${stage})`.slice(0, 200);
-  const lines = [`${what} has been waiting on you at ${stage}, and it was due ${longDate(due)} (${days(late)} ago).`, '', link ? `Open it: ${link}` : 'Open Formwright and look in My work.'];
+  const lines = [`${what} has been waiting on you at ${stage}, and it was due ${longDate(due)} (${days(late)} ago).`, '', link ? `Open it: ${link}` : 'Open Wayholm Forms and look in My work.'];
   const html = `<p><b>${escHtml(what)}</b> has been waiting on you at <b>${escHtml(stage)}</b>, and it was due ${escHtml(longDate(due))} (${escHtml(days(late))} ago).</p>`
-    + (link ? `<p><a href="${escHtml(link)}">Open ${escHtml(what)} in Formwright</a></p>` : '<p>Open Formwright and look in My work.</p>');
+    + (link ? `<p><a href="${escHtml(link)}">Open ${escHtml(what)} in Wayholm Forms</a></p>` : '<p>Open Wayholm Forms and look in My work.</p>');
   return { subject, text: lines.join('\n'), html };
 }
 
@@ -30,17 +30,17 @@ function reminderEmail({ item, title, stage, due, late, link }) {
 function escalationEmail({ item, title, stage, due, late, holder, link }) {
   const what = `${item} ${title}`.trim();
   const subject = `Still overdue: ${what} (${stage}, with ${holder})`.slice(0, 200);
-  const lines = [`${what} is still at ${stage}, waiting on ${holder}. It was due ${longDate(due)}: ${days(late)} overdue.`, 'You’re getting this because the workflow says to tell you when it’s this late.', '', link ? `Open it: ${link}` : 'Open Formwright to look at it.'];
+  const lines = [`${what} is still at ${stage}, waiting on ${holder}. It was due ${longDate(due)}: ${days(late)} overdue.`, 'You’re getting this because the workflow says to tell you when it’s this late.', '', link ? `Open it: ${link}` : 'Open Wayholm Forms to look at it.'];
   const html = `<p><b>${escHtml(what)}</b> is still at <b>${escHtml(stage)}</b>, waiting on <b>${escHtml(holder)}</b>. It was due ${escHtml(longDate(due))}: ${escHtml(days(late))} overdue.</p>`
     + '<p style="color:#5a6174">You’re getting this because the workflow says to tell you when it’s this late.</p>'
-    + (link ? `<p><a href="${escHtml(link)}">Open ${escHtml(what)} in Formwright</a></p>` : '');
+    + (link ? `<p><a href="${escHtml(link)}">Open ${escHtml(what)} in Wayholm Forms</a></p>` : '');
   return { subject, text: lines.join('\n'), html };
 }
 
 /** The audit trail entry: who was emailed about an overdue record. */
 function auditEntry({ recordId, rec, formName, title, stage, kind, to, now }) {
   return {
-    at: now, by: 'system', byName: 'Formwright', area: 'record', kind: 'overdue', recordId, formId: rec.formId || null, formName: formName || '', title: title || '',
+    at: now, by: 'system', byName: 'Wayholm Forms', area: 'record', kind: 'overdue', recordId, formId: rec.formId || null, formName: formName || '', title: title || '',
     note: `${kind === 'escalate' ? 'Still overdue at' : 'Overdue at'} ${stage}: emailed ${to.length ? to.slice(0, 10).join(', ') : 'nobody (no email address found)'}`,
   };
 }

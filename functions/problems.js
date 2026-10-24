@@ -38,12 +38,12 @@ function digestEmail(list, link, tz = 'America/Toronto') {
   const rows = [...groups.values()].sort((a, b) => b.n - a.n || b.last - a.last);
   const total = (list || []).length;
   const when = (ms) => new Date(ms).toLocaleString('en-CA', { timeZone: tz, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-  const app = (a) => ({ formwright: 'Formwright', cadence: 'Cadence', server: 'Server' })[a] || a;
-  const subject = `${total} new problem${total === 1 ? '' : 's'} in Formwright and Cadence`;
+  const app = (a) => ({ formwright: 'Forms', cadence: 'Plan', server: 'Server' })[a] || a;
+  const subject = `${total} new problem${total === 1 ? '' : 's'} in Forms and Plan`;
   const line = (g) => `${app(g.p.app)} · ${g.p.where || 'somewhere'}: ${g.p.message}${g.n > 1 ? ` (${g.n} times)` : ''}${g.people.size ? ` · ${[...g.people].slice(0, 3).join(', ')}${g.people.size > 3 ? ` and ${g.people.size - 3} more` : ''}` : ''} · last ${when(g.last)}`;
-  const text = [`${total} new since the last email:`, '', ...rows.slice(0, 30).map((g) => '• ' + line(g)), rows.length > 30 ? `…and ${rows.length - 30} more.` : '', '', link ? `See them all: ${link}` : 'See them in Formwright → Settings → Problems.', '', 'You’re getting this because you asked for it in Settings → Problems.'].filter((x, i, a) => x !== '' || a[i - 1] !== '').join('\n');
+  const text = [`${total} new since the last email:`, '', ...rows.slice(0, 30).map((g) => '• ' + line(g)), rows.length > 30 ? `…and ${rows.length - 30} more.` : '', '', link ? `See them all: ${link}` : 'See them in Wayholm Forms → Settings → Problems.', '', 'You’re getting this because you asked for it in Settings → Problems.'].filter((x, i, a) => x !== '' || a[i - 1] !== '').join('\n');
   const html = `<p><b>${total} new</b> since the last email:</p><ul>${rows.slice(0, 30).map((g) => `<li><b>${escHtml(app(g.p.app))} · ${escHtml(g.p.where || 'somewhere')}</b>: ${escHtml(g.p.message)}${g.n > 1 ? ` <b>(${g.n} times)</b>` : ''}${g.people.size ? ` · ${escHtml([...g.people].slice(0, 3).join(', '))}${g.people.size > 3 ? ` and ${g.people.size - 3} more` : ''}` : ''} <span style="color:#5a6174">· last ${escHtml(when(g.last))}</span></li>`).join('')}</ul>${rows.length > 30 ? `<p>…and ${rows.length - 30} more.</p>` : ''}`
-    + (link ? `<p><a href="${escHtml(link)}">See them all in Formwright</a></p>` : '<p>See them in Formwright → Settings → Problems.</p>')
+    + (link ? `<p><a href="${escHtml(link)}">See them all in Wayholm Forms</a></p>` : '<p>See them in Wayholm Forms → Settings → Problems.</p>')
     + '<p style="color:#5a6174">You’re getting this because you asked for it in Settings → Problems.</p>';
   return { subject, text, html };
 }

@@ -97,11 +97,11 @@ function mentionEmail({ byName, item, title, text, link, reply, role }) {
     '',
     ...body.split('\n').map((l) => '> ' + l),
     '',
-    link ? `Open it: ${link}` : 'Open Formwright and look in My work → Mentions.',
+    link ? `Open it: ${link}` : 'Open Wayholm Forms and look in My work → Mentions.',
   ];
   const html = `<p>${escHtml(who)} mentioned ${escHtml(whom)} ${reply ? 'in a reply ' : ''}on <b>${escHtml(what)}</b>:</p>`
     + `<blockquote style="margin:0 0 16px;padding:8px 14px;border-left:3px solid #c7cbd6;color:#333;white-space:pre-wrap">${escHtml(body)}</blockquote>`
-    + (link ? `<p><a href="${escHtml(link)}">Open ${escHtml(what)} in Formwright</a></p>` : '<p>Open Formwright and look in My work → Mentions.</p>');
+    + (link ? `<p><a href="${escHtml(link)}">Open ${escHtml(what)} in Wayholm Forms</a></p>` : '<p>Open Wayholm Forms and look in My work → Mentions.</p>');
   return { subject, text: lines.join('\n'), html };
 }
 

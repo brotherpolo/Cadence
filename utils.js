@@ -1,7 +1,7 @@
 /* Cadence — helpers: dates, formatting, escaping, natural-language quick add */
 (function () {
   const C = (window.Cadence = window.Cadence || {});
-  C.VERSION = '33'; // keep in step with the ?v= numbers in index.html
+  C.VERSION = '34'; // keep in step with the ?v= numbers in index.html
   // Date and time boxes open their calendar or clock wherever they're clicked, not only on the
   // small icon: nobody has to type a date. Typing still works from the keyboard.
   const PICK = { date: 1, 'datetime-local': 1, time: 1, month: 1, week: 1 };
@@ -123,7 +123,7 @@
 
   const norm = (v) => String(v || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
   /** nodes: optional [{ id, title, color }] for "@node" links to the map;
-      records: optional [{ id, title, color }] for "&record" links to Formwright records */
+      records: optional [{ id, title, color }] for "&record" links to Forms records */
   C.parseQuick = function (text, types, levels, weekStart, nodes, records) {
     const out = { title: '', due: null, time: null, typeId: null, levelId: null, repeat: 'none', nodeId: null, recordId: null, tokens: [] };
     let s = ' ' + text + ' ';

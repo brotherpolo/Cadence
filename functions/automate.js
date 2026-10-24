@@ -12,7 +12,7 @@
  *     acts: [
  *       { do: 'set',   target: 'self' | 'parent', parentForm?, sets: [{ field, mode: 'value'|'today'|'clear'|'copy', value, from }] },
  *       { do: 'task',  title, notes, assign: 'owner'|'actor'|'person', person, dueDays },
- *       { do: 'email', to: { fields: [], parentFields: [], people: [], owner, addresses }, subject, message, pdf },
+ *       { do: 'email', to: { fields: [], parentFields: [], people: [], roles: [], owner, addresses }, subject, message, pdf },
  *       { do: 'child', formId, copy, sets: [...] },
  *     ],
  *   }
@@ -41,12 +41,12 @@ function depthOf(before, after) {
 /** The automation that made this write, if one did. */
 const madeBy = (before, after) => (after && after.auto && !(before && same(before.auto, after.auto)) ? after.auto.id : null);
 
-/** A record that just arrived at a workflow stage: { stage, assignee, assigneeGroup } or null. */
+/** A record that just arrived at a workflow stage: { stage, assignee, assigneeGroup, assigneeRole } or null. */
 function stageArrival(form, before, after) {
   const wf = form && form.workflow;
   if (!wf || !wf.on || !after || !after.stage || (before && before.stage === after.stage)) return null;
   const stage = (wf.stages || []).find((s) => s.id === after.stage);
-  return stage ? { stage, assignee: after.assignee || null, assigneeGroup: after.assigneeGroup || null } : null;
+  return stage ? { stage, assignee: after.assignee || null, assigneeGroup: after.assigneeGroup || null, assigneeRole: after.assigneeRole || null } : null;
 }
 
 const fieldVal = (f, rec) => (f.type === 'autonumber' ? rec?.nums?.[f.id] : rec?.values?.[f.id]);
@@ -160,9 +160,11 @@ function plan(a, ctx) {
       (to.parentFields || []).forEach((fid) => addField(pform, parent, fid));
       (to.people || []).forEach((uid) => list.push(people.get(uid)?.email || ''));
       if (to.owner) list.push(people.get(rec.ownerId)?.email || '');
+      // everyone who holds one of these roles (Administration → Roles)
+      (to.roles || []).forEach((rid) => people.forEach((p) => { if ((p.roles || []).includes(rid)) list.push(p.email || ''); }));
       String(to.addresses || '').split(/[,;\s]+/).forEach((x) => list.push(x));
       const addrs = [...new Set(list.map((x) => x.trim().toLowerCase()).filter((x) => EMAIL.test(x)))].slice(0, 10);
-      if (!addrs.length) { out.push({ kind: 'skip', text: 'Send an email: no email address to send to' }); return; }
+      if (!addrs.length) { out.push({ kind: 'skip', noAddr: true, text: 'Send an email: no email address to send to' }); return; }
       const subject = fill(act.subject || '{Item} {Title}').replace(/[\r\n]+/g, ' ').slice(0, 200).trim() || fw.itemName(form);
       out.push({ kind: 'email', to: addrs, subject, message: fill(act.message || '').slice(0, 10000), pdf: !!act.pdf, text: `Email ${addrs.join(', ')}: “${subject}”${act.pdf ? ' with the PDF' : ''}` });
     } else if (act.do === 'child') {
@@ -178,4 +180,54 @@ function plan(a, ctx) {
   return out;
 }
 
-module.exports = { stageArrival, MAX_DEPTH, same, dayKey, addDays, localNow, depthOf, madeBy, triggerMatches, condsHold, dateDue, plan, valueFor };
+/* ---------- on a schedule (monthly) ---------- */
+
+/** One record as a line: "31 Oct 2026 · Oliver's (JJJJ Inc.) · CA$1,225.00" */
+function itemLabel(it) {
+  return [it.title, it.parent, it.amount].filter(Boolean).join(' · ');
+}
+
+/** The email to the automation's owner the day before. items: [{ title, parent, amount, steps: [{ kind, text, noAddr }] }] */
+function headsUpEmail({ name, form, items, dayText, hourText, approve }) {
+  const plural = (n, w) => `${n} ${w.toLowerCase()}${n === 1 ? '' : 's'}`;
+  const it = fw.itemName(form || {}) || 'record';
+  const stuck = items.filter((x) => x.steps.some((s) => s.noAddr));
+  const ok = items.filter((x) => !stuck.includes(x));
+  const subject = `Tomorrow: “${name}” runs for ${plural(ok.length, it)}${approve ? ', ready for your OK' : ''}`.slice(0, 200);
+  const lines = [
+    `“${name}” runs tomorrow, ${dayText}, at ${hourText}${/\.$/.test(hourText) ? '' : '.'}`,
+    approve
+      ? `You'll get a task for each of these to OK before anything is sent:`
+      : `Unless something changes before then, it will do this:`,
+    '',
+    ...ok.map((x) => `• ${itemLabel(x)}\n${x.steps.filter((s) => s.kind !== 'skip').map((s) => `    – ${s.text}`).join('\n')}`),
+  ];
+  if (stuck.length) lines.push('', `Can't be sent (no email address), so you'll get a task instead:`, ...stuck.map((x) => `• ${itemLabel(x)}`));
+  lines.push('', `To hold one back, change it so it no longer matches the automation's “Only if” (for example set Auto-send to No).`, '', '— Wayholm Forms');
+  return { subject, text: lines.join('\n') };
+}
+
+/** The task that asks the owner to OK one. */
+function approvalTask({ name, item, it, steps }) {
+  return {
+    title: `Review and send: ${it} ${itemLabel(item)}`.slice(0, 500),
+    notes: [`“${name}” is waiting for your OK. It will:`, ...steps.filter((s) => s.kind !== 'skip').map((s) => `• ${s.text}`), '', 'Open it in Wayholm Forms and choose Send now (or Don’t send). Nothing goes out until you do.'].join('\n').slice(0, 20000),
+  };
+}
+
+/** The task when one couldn't be sent. */
+function problemTask({ name, item, it, why }) {
+  return {
+    title: `Couldn’t send ${it} ${itemLabel(item)}`.slice(0, 500),
+    notes: `“${name}” didn’t send it: ${why}.\n\nFix that, then send it from the ${it.toLowerCase()} with Email PDF (or wait for the next run).`.slice(0, 20000),
+  };
+}
+
+/** Gmail's errors in words. */
+function mailWhy(e) {
+  const m = String((e && e.message) || '');
+  if ((e && e.code === 'EAUTH') || /535|BadCredentials|Username and Password not accepted/i.test(m)) return 'Gmail didn’t accept Wayholm’s app password. Make a new app password and set it again (GMAIL_APP_PASSWORD), then redeploy the functions';
+  return m || 'the email failed';
+}
+
+module.exports = { itemLabel, headsUpEmail, approvalTask, problemTask, mailWhy, stageArrival, MAX_DEPTH, same, dayKey, addDays, localNow, depthOf, madeBy, triggerMatches, condsHold, dateDue, plan, valueFor };

@@ -1,13 +1,13 @@
 /* Cadence — Formwright records (v22).
-   Formwright, the form builder, shares this Firebase project. This module loads the
-   forms and the records this person may see in Formwright, works out each record's
-   title the way Formwright does, and lets a task link to one record:
+   Forms, the form builder, shares this Firebase project. This module loads the
+   forms and the records this person may see in Forms, works out each record's
+   title the way Forms does, and lets a task link to one record:
      task.recordId    the record
      task.formId      its form
      task.recordSnap  { title, form, color }: a copy, so an assignee who can't see
                       that form still sees what the task is about
    Only the task's owner can set or change the link (firestore.rules checks it).
-   Links from Formwright: ?addTaskFor=<recordId> opens a new task already linked,
+   Links from Forms: ?addTaskFor=<recordId> opens a new task already linked,
    ?record=<recordId> shows that record's tasks.                                  */
 (function () {
   const C = window.Cadence;
@@ -80,7 +80,7 @@
         case 'relation': { const r = st.byId.get(v); return r && depth < 2 ? titleOf(r, depth + 1) : ''; }
         case 'date': return new Date(v + 'T00:00').toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
         case 'datetime': return new Date(v).toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-        case 'formula': return typeof v === 'object' ? '' : String(v); // Formwright saves the result on the record
+        case 'formula': return typeof v === 'object' ? '' : String(v); // Forms saves the result on the record
         default: return typeof v === 'object' ? '' : String(v);
       }
     } catch (e) { return String(v); }
@@ -134,7 +134,7 @@
     if (started || !fb || !fb.db || !fb.user) return;
     started = true; db = fb.db; uid = fb.user.uid;
     st.status = 'loading';
-    const fail = (what) => (e) => { console.warn('Could not load Formwright ' + what + ':', e); st.status = 'error'; st.error = (e && (e.code || e.message)) || 'unknown'; emit(); };
+    const fail = (what) => (e) => { console.warn('Could not load Forms ' + what + ':', e); st.status = 'error'; st.error = (e && (e.code || e.message)) || 'unknown'; emit(); };
     baseUnsubs.push(db.collection('users').doc(uid).onSnapshot((s) => {
       st.me = s.exists ? s.data() : null; st.gotMe = true;
       setStatus(); syncRecordSubs(); emit();
@@ -205,7 +205,7 @@
     },
     open(id) {
       const u = R.url(id);
-      if (!u) return C.toast('Add CADENCE_FORMS_URL to firebase-config.js to open records in Formwright.');
+      if (!u) return C.toast('Add CADENCE_FORMS_URL to firebase-config.js to open records in Forms.');
       window.open(u, 'formwright');
     },
     /** chip for task rows and tables */
@@ -213,7 +213,7 @@
       const l = R.label(t);
       if (!l) return '';
       return '<button type="button" class="record-tag' + (compact ? ' compact' : '') + (l.removed ? ' removed' : '') + '" data-record-link="' + esc(t.recordId) + '"' +
-        ' title="' + esc(l.removed ? 'This record was deleted in Formwright' : (l.form ? l.form + ': ' : '') + l.title) + '" style="--c:' + esc(l.color) + '">' +
+        ' title="' + esc(l.removed ? 'This record was deleted in Forms' : (l.form ? l.form + ': ' : '') + l.title) + '" style="--c:' + esc(l.color) + '">' +
         R.mark(t.formId, l.removed) + '<span>' + esc(l.removed ? 'Record removed' : l.title) + '</span></button>';
     },
     /** [{ id, title, color }] for "&record" in quick add */
@@ -262,7 +262,7 @@
             '<span class="pk-t">' + esc(it.t) + '</span>' + (it.id === o.current ? icon('check') : '') + '</button>';
         }).join('') : '<p class="pk-empty">' + (
           status === 'loading' ? 'Loading records…' :
-          status === 'no-account' ? 'Open Formwright once to set up your account, then ask an admin for access to its forms.' :
+          status === 'no-account' ? 'Open Forms once to set up your account, then ask an admin for access to its forms.' :
           status === 'error' ? 'Couldn’t load records (' + esc(st.error || '') + ').' :
           v ? 'No matching records' : 'No records you can see yet.') + '</p>';
         const on = list.querySelector('.pk-item.on');
@@ -278,7 +278,7 @@
     /** menu for a record chip: open it in Formwright, or list its tasks */
     chipMenu(anchor, id) {
       const items = [];
-      if (R.url(id)) items.push({ label: 'Open in Formwright', ic: 'external', run: () => R.open(id) });
+      if (R.url(id)) items.push({ label: 'Open in Forms', ic: 'external', run: () => R.open(id) });
       items.push({ label: 'Show its tasks', ic: 'list', run: () => R.showTasks(id) });
       C.map.menu(items, { anchor });
     },

@@ -79,7 +79,7 @@ async function removeAccount(db, auth, callerUid, data) {
   devices.docs.forEach((d) => b.delete(d.ref));
   b.delete(db.collection('notify').doc(uid));
   b.delete(db.collection('notifyState').doc(uid));
-  b.delete(db.collection('stars').doc(uid)); // their starred records (Formwright)
+  b.delete(db.collection('stars').doc(uid)); // their starred records (Wayholm Forms)
   const people = await db.collection('people').where('uid', '==', uid).get();
   people.docs.forEach((d) => b.delete(d.ref));
   // keep the name (records and history still show it), mark as removed

@@ -1,12 +1,12 @@
 {
-  "name": "Cadence",
-  "short_name": "Cadence",
-  "description": "Tasks, calendar, mind map and charts.",
+  "name": "Wayholm Plan",
+  "short_name": "Plan",
+  "description": "Mind map, tasks, calendar and charts.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#F3F5F9",
-  "theme_color": "#F3F5F9",
+  "background_color": "#F5F1EA",
+  "theme_color": "#F5F1EA",
   "icons": [
     { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },

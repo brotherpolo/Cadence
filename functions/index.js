@@ -280,7 +280,7 @@ function morning(uid, prefs, today, overdue) {
 exports.pushTest = onDocumentWritten('notify/{uid}', async (event) => {
   const b = (event.data.before.exists && event.data.before.data()) || {}, a = (event.data.after.exists && event.data.after.data()) || {};
   if (!a.testAt || a.testAt === b.testAt) return;
-  const n = await sendTo(event.params.uid, 'test', { title: 'Cadence notifications are on', body: 'This is a test. Reminders and updates will look like this.', tag: 'test' }, Object.assign({}, DEFAULTS, a), true);
+  const n = await sendTo(event.params.uid, 'test', { title: 'Wayholm Plan notifications are on', body: 'This is a test. Reminders and updates will look like this.', tag: 'test' }, Object.assign({}, DEFAULTS, a), true);
   logger.info('test push', { uid: event.params.uid, delivered: n });
 });
 
@@ -761,7 +761,7 @@ async function stageNotify(recordId, before, after) {
       if (!g.ready) continue;
       const brand = (await db.collection('settings').doc('exports').get()).data() || {};
       try {
-        await mailer.sendMail({ from: { name: brand.companyName || g.user, address: g.user }, to: people.get(uid).email, subject: `${fw.itemName(form)} ${title}: you’re the person responsible (${st.name})`, text: `${people.get(mover)?.name || 'Someone'} moved ${fw.itemName(form).toLowerCase()} “${title}” to ${st.name}. You’re the person responsible for it now.${due ? `\n\nIt’s due ${due}.` : ''}\n\nOpen Formwright and look in My work.` });
+        await mailer.sendMail({ from: { name: brand.companyName || g.user, address: g.user }, to: people.get(uid).email, subject: `${fw.itemName(form)} ${title}: you’re the person responsible (${st.name})`, text: `${people.get(mover)?.name || 'Someone'} moved ${fw.itemName(form).toLowerCase()} “${title}” to ${st.name}. You’re the person responsible for it now.${due ? `\n\nIt’s due ${due}.` : ''}\n\nOpen Wayholm Forms and look in My work.` });
       } catch (e) { oops('workflow email failed', e); }
     }
   }
@@ -831,7 +831,7 @@ exports.dashMailTest = onCall({ region: 'us-central1', timeoutSeconds: 120, memo
   const id = request.data && request.data.dashboardId;
   if (typeof id !== 'string' || !id) throw new HttpsError('invalid-argument', 'Say which dashboard.');
   const g = gmail();
-  if (!g.ready) throw new HttpsError('failed-precondition', 'Gmail isn’t set up for Formwright yet (GMAIL_USER and the app password).');
+  if (!g.ready) throw new HttpsError('failed-precondition', 'Gmail isn’t set up for Wayholm Forms yet (GMAIL_USER and the app password).');
   try {
     const sch = (await db.collection('dashMails').doc(id).get()).data() || null;
     const built = await dashMailBuild(id, sch && sch.on ? sch : null);
@@ -1187,7 +1187,7 @@ exports.automationSend = onCall({ region: 'us-central1', timeoutSeconds: 120, me
 /* ---------- nightly backups (backup.js) ----------
    2:30 a.m. every night: the whole database to gs://<bucket>/nightly/YYYY-MM-DD/, then nightly
    copies older than 30 days are removed (the newest 7 always stay). How it went is kept in
-   system/backup for Formwright → Settings to show; a failure is listed under Problems.
+   system/backup for Wayholm Forms → Settings to show; a failure is listed under Problems.
    One-time setup (README): this function's service account needs to export the database and
    to write to the bucket. */
 exports.nightlyBackup = onSchedule({ schedule: '30 2 * * *', timeZone: TZ, memory: '512MiB', timeoutSeconds: 540, retryCount: 1 }, async () => {

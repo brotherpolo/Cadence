@@ -1,6 +1,6 @@
 /* Cadence — problems: when something goes wrong in this browser (an error, a failed save), a
-   short report goes to problems/{id} for Formwright's administrators (Settings → Problems).
-   The same rules as Formwright's problemlogic.js: browser noise, extensions and a lost
+   short report goes to problems/{id} for Wayholm’s administrators (Settings → Problems).
+   The same rules as Wayholm’s problemlogic.js: browser noise, extensions and a lost
    connection aren't reported; at most 15 per page load; the same one not again for 5 minutes.
    C.problems.from / C.problems.Throttle are the pure parts (tested in the browser tests). */
 (function () {
@@ -50,7 +50,7 @@
       const FB = C.firebaseSync;
       if (!FB || !FB.db || !FB.user) return; // working on this device only, or not signed in yet
       const p = from(input, {
-        uid: FB.user.uid, name: FB.user.name || FB.user.email || '', where: [String(document.title || '').replace(/ · Cadence$/, ''), lastAct].filter(Boolean).join(' · '),
+        uid: FB.user.uid, name: FB.user.name || FB.user.email || '', where: [String(document.title || '').replace(/ · Wayholm Plan$/, ''), lastAct].filter(Boolean).join(' · '),
         url: location.pathname + location.hash, agent: navigator.userAgent, version: C.VERSION || '', origin: location.origin, online: navigator.onLine,
       });
       if (!p || !throttle.ok(p)) return;
